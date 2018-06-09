@@ -49,7 +49,7 @@ def httpError(error, context):
         'err': error,
     })
 
-    print("Error: " + error.getErrorMessage + "\n Trace:\n" + error.getTraceback())
+#    print("Error: " + error.getErrorMessage + "\n Trace:\n" + error.getTraceback())
 
     # cancel a possible timeout
     if 'timeoutCall' in context:
@@ -101,7 +101,7 @@ def inverterBody(body, context):
     vals['Status'] = metadata['Data'][67]
     
 #    pp.pprint(vals)
-    print("Got data for inverter '" + vals['inverter'] + "'");
+#    print("Got data for inverter '" + vals['inverter'] + "'");
     
     sendToEmonCMS(vals)
 
@@ -198,7 +198,7 @@ def actions():
     semaphore = defer.DeferredSemaphore(len(config['inverters']))
     
     for inverter in config['inverters']:
-        print("Checking inverter " + inverter + "\n")
+#        print("Checking inverter " + inverter + "\n")
         httpContext = {
             'inverter': inverter,
             'method': b'GET',
