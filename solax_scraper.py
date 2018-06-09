@@ -7,7 +7,7 @@
 #   cp config-example.toml config.toml
 #   vi config.toml 
 #
-# Copyright ©2018 Inferno Embedded   http://infernoembedded.com
+# Copyright (c)2018 Inferno Embedded   http://infernoembedded.com
 # 
 # This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
