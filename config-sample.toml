@@ -1,7 +1,10 @@
 poll_period = 10 # seconds
+
+[Solax-Wifi]
 timeout = 5 # seconds
 inverters = ['solax1-wifi', 'solax2-wifi', 'solax3-wifi']
 
 [emoncms]
-server = "http://emoncms:8080"
+timeout = 5 # seconds
+server = "http://emoncms"
 api_key = "123456789abdcef"
