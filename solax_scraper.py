@@ -1,9 +1,9 @@
 #!/usr/bin/python3
 
-# Scrapes Inverter information from Solax inverters and presents it to OpenEnergyMonitor
+# Scrapes Inverter information from solax inverters and presents it to OpenEnergyMonitor
 #
 # Setup:
-#   pip install toml twisted
+#   pip install toml twisted pymodbus
 #   cp config-example.toml config.toml
 #   vi config.toml 
 #
@@ -33,6 +33,7 @@ pp = pprint.PrettyPrinter(indent=4)
 import traceback
 
 from Inputs.SolaxWifi import SolaxWifi
+from Inputs.SolaxModbus import SolaxModbus
 from Outputs.EmonCMS import EmonCMS
 
 from twisted.internet.defer import setDebugging
@@ -45,17 +46,17 @@ def analyze(event):
         print("Critical: ", event)
                
 def outputActions(vals):
-    print("Outputactions\n")
     if emonCMS is not None:
         emonCMS.send(vals)
     
     
-def inputActions(SolaxWifiInverters):
-    requests = []
-    
-    for inverter in SolaxWifiInverters:
-        request = inverter.fetch(outputActions)
-        requests.append(request)
+def inputActions(solaxWifiInverters, solaxModbusInverters):
+    for inverter in solaxWifiInverters:
+        inverter.fetch(outputActions)
+        
+    for inverter in solaxModbusInverters:
+        inverter.fetch(outputActions)
+
             
 globalLogPublisher.addObserver(analyze)
 
@@ -69,12 +70,18 @@ global emonCMS
 if 'emoncms' in config:
     emonCMS = EmonCMS(config['emoncms'])
 
-SolaxWifiInverters = []
+solaxWifiInverters = []
 for inverter in config['Solax-Wifi']['inverters']:
-    wifiInverter = SolaxWifi(inverter, config['Solax-Wifi']['timeout'])
-    SolaxWifiInverters.append(wifiInverter)
+    wifiInverter = SolaxWifi(inverter, config['solax-Wifi']['timeout'])
+    solaxWifiInverters.append(wifiInverter)
 
-looper = task.LoopingCall(inputActions, SolaxWifiInverters)
+solaxModbusInverters = []
+for inverter in config['Solax-Modbus']['inverters']:
+    modbusInverter = SolaxModbus(inverter)
+    solaxModbusInverters.append(modbusInverter)
+
+
+looper = task.LoopingCall(inputActions, solaxWifiInverters, solaxModbusInverters)
 looper.start(config['poll_period'])
 
 reactor.run()

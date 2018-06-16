@@ -4,6 +4,11 @@ poll_period = 10 # seconds
 timeout = 5 # seconds
 inverters = ['solax1-wifi', 'solax2-wifi', 'solax3-wifi']
 
+[Solax-Modbus]
+timeout = 5 # seconds
+inverters = ['solax1']
+
+
 [emoncms]
 timeout = 5 # seconds
 server = "http://emoncms"
