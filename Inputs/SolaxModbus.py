@@ -1,5 +1,6 @@
-from pymodbus.client.sync import ModbusTcpClient
-from twisted.internet import defer, reactor
+from pymodbus.client.async import ModbusClientProtocol, ModbusClientFactory
+from pymodbus.framer.rtu_framer import ModbusRtuFramer
+from twisted.internet import defer, reactor, protocol
 from twisted.web.client import Agent, readBody
 #import unicodedata
 from twisted.web.http_headers import Headers
@@ -37,17 +38,52 @@ def signed32(result, addr):
     return val
 
 
+class SolaxProtocol(ModbusClientProtocol):
+    def connectionMade(self):
+        ModbusClientProtocol.connectionMade(self);
+        self.factory.setClient(self)
+
+
+class SolaxFactory(protocol.ReconnectingClientFactory):
+    protocol = SolaxProtocol
+    client = None
+
+    def setClient(self, client):
+        self.client = client
+
+    def readRegisters(self):
+        if self.client != None:
+            return self.client.read_input_registers(0, 0x72)
+        else:
+            print("not connected")
+
+    def buildProtocol(self, addr):
+        self.resetDelay()
+        p = SolaxProtocol()
+        p.factory = self
+        return p    
+
 class SolaxModbus(object):
 
     ##
-    # Create a new class to fetch data from the Wifi interface of Solax inverters
+    # Create a new class to fetch data from the Modbus interface of Solax inverters
     def __init__(self, host):
-        self.host = host
-        self.client = ModbusTcpClient(host)
+        self.host = host        
+        self.factory = SolaxFactory()
+        reactor.connectTCP(host, 502, self.factory)
+
+#         defer = protocol.ClientCreator(reactor, ModbusClientProtocol).connectTCP(host, 502)
+#         defer.addCallback(self.setClient)
+#          
+#     def setClient(self, client):
+#         self.client = client
         
     def fetch(self, completionCallback):
-        result = self.client.read_input_registers(0, 0x72)
+        result = self.factory.readRegisters()
+        if result != None:
+            result.addCallback(self.solaxRegisterCallback, completionCallback)
         
+    def solaxRegisterCallback(self, result, completionCallback):
         vals = {}
         vals['inverter'] = self.host;
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
@@ -86,5 +122,3 @@ class SolaxModbus(object):
         vals['Solar Energy Total'] = unsigned32(result, 0x70) / 10 # kWh
         
         completionCallback(vals)
-        
-        return vals
