@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <projectDescription>
-	<name>SolaxScraper</name>
+	<name>PowerScraper</name>
 	<comment></comment>
 	<projects>
 	</projects>
@@ -13,5 +13,6 @@
 	</buildSpec>
 	<natures>
 		<nature>org.python.pydev.pythonNature</nature>
+		<nature>org.eclipse.linuxtools.tmf.project.nature</nature>
 	</natures>
 </projectDescription>
