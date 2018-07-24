@@ -70,7 +70,7 @@ class EmonCMS(object):
          
         vars = {}
         vars['apikey'] = self.apikey
-        vars['node'] = inverterDetails.pop('inverter', None)
+        vars['node'] = inverterDetails.pop('name', None)
         vars['fulljson'] = json.dumps(inverterDetails)
  
         url += "?" + urllib.parse.urlencode(vars)

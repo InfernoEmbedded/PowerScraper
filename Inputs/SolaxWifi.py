@@ -81,7 +81,7 @@ def inverterBody(body, context):
 
     vals = {}
     vals['Serial'] = metadata['SN']
-    vals['inverter'] = context['inverter']
+    vals['name'] = context['inverter']
     vals['PV1 Current'] = metadata['Data'][0]
     vals['PV2 Current'] = metadata['Data'][1]
     vals['PV1 Voltage'] = metadata['Data'][2]

@@ -85,7 +85,7 @@ class SolaxModbus(object):
         
     def solaxRegisterCallback(self, result, completionCallback):
         vals = {}
-        vals['inverter'] = self.host;
+        vals['name'] = self.host;
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
         vals['Grid Current'] = signed16(result, 0x01) / 10
         vals['Grid Power'] = signed16(result, 0x02) / 10
