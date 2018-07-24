@@ -9,6 +9,13 @@ timeout = 5 # seconds
 inverters = ['solax1']
 
 
+[SDM630Modbusv2]
+timeout = 5 # seconds
+baud = 38400
+parity = 'E'
+stopbits = 1
+ports = ["/dev/ttyMainsMeter"]
+
 [emoncms]
 timeout = 5 # seconds
 server = "http://emoncms"
