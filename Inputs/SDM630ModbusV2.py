@@ -1,4 +1,5 @@
 from pymodbus.client.sync import ModbusSerialClient
+from pymodbus.exceptions import ModbusException
 from twisted.internet import defer, reactor, protocol
 from twisted.web.client import Agent, readBody
 from pymodbus.constants import Defaults
@@ -36,6 +37,8 @@ class SDM630ModbusV2(object):
         
         base = 0x0000
         result = self.client.read_input_registers(base, 60)
+        if isinstance(result, ModbusException):
+            return
          
         self.vals = {}
         self.vals['name'] = self.port.replace("/dev/tty", "");
@@ -68,6 +71,9 @@ class SDM630ModbusV2(object):
                 
         base = 0x003C
         result = self.client.read_input_registers(base, 48)
+        if isinstance(result, ModbusException):
+            return
+
         self.vals['Total system VAr'] = float32(result, base, 0x003C)
         self.vals['Total system power factor'] = float32(result, base, 0x003E)
         self.vals['Total system phase angle'] = float32(result, base, 0x0042)
@@ -87,6 +93,9 @@ class SDM630ModbusV2(object):
         
         base = 0x00C8
         result = self.client.read_input_registers(base, 8)
+        if isinstance(result, ModbusException):
+            return
+
         self.vals['Line 1 to Line 2 volts'] = float32(result, base, 0x00C8)
         self.vals['Line 2 to Line 3 volts'] = float32(result, base, 0x00CA)
         self.vals['Line 3 to Line 1 volts'] = float32(result, base, 0x00CC)
@@ -94,6 +103,9 @@ class SDM630ModbusV2(object):
 
         base = 0x00E0
         result = self.client.read_input_registers(base, 46)
+        if isinstance(result, ModbusException):
+            return
+
         self.vals['Neutral current'] = float32(result, base, 0x00E0)
         self.vals['Phase 1 L-N volts THD'] = float32(result, base, 0x00EA)
         self.vals['Phase 2 L-N volts THD'] = float32(result, base, 0x00EC)
@@ -112,6 +124,9 @@ class SDM630ModbusV2(object):
         
         base = 0x014E
         result = self.client.read_input_registers(base, 48)
+        if isinstance(result, ModbusException):
+            return
+
         self.vals['Line 1 to line 2 volts THD'] = float32(result, base, 0x014E)
         self.vals['Line 2 to line 3 volts THD'] = float32(result, base, 0x0150)
         self.vals['Line 3 to line 1 volts THD'] = float32(result, base, 0x0152)
