@@ -1,21 +1,23 @@
-poll_period = 10 # seconds
+# Enable this section to scrape the Wifi interface of Solax inverters
+#[Solax-Wifi]
+#poll_period = 10 # seconds
+#timeout = 5 # seconds
+#inverters = ['solax1-wifi', 'solax2-wifi', 'solax3-wifi']
 
-[Solax-Wifi]
-timeout = 5 # seconds
-inverters = ['solax1-wifi', 'solax2-wifi', 'solax3-wifi']
-
+# Enable this section to scrape the Modbus/TCP (Ethernet port) of Solax inverters
 [Solax-Modbus]
 timeout = 5 # seconds
 inverters = ['solax1']
 
+# Enable this section to scrape Modbus/RTU (RS485) connected SDM630v2 energy meters
+#[SDM630Modbusv2]
+#timeout = 5 # seconds
+#baud = 38400
+#parity = 'E'
+#stopbits = 1
+#ports = ["/dev/ttyMainsMeter"]
 
-[SDM630Modbusv2]
-timeout = 5 # seconds
-baud = 38400
-parity = 'E'
-stopbits = 1
-ports = ["/dev/ttyMainsMeter"]
-
+# Enable this section to output to EmonCMS
 [emoncms]
 timeout = 5 # seconds
 server = "http://emoncms"

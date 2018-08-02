@@ -69,21 +69,32 @@ global emonCMS
 if 'emoncms' in config:
     emonCMS = EmonCMS(config['emoncms'])
 
-inputs = []
-for inverter in config['Solax-Wifi']['inverters']:
-    wifiInverter = SolaxWifi(inverter, config['solax-Wifi']['timeout'])
-    inputs.append(wifiInverter)
+if 'Solax-Wifi' in config:
+    SolaxWifiInverters = []
+    for inverter in config['Solax-Wifi']['inverters']:
+        wifiInverter = SolaxWifi(inverter, config['solax-Wifi']['timeout'])
+        SolaxWifiInverters.append(wifiInverter)
 
-for inverter in config['Solax-Modbus']['inverters']:
-    modbusInverter = SolaxModbus(inverter)
-    inputs.append(modbusInverter)
+    looperSolaxWifi = task.LoopingCall(inputActions, SolaxWifiInverters)
+    looperSolaxWifi.start(config['Solax-Wifi']['poll_period'])
 
-for meter in config['SDM630Modbusv2']['ports']:
-    modbusMeter = SDM630ModbusV2(meter, config['SDM630Modbusv2']['baud'], config['SDM630Modbusv2']['parity'],
-                                 config['SDM630Modbusv2']['stopbits'], config['SDM630Modbusv2']['timeout'])
-    inputs.append(modbusMeter)
+if 'Solax-Modbus' in config:
+    SolaxModbusInverters = []
+    for inverter in config['Solax-Modbus']['inverters']:
+        modbusInverter = SolaxModbus(inverter)
+        SolaxModbusInverters.append(modbusInverter)
 
-looper = task.LoopingCall(inputActions, inputs)
-looper.start(config['poll_period'])
+    looperSolaxModbus = task.LoopingCall(inputActions, SolaxModbusInverters)
+    looperSolaxModbus.start(config['Solax-Modbus']['poll_period'])
+
+if 'SDM630ModbusV2' in config:
+    SDM630Meters = []
+    for meter in config['SDM630ModbusV2']['ports']:
+        modbusMeter = SDM630ModbusV2(meter, config['SDM630ModbusV2']['baud'], config['SDM630ModbusV2']['parity'],
+                                 config['SDM630ModbusV2']['stopbits'], config['SDM630ModbusV2']['timeout'])
+        SDM630Meters.append(modbusMeter)
+
+    looperSDM630 = task.LoopingCall(inputActions, SDM630Meters)
+    looperSDM630.start(config['SDM630ModbusV2']['poll_period'])
 
 reactor.run()
