@@ -34,10 +34,10 @@ class SDM630ModbusV2(object):
                                          stopbits=stopbits, timeout=timeout)
         
     def fetch(self, completionCallback):
-        
         base = 0x0000
         result = self.client.read_input_registers(base, 60)
         if isinstance(result, ModbusException):
+            print("Exception from SDM630V2: {}".format(result))
             return
          
         self.vals = {}
@@ -72,6 +72,7 @@ class SDM630ModbusV2(object):
         base = 0x003C
         result = self.client.read_input_registers(base, 48)
         if isinstance(result, ModbusException):
+            print("Exception from SDM630V2: {}".format(result))
             return
 
         self.vals['Total system VAr'] = float32(result, base, 0x003C)
@@ -94,6 +95,7 @@ class SDM630ModbusV2(object):
         base = 0x00C8
         result = self.client.read_input_registers(base, 8)
         if isinstance(result, ModbusException):
+            print("Exception from SDM630V2: {}".format(result))
             return
 
         self.vals['Line 1 to Line 2 volts'] = float32(result, base, 0x00C8)
@@ -104,6 +106,7 @@ class SDM630ModbusV2(object):
         base = 0x00E0
         result = self.client.read_input_registers(base, 46)
         if isinstance(result, ModbusException):
+            print("Exception from SDM630V2: {}".format(result))
             return
 
         self.vals['Neutral current'] = float32(result, base, 0x00E0)
@@ -125,6 +128,7 @@ class SDM630ModbusV2(object):
         base = 0x014E
         result = self.client.read_input_registers(base, 48)
         if isinstance(result, ModbusException):
+            print("Exception from SDM630V2: {}".format(result))
             return
 
         self.vals['Line 1 to line 2 volts THD'] = float32(result, base, 0x014E)
