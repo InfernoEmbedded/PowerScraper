@@ -6,7 +6,10 @@
 
 # Enable this section to scrape the Modbus/TCP (Ethernet port) of Solax inverters
 [Solax-Modbus]
+poll_period = 10 # seconds
 timeout = 5 # seconds
+#installer_password = 12345 # The installer password for the inverter (same as used on the front panel), required if you want to use battery control
+#inverter_power = 5000 # Limit the inverter power to this amount, required if you want to use battery control
 inverters = ['solax1']
 
 # Enable this section to scrape Modbus/RTU (RS485) connected SDM630v2 energy meters
@@ -22,3 +25,71 @@ inverters = ['solax1']
 timeout = 5 # seconds
 server = "http://emoncms"
 api_key = "123456789abdcef"
+
+
+# Enable these sections to control battery charge/discharge on Solax SK-SU5000E inverters
+# This does a number of things:
+# 1. Allows more than 2 time periods through the day
+# 2. Allows excess generation on 1 inverter to charge an inverter on another phase instead
+#    of feeding that energy back to the grid (requires your billing meter to simply sum
+#    usage across phases)
+# 3. Allows inverters to share loads larger than what a single battery can discharge at
+# 4. Allow grid charge up to a certain level (to allow enough energy stored to see you through
+#    peak times)
+
+#[Solax-BatteryControl]
+#source = "MainsMeter"  # The data source for power consumption
+
+# Defines the inverters that will participate
+#[Solax-BatteryControl.Inverter.solax1] # First inverter
+#phase = 1              # Which phase the inverter is connected to, as seen by the power consumption meter
+#max-charge = 2000      # Maximum battery charge rate in Watts
+#max-discharge = 2000   # Maximum battery discharge rate in Watts
+#[Solax-BatteryControl.Inverter.solax2]
+#phase = 2
+#max-charge = 2000
+#max-discharge = 2000
+#[Solax-BatteryControl.Inverter.solax3]
+#phase = 3
+#max-charge = 2000
+#max-discharge = 2000
+
+# Define the time periods
+# Suitable for ActewAGL Time of Use plans in Canberra, Australia
+# Peak times are widened in case the time on the meter drifts
+#[Solax-BatteryControl.Period.MorningPeak]
+#start = "6:55:00"      # The start time of the period
+#end = "9:05:00"        # The end time of the period
+#min-charge = 20        # The minimum % charge left in the batteries. The inverter will not discharge lower than this in this period
+#grid-charge = false    # True to charge from the grid if the charge is less than min-charge
+#
+#[Solax-BatteryControl.Period.DayShoulder]
+#start = "9:05:00"
+#end = "15:55:00"
+#min-charge = 30        # Once charged from solar, we don't want the battery to drop below this to give us enough to get through the following peak period
+#grid-charge = false
+#
+# Allow charging near the end of the shoulder period (if the batteries are less than 30%)
+#[Solax-BatteryControl.Period.DayShoulderGridCharge]
+#start = "15:55:00"
+#end = "16:55:00"
+#min-charge = 30
+#grid-charge = true
+#
+#[Solax-BatteryControl.Period.EveningPeak]
+#start = "16:55:00"
+#end = "20:05:00"
+#min-charge = 20
+#grid-charge = false
+#
+#[Solax-BatteryControl.Period.EveningShoulder]
+#start = "20:05:00"
+#end = "22:05:00"
+#min-charge = 20
+#grid-charge = false
+#
+#[Solax-BatteryControl.Period.Offpeak]
+#start = "22:05:00"
+#end = "6:55:00"
+#min-charge = 30
+#grid-charge = true

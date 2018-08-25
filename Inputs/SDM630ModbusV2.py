@@ -29,7 +29,7 @@ class SDM630ModbusV2(object):
     ##
     # Create a new class to fetch data from the Modbus interface of Solax inverters
     def __init__(self, port, baudrate, parity, stopbits, timeout):
-        self.port = port        
+        self.port = port
         self.client = ModbusSerialClient(method="rtu", port=self.port, baudrate=baudrate, parity=parity,
                                          stopbits=stopbits, timeout=timeout)
         

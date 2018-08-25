@@ -37,6 +37,7 @@ import traceback
 from Inputs.SolaxWifi import SolaxWifi
 from Inputs.SolaxModbus import SolaxModbus
 from Inputs.SDM630ModbusV2 import SDM630ModbusV2
+from Outputs.SolaxBatteryControl import SolaxBatteryControl
 from Outputs.EmonCMS import EmonCMS
 
 from twisted.internet.defer import setDebugging
@@ -49,9 +50,12 @@ def analyze(event):
         print("Critical: ", event)
                
 def outputActions(vals):
-    if emonCMS is not None:
-        emonCMS.send(vals)
+    global outputs
+    if outputs is None:
+        return
     
+    for output in outputs:
+        output.send(vals)
     
 def inputActions(inputs):
     for input in inputs:
@@ -65,9 +69,15 @@ with open("config.toml") as conffile:
     
 #     pp.pprint(config)
 
-global emonCMS
+global outputs
+outputs = []
+
+print("Setting up EmonCMS")
 if 'emoncms' in config:
-    emonCMS = EmonCMS(config['emoncms'])
+    outputs.append(EmonCMS(config['emoncms']))
+
+if 'Solax-BatteryControl' in config:
+    outputs.append(SolaxBatteryControl(config['Solax-BatteryControl']))
 
 if 'Solax-Wifi' in config:
     SolaxWifiInverters = []
@@ -81,7 +91,7 @@ if 'Solax-Wifi' in config:
 if 'Solax-Modbus' in config:
     SolaxModbusInverters = []
     for inverter in config['Solax-Modbus']['inverters']:
-        modbusInverter = SolaxModbus(inverter)
+        modbusInverter = SolaxModbus(config['Solax-Modbus'], inverter)
         SolaxModbusInverters.append(modbusInverter)
 
     looperSolaxModbus = task.LoopingCall(inputActions, SolaxModbusInverters)
@@ -96,5 +106,7 @@ if 'SDM630ModbusV2' in config:
 
     looperSDM630 = task.LoopingCall(inputActions, SDM630Meters)
     looperSDM630.start(config['SDM630ModbusV2']['poll_period'])
+
+
 
 reactor.run()

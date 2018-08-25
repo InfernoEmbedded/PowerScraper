@@ -65,6 +65,7 @@ class EmonCMS(object):
     def send(self, vals):
         inverterDetails = vals.copy()
         inverterDetails.pop('Serial', None)
+        inverterDetails.pop('#SolaxClient', None)
   
         url = self.host + "/input/post"
          

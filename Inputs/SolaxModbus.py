@@ -12,10 +12,6 @@ from twisted.web.http_headers import Headers
 def unsigned16(result, addr):
     return result.getRegister(addr)
     
-    if val > 32767:
-        val -= 32768
-    return val
-
 def unsigned32(result, addr):
     low = result.getRegister(addr)
     high = result.getRegister(addr + 1)
@@ -47,12 +43,41 @@ class SolaxProtocol(ModbusClientProtocol):
 class SolaxFactory(protocol.ReconnectingClientFactory):
     protocol = SolaxProtocol
     client = None
+    config = None
+    ready = False
+
+    def __init__(self, config):
+        self.config = config
 
     def setClient(self, client):
         self.client = client
 
+        if 'installer_password' in self.config:
+            self.ready = False
+            result = client.write_register(0x00, self.config['installer_password'])
+            if result != None:
+                result.addCallback(self.enableRemoteControl)
+        else:
+            self.ready = True
+
+    def getClient(self):
+        return self.client
+
+    def enableRemoteControl(self, result):
+        result2 = self.client.write_register(0x1F, 2)
+        if result2 != None:
+            result2.addCallback(self.setOutputPower)
+
+    def setOutputPower(self, result):
+        # Set output invert to max 5kW
+        result2 = self.client.write_register(0x52, self.config['inverter_power'])
+        result2.addCallback(self.markReady)
+
+    def markReady(self, result):
+        self.ready = True
+
     def readRegisters(self):
-        if self.client != None:
+        if self.ready:
             return self.client.read_input_registers(0, 0x72)
         else:
             print("not connected")
@@ -67,9 +92,9 @@ class SolaxModbus(object):
 
     ##
     # Create a new class to fetch data from the Modbus interface of Solax inverters
-    def __init__(self, host):
+    def __init__(self, config, host):
         self.host = host        
-        self.factory = SolaxFactory()
+        self.factory = SolaxFactory(config)
         reactor.connectTCP(host, 502, self.factory)
 
 #         defer = protocol.ClientCreator(reactor, ModbusClientProtocol).connectTCP(host, 502)
@@ -86,6 +111,7 @@ class SolaxModbus(object):
     def solaxRegisterCallback(self, result, completionCallback):
         vals = {}
         vals['name'] = self.host;
+        vals['#SolaxClient'] = self.factory.getClient()
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
         vals['Grid Current'] = signed16(result, 0x01) / 10
         vals['Grid Power'] = signed16(result, 0x02) / 10
