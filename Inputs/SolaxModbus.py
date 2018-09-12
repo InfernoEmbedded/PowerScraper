@@ -135,6 +135,9 @@ class SolaxModbus(object):
         vals['BMS Warning'] = unsigned16(result, 0x1F)
         vals['Battery Energy Discharged'] = unsigned32(result, 0x20) / 10
         vals['Battery State of Health'] = unsigned16(result, 0x23)
+        vals['Inverter Fault'] = unsigned32(result, 0x40) 
+        vals['Charger Fault'] = unsigned16(result, 0x42) 
+        vals['Manager Fault'] = unsigned16(result, 0x43) 
         vals['Feed In Power'] = signed32(result, 0x46) # Power to the grid
         vals['Feed In Energy'] = unsigned32(result, 0x48) / 100 # Energy delivered to the grid, kWh
         vals['Consumed Energy'] = unsigned32(result, 0x4A) / 100 # Energy consumed from the grid, kWh
