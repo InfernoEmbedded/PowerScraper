@@ -7,15 +7,19 @@ pp = pprint.PrettyPrinter(indent=4)
 class SolaxBatteryControl(object):
     def __init__(self, config):
         self.config = config
-        self.phasePower = [None]*16
+        self.phasePower = [0]*16
         self.assistNeeded = {}
         self.totalDischargePower = 0
 
-    def handleTotalPower(self, vals):
+    def handleMeterPower(self, vals):
         self.totalPower = vals['Total system power']
         self.phasePower[1] = vals['Phase 1 power']
         self.phasePower[2] = vals['Phase 2 power']
         self.phasePower[3] = vals['Phase 3 power']
+
+    def handleInverterPower(self, phase, vals):
+        self.phasePower[phase] = vals['Feed In Power'] * -1
+        self.totalPower = self.phasePower[1] + self.phasePower[2] + self.phasePower[3]
 
     def getPeriod(self):
         nowDateTime = datetime.datetime.now()
@@ -71,9 +75,10 @@ class SolaxBatteryControl(object):
         valCopy = vals.copy()
         inverterName = valCopy.pop('name', None)
 
-        if inverterName == self.config['source']:
-            self.handleTotalPower(valCopy)
-            return
+        if 'source' in self.config:
+            if inverterName == self.config['source']:
+                self.handleMeterPower(valCopy)
+                return
 
         if inverterName not in self.config['Inverter']:
             print("Inverter {} not found\n".format(inverterName))
@@ -89,6 +94,10 @@ class SolaxBatteryControl(object):
             inverter['DischargePower'] = 0
 
         phase = inverter['phase']
+
+        if not 'source' in self.config:
+                self.handleInverterPower(inverter, valCopy)
+
 
         # If we allow charging from the grid, charge up to the minimum capacity
         if period['grid-charge'] and vals['Battery Capacity'] < period['min-charge']:
