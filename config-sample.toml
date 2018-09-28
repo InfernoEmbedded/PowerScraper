@@ -42,15 +42,21 @@ api_key = "123456789abdcef"
 
 # Defines the inverters that will participate
 #[Solax-BatteryControl.Inverter.solax1] # First inverter
-#phase = 1              # Which phase the inverter is connected to, as seen by the power consumption meter
-#max-charge = 2000      # Maximum battery charge rate in Watts
-#max-discharge = 2000   # Maximum battery discharge rate in Watts
+#phase = 1                          # Which phase the inverter is connected to, as seen by the power consumption meter
+#single-phase-charge-limit = 1000   # If the charge rate is below this, aim to zero our own phase, if it's above, aim to zero total power
+#single-phase-discharge-limit = 1000   # If the discharge rate is below this, aim to zero our own phase, if it's above, aim to zero total power
+#max-charge = 2000                  # Maximum battery charge rate in Watts
+#max-discharge = 2000               # Maximum battery discharge rate in Watts
 #[Solax-BatteryControl.Inverter.solax2]
 #phase = 2
+#single-phase-charge-limit = 1000
+#single-phase-discharge-limit = 1000
 #max-charge = 2000
 #max-discharge = 2000
 #[Solax-BatteryControl.Inverter.solax3]
 #phase = 3
+#single-phase-charge-limit = 1000
+#single-phase-discharge-limit = 1000
 #max-charge = 2000
 #max-discharge = 2000
 
