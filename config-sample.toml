@@ -38,7 +38,8 @@ api_key = "123456789abdcef"
 #    peak times)
 
 #[Solax-BatteryControl]
-#source = "MainsMeter"  # The data source for power consumption
+#source = "MainsMeter"     # The data source for power consumption
+#linked-batteries = true   # If set, all batteries charge/discharge at the same rate when trying to zero total power
 
 # Defines the inverters that will participate
 #[Solax-BatteryControl.Inverter.solax1] # First inverter

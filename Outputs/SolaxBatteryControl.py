@@ -9,6 +9,7 @@ class SolaxBatteryControl(object):
         self.config = config
         self.phasePower = [None]*16
         self.assistNeeded = {}
+        self.totalDischargePower = 0
 
     def handleTotalPower(self, vals):
         self.totalPower = vals['Total system power']
@@ -125,8 +126,12 @@ class SolaxBatteryControl(object):
         if self.assistancePower(inverterName):
             # Load share between phases
             #print("Load sharing activated, Total power is {}".format(self.totalPower))
-            inverter['DischargePower'] -= self.phasePower[phase] * 0.25
-            inverter['DischargePower'] += self.totalPower * 0.1
+            if self.config['linked-batteries']:
+                self.totalDischargePower += self.totalPower * 0.1
+                inverter['DischargePower'] = self.totalDischargePower / len(self.config['Inverter'])
+            else:
+                inverter['DischargePower'] -= self.phasePower[phase] * 0.25
+                inverter['DischargePower'] += self.totalPower * 0.1
         #else:
            # print("Phase {} power is {}".format(phase, self.phasePower[phase]))
 
