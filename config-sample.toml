@@ -14,7 +14,8 @@ inverters = ['solax1']
 
 # Enable this section to scrape Modbus/RTU (RS485) connected SDM630v2 energy meters
 #[SDM630Modbusv2]
-#timeout = 5 # seconds
+#poll_period = 1 # seconds
+#timeout = 1 # seconds
 #baud = 38400
 #parity = 'E'
 #stopbits = 1
