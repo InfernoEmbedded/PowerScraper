@@ -45,7 +45,7 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
     client = None
     config = None
     ready = False
-
+    
     def __init__(self, config):
         self.config = config
 
@@ -89,11 +89,16 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
         return p    
 
 class SolaxModbus(object):
+    host = None
+    config = None
+    factory = None
+    powerBudgets = []
 
     ##
     # Create a new class to fetch data from the Modbus interface of Solax inverters
     def __init__(self, config, host):
         self.host = host        
+        self.config = config
         self.factory = SolaxFactory(config)
         reactor.connectTCP(host, 502, self.factory)
 
@@ -150,7 +155,12 @@ class SolaxModbus(object):
         vals['Battery Temperature'] = unsigned16(result, 0x55) / 10
         vals['Solar Energy Total'] = unsigned32(result, 0x70) / 10 # kWh
         
-        vals['Power Budget'] = vals['Battery Power'] + vals['Feed In Power']
-        vals['Usage'] = vals['Grid Power'] + vals['PV1 Power'] + vals['PV2 Power'] - vals['Power Budget']
+        vals['Power Budget'] = vals['Battery Power'] + vals['Feed In Power'] - vals['Grid Power']
+        self.powerBudgets.append(vals['Power Budget'])
+        if len(self.powerBudgets) > self.config['power_budget_avg_samples']:
+            del self.powerBudgets[0]
+        vals['Power Budget Average'] =  sum(self.powerBudgets) / len(self.powerBudgets)
+        
+        vals['Usage'] = vals['Grid Power'] + vals['PV1 Power'] + vals['PV2 Power'] - vals['Battery Power'] - vals['Feed In Power']
         
         completionCallback(vals)
