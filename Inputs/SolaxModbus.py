@@ -150,4 +150,7 @@ class SolaxModbus(object):
         vals['Battery Temperature'] = unsigned16(result, 0x55) / 10
         vals['Solar Energy Total'] = unsigned32(result, 0x70) / 10 # kWh
         
+        vals['Power Budget'] = vals['Battery Power'] + vals['Feed In Power']
+        vals['Usage'] = vals['Grid Power'] + vals['PV1 Power'] + vals['PV2 Power'] - vals['Power Budget']
+        
         completionCallback(vals)
