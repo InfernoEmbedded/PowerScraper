@@ -9,6 +9,7 @@ class SolaxBatteryControl(object):
         self.config = config
         self.phasePower = [0]*16
         self.assistNeeded = {}
+        self.totalPower = 0
         self.totalDischargePower = 0
 
     def handleMeterPower(self, vals):
@@ -64,7 +65,7 @@ class SolaxBatteryControl(object):
         result = client.write_register(0x90, 1)
         result.addCallback(self.enableGridService(result, client, power))
 
-    def assistancePower(self, inverterName):
+    def assistancePower(self):
         for inverter, assistNeeded in self.assistNeeded.items():
             if assistNeeded:
                 return True
@@ -96,6 +97,7 @@ class SolaxBatteryControl(object):
         phase = inverter['phase']
 
         if not 'source' in self.config:
+                #print("Using inverter power")
                 self.handleInverterPower(inverter, valCopy)
 
 
@@ -107,21 +109,24 @@ class SolaxBatteryControl(object):
             # Don't expect other inverters to take the load if power is cheap enough to charge
             # otherwise, we just shift power from one inverter to another and suffer conversion losses
             # along the way
-            self.assistNeeded[inverterName] = 0
+            self.assistNeeded[inverterName] = False
             return
 
         # Try and zero our phase power
         #print("Initial discharge power is {}, additional from phase is {}\n".format(inverter['DischargePower'], self.phasePower[phase]))
         inverter['DischargePower'] += self.phasePower[phase] * 0.25
 
-        self.assistNeeded[inverterName] = 0
+        self.assistNeeded[inverterName] = False
 
         # Do we need help servicing the load?
         if (inverter['DischargePower'] + self.phasePower[phase] * 0.75) > inverter['single-phase-discharge-limit']:
+            #print("{} Discharge exceeded".format(inverterName))
             self.assistNeeded[inverterName] = True
         elif (inverter['DischargePower'] + self.phasePower[phase] * 0.75) < inverter['single-phase-charge-limit'] * -1:
+            #print("{} Charge exceeded".format(inverterName))
             self.assistNeeded[inverterName] = True
         else:
+            #print("{} In range for single phase".format(inverterName))
             self.assistNeeded[inverterName] = False
 
         # Don't discharge below the minimum allowed for this period
@@ -132,12 +137,14 @@ class SolaxBatteryControl(object):
             self.assistNeeded[inverterName] = True
             return
 
-        if self.assistancePower(inverterName):
+        if self.assistancePower():
+            #print("{} Assistance needed".format(inverterName))
             # Load share between phases
             #print("Load sharing activated, Total power is {}".format(self.totalPower))
             if self.config['linked-batteries']:
                 self.totalDischargePower += self.totalPower * 0.1
-                inverter['DischargePower'] = self.totalDischargePower
+                inverter['DischargePower'] = self.totalDischargePower / len(self.config['Inverter'])
+                #print("{} totalPower delta = {}  Linked assistance power = {}".format(inverterName, self.totalPower, inverter['DischargePower']))
             else:
                 inverter['DischargePower'] -= self.phasePower[phase] * 0.25
                 inverter['DischargePower'] += self.totalPower * 0.1
