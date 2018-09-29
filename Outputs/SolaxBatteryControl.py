@@ -137,7 +137,7 @@ class SolaxBatteryControl(object):
             #print("Load sharing activated, Total power is {}".format(self.totalPower))
             if self.config['linked-batteries']:
                 self.totalDischargePower += self.totalPower * 0.1
-                inverter['DischargePower'] = self.totalDischargePower / len(self.config['Inverter'])
+                inverter['DischargePower'] = self.totalDischargePower
             else:
                 inverter['DischargePower'] -= self.phasePower[phase] * 0.25
                 inverter['DischargePower'] += self.totalPower * 0.1
