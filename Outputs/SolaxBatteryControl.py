@@ -11,6 +11,8 @@ class SolaxBatteryControl(object):
         self.assistNeeded = {}
         self.totalPower = 0
         self.totalDischargePower = 0
+        self.maxTotalChargePower = self.maxTotalChargePower()
+        self.maxTotalDischargePower = self.maxTotalDischargePower()
 
     def handleMeterPower(self, vals):
         self.totalPower = vals['Total system power']
@@ -72,6 +74,22 @@ class SolaxBatteryControl(object):
 
         return False
 
+    def maxTotalDischargePower(self):
+        power = 0
+        
+        for inverterName, inverter in self.config['Inverter'].items():
+            power += inverter['max-discharge']
+            
+        return power
+    
+    def maxTotalChargePower(self):
+        power = 0
+        
+        for inverterName, inverter in self.config['Inverter'].items():
+            power += inverter['max-charge']
+            
+        return power
+
     def send(self, vals):
         valCopy = vals.copy()
         inverterName = valCopy.pop('name', None)
@@ -119,9 +137,9 @@ class SolaxBatteryControl(object):
 
         if self.assistNeeded[inverterName]:
             if inverter['DischargePower'] >= 0 and inverter['DischargePower'] < inverter['single-phase-discharge-limit'] / len(self.config['Inverter']):
-                self.assistNeeded[inverterName] = false
+                self.assistNeeded[inverterName] = False
             elif inverter['DischargePower'] < 0 and inverter['DischargePower'] > -1 * inverter['single-phase-charge-limit'] / len(self.config['Inverter']):
-                self.assistNeeded[inverterName] = false
+                self.assistNeeded[inverterName] = False
             #else:
                 #print("{} In range for 3 phase".format(inverterName))                
         else:
@@ -142,13 +160,25 @@ class SolaxBatteryControl(object):
             self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
             self.assistNeeded[inverterName] = True
             return
-
+        
+        # Don't consider the battery as charging if it is throttled by the BMS
+        if vals['Battery Capacity'] > 95 and inverter['DischargePower'] < 0 and vals['Battery Power'] < inverter['DischargePower'] / -10:
+            #print("{} trickle charging as battery is full ({})")
+            inverter['DischargePower'] = vals['Battery Power'] * -1
+            self.assistNeeded[inverterName] = True
+            return
+            
         if self.assistancePower():
             # Load share between phases
             #print("Load sharing activated, Total power is {}".format(self.totalPower))
             if self.config['linked-batteries']:
                 self.totalDischargePower += self.totalPower * 0.1
                 inverter['DischargePower'] = self.totalDischargePower / len(self.config['Inverter'])
+                if self.totalDischargePower > self.maxTotalDischargePower:
+                    self.totalDischargePower = self.maxTotalDischargePower
+                elif self.totalDischargePower < self.maxTotalChargePower * -1:
+                    self.totalDischargePower = self.maxTotalChargePower * -1
+                    
                 #print("{} totalPower delta = {}  Linked assistance power = {}".format(inverterName, self.totalPower, inverter['DischargePower']))
             else:
                 inverter['DischargePower'] -= self.phasePower[phase] * 0.25
