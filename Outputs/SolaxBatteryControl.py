@@ -117,7 +117,7 @@ class SolaxBatteryControl(object):
 
         if not 'source' in self.config:
                 #print("Using inverter power")
-                self.handleInverterPower(inverter, valCopy)
+                self.handleInverterPower(phase, valCopy)
 
 
         # If we allow charging from the grid, charge up to the minimum capacity
