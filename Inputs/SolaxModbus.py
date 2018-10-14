@@ -119,7 +119,7 @@ class SolaxModbus(object):
         vals['#SolaxClient'] = self.factory.getClient()
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
         vals['Grid Current'] = signed16(result, 0x01) / 10
-        vals['Grid Power'] = signed16(result, 0x02) / 10
+        vals['Grid Power'] = signed16(result, 0x02)
         vals['PV1 Voltage'] = unsigned16(result, 0x03) / 10
         vals['PV2 Voltage'] = unsigned16(result, 0x04) / 10
         vals['PV1 Current'] = unsigned16(result, 0x05) / 10
