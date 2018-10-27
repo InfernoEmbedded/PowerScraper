@@ -160,14 +160,7 @@ class SolaxBatteryControl(object):
             self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
             self.assistNeeded[inverterName] = True
             return
-        
-        # Don't consider the battery as charging if it is throttled by the BMS
-        if vals['Battery Capacity'] > 95 and inverter['DischargePower'] < 0 and vals['Battery Power'] < inverter['DischargePower'] / -10:
-            #print("{} trickle charging as battery is full ({})")
-            inverter['DischargePower'] = vals['Battery Power'] * -1
-            self.assistNeeded[inverterName] = True
-            return
-            
+                    
         if self.assistancePower():
             # Load share between phases
             #print("Load sharing activated, Total power is {}".format(self.totalPower))
@@ -191,7 +184,13 @@ class SolaxBatteryControl(object):
             inverter['DischargePower'] = inverter['max-discharge']
         elif inverter['DischargePower'] < inverter['max-charge'] * -1:
             inverter['DischargePower'] = inverter['max-charge'] * -1
-
+        
+        # Don't consider the battery as charging if it is throttled by the BMS
+        if vals['Battery Capacity'] > 95 and inverter['DischargePower'] < 0 and vals['Battery Power'] < inverter['DischargePower'] / -10:
+            #print("{} trickle charging as battery is full ({})")
+            inverter['DischargePower'] = 0
+            self.assistNeeded[inverterName] = True
+                    
         #print("{} to discharge at {}W".format(inverterName, inverter['DischargePower']))
         self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
 
