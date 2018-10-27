@@ -119,7 +119,7 @@ class SolaxModbus(object):
         vals['#SolaxClient'] = self.factory.getClient()
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
         vals['Grid Current'] = signed16(result, 0x01) / 10
-        vals['Grid Power'] = signed16(result, 0x02)
+        vals['Inverter Power'] = signed16(result, 0x02)
         vals['PV1 Voltage'] = unsigned16(result, 0x03) / 10
         vals['PV2 Voltage'] = unsigned16(result, 0x04) / 10
         vals['PV1 Current'] = unsigned16(result, 0x05) / 10
@@ -143,7 +143,7 @@ class SolaxModbus(object):
         vals['Inverter Fault'] = unsigned32(result, 0x40) 
         vals['Charger Fault'] = unsigned16(result, 0x42) 
         vals['Manager Fault'] = unsigned16(result, 0x43) 
-        vals['Feed In Power'] = signed32(result, 0x46) # Power to the grid
+        vals['Measured Power'] = signed32(result, 0x46) # Power from the grid +ve, to grid -ve
         vals['Feed In Energy'] = unsigned32(result, 0x48) / 100 # Energy delivered to the grid, kWh
         vals['Consumed Energy'] = unsigned32(result, 0x4A) / 100 # Energy consumed from the grid, kWh
         vals['EPS Voltage'] = unsigned16(result, 0x4C) / 10
@@ -155,12 +155,12 @@ class SolaxModbus(object):
         vals['Battery Temperature'] = unsigned16(result, 0x55) / 10
         vals['Solar Energy Total'] = unsigned32(result, 0x70) / 10 # kWh
         
-        vals['Power Budget'] = vals['Battery Power'] + vals['Feed In Power'] - vals['Grid Power']
+        vals['Power Budget'] = vals['Battery Power'] + vals['Measured Power']
         self.powerBudgets.append(vals['Power Budget'])
         if len(self.powerBudgets) > self.config['power_budget_avg_samples']:
             del self.powerBudgets[0]
         vals['Power Budget Average'] =  sum(self.powerBudgets) / len(self.powerBudgets)
         
-        vals['Usage'] = vals['Grid Power'] + vals['PV1 Power'] + vals['PV2 Power'] - vals['Battery Power'] - vals['Feed In Power']
+        vals['Usage'] = vals['Inverter Power'] - vals['Measured Power']
         
         completionCallback(vals)
