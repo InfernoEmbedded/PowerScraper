@@ -1,5 +1,6 @@
 import datetime
-from time import sleep
+import os
+from time import sleep, tzset
 
 import pprint
 pp = pprint.PrettyPrinter(indent=4)
@@ -13,6 +14,10 @@ class SolaxBatteryControl(object):
         self.totalDischargePower = 0
         self.maxTotalChargePower = self.maxTotalChargePower()
         self.maxTotalDischargePower = self.maxTotalDischargePower()
+
+        if 'timezone' in config:
+                os.environ['TZ'] = config['timezone']
+                tzset()
 
     def handleMeterPower(self, vals):
         self.totalPower = vals['Total system power']

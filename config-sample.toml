@@ -42,6 +42,7 @@ api_key = "123456789abdcef"
 #[Solax-BatteryControl]
 #source = "MainsMeter"     # The data source for power consumption
 #linked-batteries = true   # If set, all batteries charge/discharge at the same rate when trying to zero total power
+#timezone = "AEDT-10" # If set, always use this timezone for period calculations. This may be useful if your machine tracks daylight savings, but your energy provider does not
 
 # Defines the inverters that will participate
 #[Solax-BatteryControl.Inverter.solax1] # First inverter
