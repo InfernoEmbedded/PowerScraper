@@ -27,7 +27,6 @@ class SolaxBatteryControl(object):
     def getPeriod(self):
         nowDateTime = datetime.datetime.now()
         now = datetime.time(nowDateTime.hour, nowDateTime.minute, nowDateTime.second)
-        midnight = datetime.time(0, 0, 0)
 
         for periodName, period in self.config['Period'].items():
             bits = period['start'].split(':')
