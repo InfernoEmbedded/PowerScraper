@@ -26,7 +26,7 @@ class SolaxBatteryControl(object):
         self.phasePower[3] = vals['Phase 3 power']
 
     def handleInverterPower(self, phase, vals):
-        self.phasePower[phase] = vals['Feed In Power'] * -1
+        self.phasePower[phase] = vals['Measured Power'] * -1
         self.totalPower = self.phasePower[1] + self.phasePower[2] + self.phasePower[3]
 
     def getPeriod(self):
