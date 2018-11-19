@@ -51,6 +51,8 @@ api_key = "123456789abdcef"
 #single-phase-discharge-limit = 1000   # If the discharge rate is below this, aim to zero our own phase, if it's above, aim to zero total power
 #max-charge = 2000                  # Maximum battery charge rate in Watts
 #max-discharge = 2000               # Maximum battery discharge rate in Watts
+#grace-capacity = 70                # Percentage of total capacity at which to stop charging to reserve for absorbing power greater than inverter output
+#grace-power-threshold = 4500       # Ignore the grace capacity if PV power is greater than this
 #[Solax-BatteryControl.Inverter.solax2]
 #phase = 2
 #single-phase-charge-limit = 1000
@@ -63,6 +65,7 @@ api_key = "123456789abdcef"
 #single-phase-discharge-limit = 1000
 #max-charge = 2000
 #max-discharge = 2000
+#grace-capacity = 0
 
 # Define the time periods
 # Suitable for ActewAGL Time of Use plans in Canberra, Australia
@@ -73,11 +76,19 @@ api_key = "123456789abdcef"
 #min-charge = 20        # The minimum % charge left in the batteries. The inverter will not discharge lower than this in this period
 #grid-charge = false    # True to charge from the grid if the charge is less than min-charge
 #
-#[Solax-BatteryControl.Period.DayShoulder]
+#[Solax-BatteryControl.Period.DayShoulderGracePeriod] # Reserve grace capacity in this period
 #start = "9:05:00"
+#end = "14:00:00"
+#min-charge = 30        # Once charged from solar, we don't want the battery to drop below this to give us enough to get through the following peak period
+#grid-charge = false
+#grace = true
+#
+#[Solax-BatteryControl.Period.DayShoulder] # No grace capacity, aim te have the batteries fully charged
+#start = "14:00:00"
 #end = "15:55:00"
 #min-charge = 30        # Once charged from solar, we don't want the battery to drop below this to give us enough to get through the following peak period
 #grid-charge = false
+#grace = false
 #
 # Allow charging near the end of the shoulder period (if the batteries are less than 30%)
 #[Solax-BatteryControl.Period.DayShoulderGridCharge]
@@ -85,21 +96,25 @@ api_key = "123456789abdcef"
 #end = "16:55:00"
 #min-charge = 30
 #grid-charge = true
+#grace = false
 #
 #[Solax-BatteryControl.Period.EveningPeak]
 #start = "16:55:00"
 #end = "20:05:00"
 #min-charge = 20
 #grid-charge = false
+#grace = false
 #
 #[Solax-BatteryControl.Period.EveningShoulder]
 #start = "20:05:00"
 #end = "22:05:00"
 #min-charge = 20
 #grid-charge = false
+#grace = false
 #
 #[Solax-BatteryControl.Period.Offpeak]
 #start = "22:05:00"
 #end = "6:55:00"
 #min-charge = 30
 #grid-charge = true
+#grace = false

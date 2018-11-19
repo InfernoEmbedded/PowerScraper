@@ -80,18 +80,18 @@ class SolaxBatteryControl(object):
 
     def maxTotalDischargePower(self):
         power = 0
-        
+
         for inverterName, inverter in self.config['Inverter'].items():
             power += inverter['max-discharge']
-            
+
         return power
-    
+
     def maxTotalChargePower(self):
         power = 0
-        
+
         for inverterName, inverter in self.config['Inverter'].items():
             power += inverter['max-charge']
-            
+
         return power
 
     def send(self, vals):
@@ -119,9 +119,13 @@ class SolaxBatteryControl(object):
 
         phase = inverter['phase']
 
+        grace = False
+        if 'grace' in period and 'grace-capacity' in inverter and inverter['grace-capacity'] > 0:
+            grace = period['grace']
+
         if not 'source' in self.config:
-                #print("Using inverter power")
-                self.handleInverterPower(phase, valCopy)
+            #print("Using inverter power")
+            self.handleInverterPower(phase, valCopy)
 
 
         # If we allow charging from the grid, charge up to the minimum capacity
@@ -145,7 +149,7 @@ class SolaxBatteryControl(object):
             elif inverter['DischargePower'] < 0 and inverter['DischargePower'] > -1 * inverter['single-phase-charge-limit'] / len(self.config['Inverter']):
                 self.assistNeeded[inverterName] = False
             #else:
-                #print("{} In range for 3 phase".format(inverterName))                
+                #print("{} In range for 3 phase".format(inverterName))
         else:
             # Do we need help servicing the load?
             if (inverter['DischargePower'] + self.phasePower[phase] * 0.75) > inverter['single-phase-discharge-limit']:
@@ -164,7 +168,7 @@ class SolaxBatteryControl(object):
             self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
             self.assistNeeded[inverterName] = True
             return
-                    
+
         if self.assistancePower():
             # Load share between phases
             #print("Load sharing activated, Total power is {}".format(self.totalPower))
@@ -175,7 +179,7 @@ class SolaxBatteryControl(object):
                     self.totalDischargePower = self.maxTotalDischargePower
                 elif self.totalDischargePower < self.maxTotalChargePower * -1:
                     self.totalDischargePower = self.maxTotalChargePower * -1
-                    
+
                 #print("{} totalPower delta = {}  Linked assistance power = {}".format(inverterName, self.totalPower, inverter['DischargePower']))
             else:
                 inverter['DischargePower'] -= self.phasePower[phase] * 0.25
@@ -188,13 +192,17 @@ class SolaxBatteryControl(object):
             inverter['DischargePower'] = inverter['max-discharge']
         elif inverter['DischargePower'] < inverter['max-charge'] * -1:
             inverter['DischargePower'] = inverter['max-charge'] * -1
-        
+
         # Don't consider the battery as charging if it is throttled by the BMS
         if vals['Battery Capacity'] > 95 and inverter['DischargePower'] < 0 and vals['Battery Power'] < inverter['DischargePower'] / -10:
-            #print("{} trickle charging as battery is full ({})")
             inverter['DischargePower'] = 0
             self.assistNeeded[inverterName] = True
-                    
+
+        # Handle grace period
+        if grace and vals['Battery Capacity'] > inverter['grace-capacity'] and (vals['PV1 Power'] + vals['PV2 Power']) < inverter['grace-power-threshold']:
+            inverter['DischargePower'] = 0
+            self.assistNeeded[inverterName] = True
+
         #print("{} to discharge at {}W".format(inverterName, inverter['DischargePower']))
         self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
 
