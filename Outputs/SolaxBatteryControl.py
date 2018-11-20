@@ -199,7 +199,7 @@ class SolaxBatteryControl(object):
             self.assistNeeded[inverterName] = True
 
         # Handle grace period
-        if grace and vals['Battery Capacity'] > inverter['grace-capacity'] and (vals['PV1 Power'] + vals['PV2 Power']) < inverter['grace-power-threshold']:
+        if grace and inverter['DischargePower'] < 0 and vals['Battery Capacity'] > inverter['grace-capacity'] and (vals['PV1 Power'] + vals['PV2 Power']) < inverter['grace-power-threshold']:
             inverter['DischargePower'] = 0
             self.assistNeeded[inverterName] = True
 
