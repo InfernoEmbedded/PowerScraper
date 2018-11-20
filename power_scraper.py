@@ -5,20 +5,20 @@
 # Setup:
 #   pip install toml twisted pymodbus
 #   cp config-example.toml config.toml
-#   vi config.toml 
+#   vi config.toml
 #
 # Copyright (c)2018 Inferno Embedded   http://infernoembedded.com
-# 
+#
 # This program is free software: you can redistribute it and/or modify
 #    it under the terms of the GNU General Public License as published by
 #    the Free Software Foundation, either version 3 of the License, or
 #    (at your option) any later version.
-# 
+#
 #    This program is distributed in the hope that it will be useful,
 #    but WITHOUT ANY WARRANTY; without even the implied warranty of
 #    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 #    GNU General Public License for more details.
-# 
+#
 #    You should have received a copy of the GNU General Public License
 #    along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
@@ -48,29 +48,39 @@ from twisted.logger._levels import LogLevel
 def analyze(event):
     if event.get("log_level") == LogLevel.critical:
         print("Critical: ", event)
-               
+
 def outputActions(vals):
     global outputs
     if outputs is None:
         return
-    
+
     for output in outputs:
         output.send(vals)
-    
+
 def inputActions(inputs):
     for input in inputs:
         input.fetch(outputActions)
-            
+
+def shutdown():
+    global SolaxModbusInverters
+    for inverter in SolaxModbusInverters:
+        inverter.shutdown()
+
+
 globalLogPublisher.addObserver(analyze)
 
 with open("config.toml") as conffile:
     global config
     config = toml.loads(conffile.read())
-    
+
 #     pp.pprint(config)
 
 global outputs
 outputs = []
+
+global SolaxModbusInverters
+SolaxModbusInverters = []
+
 
 print("Setting up EmonCMS")
 if 'emoncms' in config:
@@ -107,6 +117,6 @@ if 'SDM630ModbusV2' in config:
     looperSDM630 = task.LoopingCall(inputActions, SDM630Meters)
     looperSDM630.start(config['SDM630ModbusV2']['poll_period'])
 
-
+reactor.addSystemEventTrigger('before', 'shutdown', shutdown)
 
 reactor.run()

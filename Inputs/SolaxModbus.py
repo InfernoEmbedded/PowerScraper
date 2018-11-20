@@ -11,7 +11,7 @@ from twisted.web.http_headers import Headers
 
 def unsigned16(result, addr):
     return result.getRegister(addr)
-    
+
 def unsigned32(result, addr):
     low = result.getRegister(addr)
     high = result.getRegister(addr + 1)
@@ -21,7 +21,7 @@ def unsigned32(result, addr):
 
 def signed16(result, addr):
     val = result.getRegister(addr)
-    
+
     if val > 32767:
         val -= 65535
     return val
@@ -45,7 +45,7 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
     client = None
     config = None
     ready = False
-    
+
     def __init__(self, config):
         self.config = config
 
@@ -86,7 +86,10 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
         self.resetDelay()
         p = SolaxProtocol()
         p.factory = self
-        return p    
+        return p
+
+    def shutdown(self):
+        self.doStop()
 
 class SolaxModbus(object):
     host = None
@@ -97,22 +100,25 @@ class SolaxModbus(object):
     ##
     # Create a new class to fetch data from the Modbus interface of Solax inverters
     def __init__(self, config, host):
-        self.host = host        
+        self.host = host
         self.config = config
         self.factory = SolaxFactory(config)
         reactor.connectTCP(host, 502, self.factory)
 
 #         defer = protocol.ClientCreator(reactor, ModbusClientProtocol).connectTCP(host, 502)
 #         defer.addCallback(self.setClient)
-#          
+#
 #     def setClient(self, client):
 #         self.client = client
-        
+
     def fetch(self, completionCallback):
         result = self.factory.readRegisters()
         if result != None:
             result.addCallback(self.solaxRegisterCallback, completionCallback)
-        
+
+    def shutdown(self):
+        self.factory.shutdown()
+
     def solaxRegisterCallback(self, result, completionCallback):
         vals = {}
         vals['name'] = self.host;
@@ -136,13 +142,13 @@ class SolaxModbus(object):
         vals['Charger Battery Temperature'] = signed16(result, 0x18)
         vals['Charger Boost Temperature'] = signed16(result, 0x19)
         vals['Battery Capacity'] = unsigned16(result, 0x1C)
-        vals['Battery Energy Charged'] = unsigned32(result, 0x1D) / 10 
+        vals['Battery Energy Charged'] = unsigned32(result, 0x1D) / 10
         vals['BMS Warning'] = unsigned16(result, 0x1F)
         vals['Battery Energy Discharged'] = unsigned32(result, 0x20) / 10
         vals['Battery State of Health'] = unsigned16(result, 0x23)
-        vals['Inverter Fault'] = unsigned32(result, 0x40) 
-        vals['Charger Fault'] = unsigned16(result, 0x42) 
-        vals['Manager Fault'] = unsigned16(result, 0x43) 
+        vals['Inverter Fault'] = unsigned32(result, 0x40)
+        vals['Charger Fault'] = unsigned16(result, 0x42)
+        vals['Manager Fault'] = unsigned16(result, 0x43)
         vals['Measured Power'] = signed32(result, 0x46) # Power from the grid +ve, to grid -ve
         vals['Feed In Energy'] = unsigned32(result, 0x48) / 100 # Energy delivered to the grid, kWh
         vals['Consumed Energy'] = unsigned32(result, 0x4A) / 100 # Energy consumed from the grid, kWh
@@ -154,13 +160,13 @@ class SolaxModbus(object):
         vals['Energy Total'] = unsigned32(result, 0x52) / 1000
         vals['Battery Temperature'] = unsigned16(result, 0x55) / 10
         vals['Solar Energy Total'] = unsigned32(result, 0x70) / 10 # kWh
-        
+
         vals['Power Budget'] = vals['Battery Power'] + vals['Measured Power']
         self.powerBudgets.append(vals['Power Budget'])
         if len(self.powerBudgets) > self.config['power_budget_avg_samples']:
             del self.powerBudgets[0]
         vals['Power Budget Average'] =  sum(self.powerBudgets) / len(self.powerBudgets)
-        
+
         vals['Usage'] = vals['Inverter Power'] - vals['Measured Power']
-        
+
         completionCallback(vals)
