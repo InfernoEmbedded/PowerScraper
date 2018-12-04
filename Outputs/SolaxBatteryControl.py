@@ -120,7 +120,7 @@ class SolaxBatteryControl(object):
         phase = inverter['phase']
 
         grace = False
-        if 'grace' in period and 'grace-capacity' in inverter and inverter['grace-capacity'] > 0:
+        if 'grace' in period and 'grace-capacity' in inverter and inverter['grace-capacity'] > 0 and 'grace-charge-power' in inverter:
             grace = period['grace']
 
         if not 'source' in self.config:
@@ -199,10 +199,13 @@ class SolaxBatteryControl(object):
             self.assistNeeded[inverterName] = True
 
         # Handle grace period
-        if grace and inverter['DischargePower'] < 0 and vals['Battery Capacity'] > inverter['grace-capacity'] and (vals['PV1 Power'] + vals['PV2 Power']) < inverter['grace-power-threshold']:
-            inverter['DischargePower'] = 0
-            self.assistNeeded[inverterName] = True
-
+        if grace and inverter['DischargePower'] < 0 and vals['Battery Capacity'] > inverter['grace-capacity']:
+            if (vals['PV1 Power'] + vals['PV2 Power']) < inverter['grace-power-threshold']:
+                inverter['DischargePower'] = 0
+                self.assistNeeded[inverterName] = True
+            elif inverter['DischargePower'] < (inverter['grace-charge-power'] * -1):
+                inverter['DischargePower'] = inverter['grace-charge-power'] * -1
+                
         #print("{} to discharge at {}W".format(inverterName, inverter['DischargePower']))
         self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
 

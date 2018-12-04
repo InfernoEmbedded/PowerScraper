@@ -53,6 +53,7 @@ api_key = "123456789abdcef"
 #max-discharge = 2000               # Maximum battery discharge rate in Watts
 #grace-capacity = 70                # Percentage of total capacity at which to stop charging to reserve for absorbing power greater than inverter output
 #grace-power-threshold = 4500       # Ignore the grace capacity if PV power is greater than this
+#grace-charge-power = 500           # The amount of power to charge the battery at when in the grace period
 #[Solax-BatteryControl.Inverter.solax2]
 #phase = 2
 #single-phase-charge-limit = 1000
