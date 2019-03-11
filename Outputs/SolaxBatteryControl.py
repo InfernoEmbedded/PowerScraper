@@ -138,6 +138,16 @@ class SolaxBatteryControl(object):
             # along the way
             self.assistNeeded[inverterName] = False
             return
+        
+        # If the battery is below the minimum capacity, and we prefer to charge the battery, send solar power to the battery
+        if vals['Battery Capacity'] < period['min-charge'] and 'prefer-battery' in period and period['prefer-battery']:
+            inverter['DischargePower'] = 0 - vals['PV1 Power'] - vals['PV2 Power']
+            if (inverter['DischargePower'] < (inverter['max-charge'] * -1)):
+                inverter['DischargePower'] = inverter['max-charge'] * -1
+                
+            self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
+            self.assistNeeded[inverterName] = True
+            return
 
         # Try and zero our phase power
         #print("Initial discharge power is {}, additional from phase is {}\n".format(inverter['DischargePower'], self.phasePower[phase]))

@@ -80,14 +80,15 @@ api_key = "123456789abdcef"
 #[Solax-BatteryControl.Period.DayShoulderGracePeriod] # Reserve grace capacity in this period
 #start = "9:05:00"
 #end = "14:00:00"
-#min-charge = 30        # Once charged from solar, we don't want the battery to drop below this to give us enough to get through the following peak period
+#min-charge = 30        # Once charged, we don't want the battery to drop below this to give us enough to get through the following peak period
 #grid-charge = false
 #grace = true
+#prefer-battery = true   # Solar power should go to charging the battery if battery is below mininmum
 #
-#[Solax-BatteryControl.Period.DayShoulder] # No grace capacity, aim te have the batteries fully charged
+#[Solax-BatteryControl.Period.DayShoulder] # No grace capacity, aim to have the batteries fully charged
 #start = "14:00:00"
 #end = "15:55:00"
-#min-charge = 30        # Once charged from solar, we don't want the battery to drop below this to give us enough to get through the following peak period
+#min-charge = 30        # Once charged, we don't want the battery to drop below this to give us enough to get through the following peak period
 #grid-charge = false
 #grace = false
 #
