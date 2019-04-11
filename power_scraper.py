@@ -62,6 +62,7 @@ def inputActions(inputs):
         input.fetch(outputActions)
 
 def shutdown():
+    print("Shutdown")
     global SolaxModbusInverters
     for inverter in SolaxModbusInverters:
         inverter.shutdown()

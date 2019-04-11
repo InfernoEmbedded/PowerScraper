@@ -65,7 +65,7 @@ class SolaxBatteryControl(object):
 
     def wakeupInverter(self, client):
         result = client.write_register(0x90, 1)
-        result.addCallback(self.enableGridService(result, client))
+        result.addCallback(self.enableGridService(client))
 
     def assistancePower(self):
         for inverter, assistNeeded in self.assistNeeded.items():
@@ -132,7 +132,8 @@ class SolaxBatteryControl(object):
         if period['grid-charge'] and vals['Battery Capacity'] < period['min-charge']:
             inverter['DischargePower'] = inverter['max-charge'] * -1
             #print("{} charging from the grid at {}W".format(inverterName, inverter['DischargePower'] * -1))
-            self.enableGridService(vals['#SolaxClient'], inverter['DischargePower'])
+            self.enableGridService(vals['#SolaxClient'])
+            self.dischargeAt(vals['#SolaxClient'], inverter['DischargePower'])
             # Don't expect other inverters to take the load if power is cheap enough to charge
             # otherwise, we just shift power from one inverter to another and suffer conversion losses
             # along the way
