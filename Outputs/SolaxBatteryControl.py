@@ -51,7 +51,16 @@ class SolaxBatteryControl(object):
         print("No period for {}\n".format(now))
         return None
 
-    def dischargeAt(self, client, power):
+    def dischargeAt(self, client, inverter, period, power):
+        if power > inverter['max-discharge']:
+            power = inverter['max-discharge']
+        
+        if power < (inverter['max-charge'] * -1):
+            power = inverter['max-charge'] * -1
+        
+        if inverter['Battery Capacity'] < period['min-charge'] and power > 0:
+            power = 0
+        
         power = int(power) * -1
 
         # Convert to int16
@@ -117,6 +126,8 @@ class SolaxBatteryControl(object):
         if inverter['DischargePower'] != 0 and valCopy['Battery Power'] == 0:
             self.wakeupInverter(vals['#SolaxClient'])
 
+        inverter['Battery Capacity'] = vals['Battery Capacity']
+
         phase = inverter['phase']
 
         grace = False
@@ -127,13 +138,12 @@ class SolaxBatteryControl(object):
             #print("Using inverter power")
             self.handleInverterPower(phase, valCopy)
 
-
         # If we allow charging from the grid, charge up to the minimum capacity
         if period['grid-charge'] and vals['Battery Capacity'] < period['min-charge']:
             inverter['DischargePower'] = inverter['max-charge'] * -1
             #print("{} charging from the grid at {}W".format(inverterName, inverter['DischargePower'] * -1))
             self.enableGridService(vals['#SolaxClient'])
-            self.dischargeAt(vals['#SolaxClient'], inverter['DischargePower'])
+            self.dischargeAt(vals['#SolaxClient'], inverter, period, inverter['DischargePower'])
             # Don't expect other inverters to take the load if power is cheap enough to charge
             # otherwise, we just shift power from one inverter to another and suffer conversion losses
             # along the way
@@ -146,7 +156,7 @@ class SolaxBatteryControl(object):
             if (inverter['DischargePower'] < (inverter['max-charge'] * -1)):
                 inverter['DischargePower'] = inverter['max-charge'] * -1
                 
-            self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
+            self.dischargeAt(vals['#SolaxClient'],  inverter, period, inverter['DischargePower'])
             self.assistNeeded[inverterName] = True
             return
 
@@ -176,7 +186,7 @@ class SolaxBatteryControl(object):
         if vals['Battery Capacity'] <= period['min-charge'] and inverter['DischargePower'] > 0:
             inverter['DischargePower'] = 0
             #print("{} not discharging as capacity is low ({} <= {})".format(inverterName, vals['Battery Capacity'], period['min-charge']))
-            self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
+            self.dischargeAt(vals['#SolaxClient'],  inverter, period, inverter['DischargePower'])
             self.assistNeeded[inverterName] = True
             return
 
@@ -218,6 +228,6 @@ class SolaxBatteryControl(object):
                 inverter['DischargePower'] = inverter['grace-charge-power'] * -1
                 
         #print("{} to discharge at {}W".format(inverterName, inverter['DischargePower']))
-        self.dischargeAt(vals['#SolaxClient'],  inverter['DischargePower'])
+        self.dischargeAt(vals['#SolaxClient'], inverter, period, inverter['DischargePower'])
 
 
