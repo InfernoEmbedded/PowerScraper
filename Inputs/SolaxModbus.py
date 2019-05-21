@@ -49,6 +49,9 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
     def __init__(self, config):
         self.config = config
 
+    def err(arg):
+        print('err', arg)
+
     def setClient(self, client):
         self.client = client
 
@@ -67,11 +70,14 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
         result2 = self.client.write_register(0x1F, 2)
         if result2 != None:
             result2.addCallback(self.setOutputPower)
+            result2.addErrback(self.err)
 
     def setOutputPower(self, result):
         # Set output invert to max 5kW
         result2 = self.client.write_register(0x52, self.config['inverter_power'])
-        result2.addCallback(self.markReady)
+        if result2 != None:
+            result2.addCallback(self.markReady)
+            result2.addErrback(self.err)
 
     def markReady(self, result):
         self.ready = True
@@ -105,16 +111,14 @@ class SolaxModbus(object):
         self.factory = SolaxFactory(config)
         reactor.connectTCP(host, 502, self.factory)
 
-#         defer = protocol.ClientCreator(reactor, ModbusClientProtocol).connectTCP(host, 502)
-#         defer.addCallback(self.setClient)
-#
-#     def setClient(self, client):
-#         self.client = client
+    def err(arg):
+        print('err', arg)
 
     def fetch(self, completionCallback):
         result = self.factory.readRegisters()
         if result != None:
             result.addCallback(self.solaxRegisterCallback, completionCallback)
+            result.addErrback(self.err)
 
     def shutdown(self):
         self.factory.shutdown()
