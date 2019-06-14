@@ -49,7 +49,7 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
     def __init__(self, config):
         self.config = config
 
-    def err(arg):
+    def err(self, arg):
         print('err', arg)
 
     def setClient(self, client):
@@ -111,7 +111,7 @@ class SolaxModbus(object):
         self.factory = SolaxFactory(config)
         reactor.connectTCP(host, 502, self.factory)
 
-    def err(arg):
+    def err(self, arg):
         print('err', arg)
 
     def fetch(self, completionCallback):
