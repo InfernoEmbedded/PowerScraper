@@ -142,7 +142,7 @@ class SolaxBatteryControl(object):
         if period['grid-charge'] and vals['Battery Capacity'] < period['min-charge']:
             inverter['DischargePower'] = inverter['max-charge'] * -1
             #print("{} charging from the grid at {}W".format(inverterName, inverter['DischargePower'] * -1))
-            self.enableGridService(vals['#SolaxClient'])
+            #self.enableGridService(vals['#SolaxClient'])
             self.dischargeAt(vals['#SolaxClient'], inverter, period, inverter['DischargePower'])
             # Don't expect other inverters to take the load if power is cheap enough to charge
             # otherwise, we just shift power from one inverter to another and suffer conversion losses
