@@ -146,6 +146,7 @@ class SolaxModbus(object):
         vals['Charger Battery Temperature'] = signed16(result, 0x18)
         vals['Charger Boost Temperature'] = signed16(result, 0x19)
         vals['Battery Capacity'] = unsigned16(result, 0x1C)
+        vals['Battery Demand'] = 0 if vals['Battery Capacity'] > 95 else self.config['battery_power']
         vals['Battery Energy Charged'] = unsigned32(result, 0x1D) / 10
         vals['BMS Warning'] = unsigned16(result, 0x1F)
         vals['Battery Energy Discharged'] = unsigned32(result, 0x20) / 10
