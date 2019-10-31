@@ -4,6 +4,7 @@ from twisted.internet import defer, reactor, protocol
 from twisted.web.client import Agent, readBody
 #import unicodedata
 from twisted.web.http_headers import Headers
+import datetime
 
 #import pprint
 #pp = pprint.PrettyPrinter(indent=4)
@@ -55,9 +56,9 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
     def setClient(self, client):
         self.client = client
 
-        if 'installer_password' in self.config:
+        if 'installer_password' in self.config['Solax-Modbus']:
             self.ready = False
-            result = client.write_register(0x00, self.config['installer_password'])
+            result = client.write_register(0x00, self.config['Solax-Modbus']['installer_password'])
             if result != None:
                 result.addCallback(self.enableRemoteControl)
         else:
@@ -74,7 +75,7 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
 
     def setOutputPower(self, result):
         # Set output invert to max 5kW
-        result2 = self.client.write_register(0x52, self.config['inverter_power'])
+        result2 = self.client.write_register(0x52, self.config['Solax-Modbus']['inverter_power'])
         if result2 != None:
             result2.addCallback(self.markReady)
             result2.addErrback(self.err)
@@ -120,6 +121,27 @@ class SolaxModbus(object):
             result.addCallback(self.solaxRegisterCallback, completionCallback)
             result.addErrback(self.err)
 
+    def getPeriod(self):
+        nowDateTime = datetime.datetime.now()
+        now = datetime.time(nowDateTime.hour, nowDateTime.minute, nowDateTime.second)
+
+        for periodName, period in self.config['Solax-BatteryControl']['Period'].items():
+            bits = period['start'].split(':')
+            start = datetime.time(int(bits[0]), int(bits[1]), int(bits[2]))
+
+            bits = period['end'].split(':')
+            end = datetime.time(int(bits[0]), int(bits[1]), int(bits[2]))
+
+            if start < end:
+                if start <= now < end:
+                    return period
+            else:
+                if not (end <= now < start):
+                    return period
+
+        print("No period for {}\n".format(now))
+        return None
+
     def shutdown(self):
         self.factory.shutdown()
 
@@ -146,7 +168,16 @@ class SolaxModbus(object):
         vals['Charger Battery Temperature'] = signed16(result, 0x18)
         vals['Charger Boost Temperature'] = signed16(result, 0x19)
         vals['Battery Capacity'] = unsigned16(result, 0x1C)
-        vals['Battery Demand'] = 0 if vals['Battery Capacity'] > 95 else self.config['battery_power']
+
+        fullLimit = 95
+        if vals['name'] in self.config['Solax-BatteryControl']['Inverter']:
+            inverter = self.config['Solax-BatteryControl']['Inverter'][vals['name']]
+            period = self.getPeriod()
+            if period is not None and 'grace' in period and 'grace-capacity' in inverter and inverter['grace-capacity'] > 0:
+                fullLimit = inverter['grace-capacity']
+
+            vals['Battery Demand'] = 0 if vals['Battery Capacity'] >= fullLimit else inverter['max-charge']
+
         vals['Battery Energy Charged'] = unsigned32(result, 0x1D) / 10
         vals['BMS Warning'] = unsigned16(result, 0x1F)
         vals['Battery Energy Discharged'] = unsigned32(result, 0x20) / 10
@@ -168,7 +199,7 @@ class SolaxModbus(object):
 
         vals['Power Budget'] = vals['Battery Power'] + vals['Measured Power']
         self.powerBudgets.append(vals['Power Budget'])
-        if len(self.powerBudgets) > self.config['power_budget_avg_samples']:
+        if len(self.powerBudgets) > self.config['Solax-Modbus']['power_budget_avg_samples']:
             del self.powerBudgets[0]
         vals['Power Budget Average'] =  sum(self.powerBudgets) / len(self.powerBudgets)
 

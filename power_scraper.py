@@ -102,7 +102,7 @@ if 'Solax-Wifi' in config:
 if 'Solax-Modbus' in config:
     SolaxModbusInverters = []
     for inverter in config['Solax-Modbus']['inverters']:
-        modbusInverter = SolaxModbus(config['Solax-Modbus'], inverter)
+        modbusInverter = SolaxModbus(config, inverter)
         SolaxModbusInverters.append(modbusInverter)
 
     looperSolaxModbus = task.LoopingCall(inputActions, SolaxModbusInverters)
