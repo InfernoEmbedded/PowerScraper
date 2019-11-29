@@ -3,7 +3,7 @@
 # Scrapes Inverter information from solax inverters and presents it to OpenEnergyMonitor
 #
 # Setup:
-#   pip install toml twisted pymodbus
+#   pip3 install toml twisted pymodbus
 #   cp config-example.toml config.toml
 #   vi config.toml
 #
