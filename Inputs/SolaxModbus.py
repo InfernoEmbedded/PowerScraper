@@ -1,10 +1,13 @@
-from pymodbus.client.async import ModbusClientProtocol, ModbusClientFactory
+from pymodbus.factory import ClientDecoder
+from pymodbus.client.asynchronous.twisted import ModbusClientProtocol
 from pymodbus.framer.rtu_framer import ModbusRtuFramer
+
 from twisted.internet import defer, reactor, protocol
 from twisted.web.client import Agent, readBody
-#import unicodedata
 from twisted.web.http_headers import Headers
+
 import datetime
+#import unicodedata
 
 #import pprint
 #pp = pprint.PrettyPrinter(indent=4)
