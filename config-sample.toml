@@ -76,6 +76,7 @@ api_key = "123456789abdcef"
 #end = "9:05:00"        # The end time of the period
 #min-charge = 20        # The minimum % charge left in the batteries. The inverter will not discharge lower than this in this period
 #grid-charge = false    # True to charge from the grid if the charge is less than min-charge
+#force-discharge = 2000 # If set, will force the battery to discharge at this rate
 #
 #[Solax-BatteryControl.Period.DayShoulderGracePeriod] # Reserve grace capacity in this period
 #start = "9:05:00"
