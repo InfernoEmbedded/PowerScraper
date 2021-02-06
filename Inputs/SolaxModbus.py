@@ -63,25 +63,12 @@ class SolaxFactory(protocol.ReconnectingClientFactory):
             self.ready = False
             result = client.write_register(0x00, self.config['Solax-Modbus']['installer_password'])
             if result != None:
-                result.addCallback(self.enableRemoteControl)
+                result.addCallback(self.markReady)
         else:
             self.ready = True
 
     def getClient(self):
         return self.client
-
-    def enableRemoteControl(self, result):
-        result2 = self.client.write_register(0x1F, 2)
-        if result2 != None:
-            result2.addCallback(self.setOutputPower)
-            result2.addErrback(self.err)
-
-    def setOutputPower(self, result):
-        # Set output invert to max 5kW
-        result2 = self.client.write_register(0x52, self.config['Solax-Modbus']['inverter_power'])
-        if result2 != None:
-            result2.addCallback(self.markReady)
-            result2.addErrback(self.err)
 
     def markReady(self, result):
         self.ready = True

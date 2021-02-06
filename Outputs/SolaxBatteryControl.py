@@ -56,7 +56,11 @@ class SolaxBatteryControl(object):
 
     def wakeupInverter(self, success, client):
         result = client.write_register(0x90, 1)
-        result.addCallback(self.enableGridService, client)
+#        result.addCallback(self.enableGridService, client)
+
+    def setInverterPower(self, client, inverter):
+        result = client.write_register(0x52, inverter['max-power'])
+
 
     def dischargeAt(self, client, inverter, period, power):
         if 'force-discharge' in period:
@@ -126,6 +130,10 @@ class SolaxBatteryControl(object):
         if 'DischargePower' not in inverter:
             inverter['DischargePower'] = 0
             self.assistNeeded[inverterName] = False
+
+        if 'power is set' not in inverter:
+            self.setInverterPower(vals['#SolaxClient'], inverter)
+            inverter['power is set'] = True
 
         # Wake the inverter up if it is asleep
         #if inverter['DischargePower'] != 0 and valCopy['Battery Power'] == 0:
