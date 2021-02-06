@@ -154,7 +154,7 @@ class SolaxModbus(object):
         vals['#SolaxClient'] = self.factory.getClient()
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
         vals['Grid Current'] = signed16(result, 0x01) / 10
-        vals['Inverter Power'] = signed16(result, 0x02)
+        vals['Measured Power'] = signed16(result, 0x02)
         vals['PV1 Voltage'] = unsigned16(result, 0x03) / 10
         vals['PV2 Voltage'] = unsigned16(result, 0x04) / 10
         vals['PV1 Current'] = unsigned16(result, 0x05) / 10
@@ -188,7 +188,7 @@ class SolaxModbus(object):
         vals['Inverter Fault'] = unsigned32(result, 0x40)
         vals['Charger Fault'] = unsigned16(result, 0x42)
         vals['Manager Fault'] = unsigned16(result, 0x43)
-        vals['Measured Power'] = signed32(result, 0x46) # Power from the grid +ve, to grid -ve
+        vals['Inverter Power'] = signed32(result, 0x46) # Power from the grid +ve, to grid -ve
         vals['Feed In Energy'] = unsigned32(result, 0x48) / 100 # Energy delivered to the grid, kWh
         vals['Consumed Energy'] = unsigned32(result, 0x4A) / 100 # Energy consumed from the grid, kWh
         vals['EPS Voltage'] = unsigned16(result, 0x4C) / 10
