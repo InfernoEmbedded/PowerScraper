@@ -49,6 +49,7 @@ api_key = "123456789abdcef"
 #phase = 1                          # Which phase the inverter is connected to, as seen by the power consumption meter
 #single-phase-charge-limit = 1000   # If the charge rate is below this, aim to zero our own phase, if it's above, aim to zero total power
 #single-phase-discharge-limit = 1000   # If the discharge rate is below this, aim to zero our own phase, if it's above, aim to zero total power
+#max-power = 5000                   # Limit the inverter output to this value
 #max-charge = 2000                  # Maximum battery charge rate in Watts
 #max-discharge = 2000               # Maximum battery discharge rate in Watts
 #grace-capacity = 70                # Percentage of total capacity at which to stop charging to reserve for absorbing power greater than inverter output
