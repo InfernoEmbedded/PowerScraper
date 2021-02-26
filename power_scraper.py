@@ -3,7 +3,7 @@
 # Scrapes Inverter information from solax inverters and presents it to OpenEnergyMonitor
 #
 # Setup:
-#   pip3 install toml twisted pymodbus
+#   pip3 install toml twisted pymodbus influxdb_client
 #   cp config-example.toml config.toml
 #   vi config.toml
 #
@@ -39,6 +39,7 @@ from Inputs.SolaxModbus import SolaxModbus
 from Inputs.SDM630ModbusV2 import SDM630ModbusV2
 from Outputs.SolaxBatteryControl import SolaxBatteryControl
 from Outputs.EmonCMS import EmonCMS
+from Outputs.Influx2 import Influx2
 
 from twisted.internet.defer import setDebugging
 setDebugging(True)
@@ -83,14 +84,21 @@ global SolaxModbusInverters
 SolaxModbusInverters = []
 
 
-print("Setting up EmonCMS")
+
 if 'emoncms' in config:
+    print("Setting up EmonCMS")
     outputs.append(EmonCMS(config['emoncms']))
 
+if 'influx' in config:
+    print("Setting up Influx")
+    outputs.append(Influx2(config['influx']))
+
 if 'Solax-BatteryControl' in config:
+    print("Setting up Solax-BatteryControl")
     outputs.append(SolaxBatteryControl(config['Solax-BatteryControl']))
 
 if 'Solax-Wifi' in config:
+    print("Setting up Solax-Wifi")
     SolaxWifiInverters = []
     for inverter in config['Solax-Wifi']['inverters']:
         wifiInverter = SolaxWifi(inverter, config['solax-Wifi']['timeout'])
@@ -100,6 +108,7 @@ if 'Solax-Wifi' in config:
     looperSolaxWifi.start(config['Solax-Wifi']['poll_period'])
 
 if 'Solax-Modbus' in config:
+    print("Setting up Solax-Modbus")
     SolaxModbusInverters = []
     for inverter in config['Solax-Modbus']['inverters']:
         modbusInverter = SolaxModbus(config, inverter)
@@ -109,6 +118,7 @@ if 'Solax-Modbus' in config:
     looperSolaxModbus.start(config['Solax-Modbus']['poll_period'])
 
 if 'SDM630ModbusV2' in config:
+    print("Setting up SDM630ModbusV2")
     SDM630Meters = []
     for meter in config['SDM630ModbusV2']['ports']:
         modbusMeter = SDM630ModbusV2(meter, config['SDM630ModbusV2']['baud'], config['SDM630ModbusV2']['parity'],

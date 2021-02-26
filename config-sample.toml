@@ -23,11 +23,19 @@ inverters = ['solax1']
 #ports = ["/dev/ttyMainsMeter"]
 
 # Enable this section to output to EmonCMS
-[emoncms]
-timeout = 5 # seconds
-server = "http://emoncms"
-api_key = "123456789abdcef"
+#[emoncms]
+#timeout = 5 # seconds
+#server = "http://emoncms"
+#api_key = "123456789abdcef"
 
+# Enable this section to output to InfluxDB v1.8+
+#[influx]
+#influx_url = "http://localhost:8086"
+#influx_database = "your-influx-db-name"
+#influx_measurement = "your-influx-measurement"
+#influx_user = "influxuser"
+#influx_pass = "influxpassword"
+#influx_retention_policy = 'autogen'
 
 # Enable these sections to control battery charge/discharge on Solax SK-SU5000E inverters
 # This does a number of things:
