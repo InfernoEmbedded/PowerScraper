@@ -37,6 +37,15 @@ inverters = ['solax1']
 #influx_pass = "influxpassword"
 #influx_retention_policy = 'autogen'
 
+# Enable this sction to output to MQTT
+#[mqtt]
+#mqtt_host = "localhost"
+#mqtt_port = 1883
+#mqtt_keepalive = 60
+#mqtt_user = "mqttuser"
+#mqtt_pass = "mqttpassword"
+#mqtt_topic = "/yourtopic"
+
 # Enable these sections to control battery charge/discharge on Solax SK-SU5000E inverters
 # This does a number of things:
 # 1. Allows more than 2 time periods through the day

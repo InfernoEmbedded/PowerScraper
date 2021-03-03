@@ -3,7 +3,7 @@
 # Scrapes Inverter information from solax inverters and presents it to OpenEnergyMonitor
 #
 # Setup:
-#   pip3 install toml twisted pymodbus influxdb_client
+#   pip3 install toml twisted pymodbus influxdb_client paho-mqtt
 #   cp config-example.toml config.toml
 #   vi config.toml
 #
@@ -40,6 +40,7 @@ from Inputs.SDM630ModbusV2 import SDM630ModbusV2
 from Outputs.SolaxBatteryControl import SolaxBatteryControl
 from Outputs.EmonCMS import EmonCMS
 from Outputs.Influx2 import Influx2
+from Outputs.Mqtt import Mqtt
 
 from twisted.internet.defer import setDebugging
 setDebugging(True)
@@ -92,6 +93,10 @@ if 'emoncms' in config:
 if 'influx' in config:
     print("Setting up Influx")
     outputs.append(Influx2(config['influx']))
+
+if 'mqtt' in config:
+    print("Setting up Mqtt")
+    outputs.append(Mqtt(config['mqtt']))
 
 if 'Solax-BatteryControl' in config:
     print("Setting up Solax-BatteryControl")
