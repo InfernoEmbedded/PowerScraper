@@ -22,6 +22,15 @@ inverters = ['solax1']
 #stopbits = 1
 #ports = ["/dev/ttyMainsMeter"]
 
+# Enable this section to scrape Modbus/RTU (RS485, "meter" connection in the manual) for Solax X3 inverters
+#[SolaxX3RS485]
+#poll_period = 10 # seconds
+#timeout = 1 # seconds
+#baud = 9600
+#parity = 'N'
+#stopbits = 1
+#ports = ["/dev/ttySolaxX3"]
+
 # Enable this section to output to EmonCMS
 #[emoncms]
 #timeout = 5 # seconds
