@@ -25,13 +25,13 @@ class SolaxX3RS485(object):
         self.port = port
         self.client = ModbusSerialClient(method="rtu", port=self.port, baudrate=baudrate, parity=parity,
                                          stopbits=stopbits, timeout=timeout)
-        
+
     def fetch(self, completionCallback):
         result = self.client.read_input_registers(0X400, 53)
         if isinstance(result, ModbusException):
             print("Exception from SolaxX3RS485: {}".format(result))
             return
-         
+
         self.vals = {}
         self.vals['name'] = self.port.replace("/dev/tty", "");
         self.vals['Pv1 input voltage'] = unsigned16(result, 0) / 10

@@ -68,10 +68,10 @@ class SolaxBatteryControl(object):
 
         if power > inverter['max-discharge']:
             power = inverter['max-discharge']
-        
+
         if power < (inverter['max-charge'] * -1):
             power = inverter['max-charge'] * -1
-        
+
         if inverter['Battery Capacity'] < period['min-charge'] and power > 0:
             power = 0
         
@@ -239,7 +239,7 @@ class SolaxBatteryControl(object):
                 self.assistNeeded[inverterName] = True
             elif inverter['DischargePower'] < (inverter['grace-charge-power'] * -1):
                 inverter['DischargePower'] = inverter['grace-charge-power'] * -1
-                
+
         #print("{} to discharge at {}W".format(inverterName, inverter['DischargePower']))
         self.dischargeAt(vals['#SolaxClient'], inverter, period, inverter['DischargePower'])
 
