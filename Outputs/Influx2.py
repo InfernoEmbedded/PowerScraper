@@ -17,7 +17,7 @@ class Influx2(object):
         inverterDetails = vals.copy()
         inverterDetails.pop('Serial', None)
 
-        point = Point("solax").tag("inverter", "solax1")
+        point = Point("solax").tag("inverter", vals['name'])
         for x, y in inverterDetails.items():
             point.field(x, y)
         #        print(point.to_line_protocol())
