@@ -154,6 +154,6 @@ class SDM630ModbusV2(object):
         self.vals['Phase 3 export kvarh'] = float32(result, base, 0x0176)
         self.vals['Phase 1 total kvarh'] = float32(result, base, 0x0178)
         self.vals['Phase 2 total kvarh'] = float32(result, base, 0x017a)
-        self.vals['Phase 3 total kvarh'] = float32(result, base, 0x017c)        
-        
-        completionCallback(self.vals)
+        self.vals['Phase 3 total kvarh'] = float32(result, base, 0x017c)
+
+        completionCallback(self.vals, None)

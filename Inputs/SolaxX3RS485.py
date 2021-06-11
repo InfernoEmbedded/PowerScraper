@@ -71,5 +71,5 @@ class SolaxX3RS485(object):
         self.vals['Fault value of GFCI'] = unsigned16(result, 34) / 1000
         self.vals['Total Yield'] = join_msb_lsb(unsigned16(result, 36), unsigned16(result, 35)) / 1000
         self.vals['Yield Today'] = join_msb_lsb(unsigned16(result, 38), unsigned16(result, 37)) / 1000
-        
-        completionCallback(self.vals)
+
+        completionCallback(self.vals, None)

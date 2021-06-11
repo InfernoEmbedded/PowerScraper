@@ -51,13 +51,13 @@ def analyze(event):
     if event.get("log_level") == LogLevel.critical:
         print("Critical: ", event)
 
-def outputActions(vals):
+def outputActions(vals, batteryAPI):
     global outputs
     if outputs is None:
         return
 
     for output in outputs:
-        output.send(vals)
+        output.send(vals, batteryAPI)
 
 def inputActions(inputs):
     for input in inputs:

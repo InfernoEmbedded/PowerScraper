@@ -109,8 +109,8 @@ def inverterBody(body, context):
     vals['EPS VA'] = metadata['Data'][55]
     vals['EPS Frequency'] = metadata['Data'][56]
     vals['Status'] = metadata['Data'][67]
-    
-    context['completionCallback'](vals)
+
+    context['completionCallback'](vals, None)
 
 
 class SolaxWifi(object):

@@ -62,11 +62,9 @@ class EmonCMS(object):
         self.apikey = config['api_key']
         self.timeout = config['timeout']
 
-    def send(self, vals):
+    def send(self, vals, batteryAPI):
         inverterDetails = vals.copy()
         inverterDetails.pop('Serial', None)
-        inverterDetails.pop('#SolaxClient', None)
-  
         url = self.host + "/input/post"
 
         vars = {}
