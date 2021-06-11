@@ -36,6 +36,7 @@ import traceback
 
 from Inputs.SolaxWifi import SolaxWifi
 from Inputs.SolaxModbus import SolaxModbus
+from Inputs.SolaxXHybridModbus import SolaxXHybridModbus
 from Inputs.SDM630ModbusV2 import SDM630ModbusV2
 from Inputs.SolaxX3RS485 import SolaxX3RS485
 from Outputs.SolaxBatteryControl import SolaxBatteryControl
@@ -117,6 +118,16 @@ if 'Solax-Modbus' in config:
 
     looperSolaxModbus = task.LoopingCall(inputActions, SolaxModbusInverters)
     looperSolaxModbus.start(config['Solax-Modbus']['poll_period'])
+
+if 'Solax-XHybrid-Modbus' in config:
+    print("Setting up Solax-XHybrid-Modbus")
+    SolaxXHybridModbusInverters = []
+    for inverter in config['Solax-XHybrid-Modbus']['inverters']:
+        modbusInverter = SolaxXHybridModbus(config, inverter)
+        SolaxXHybridModbusInverters.append(modbusInverter)
+
+    looperSolaxXHybridModbus = task.LoopingCall(inputActions, SolaxXHybridModbusInverters)
+    looperSolaxXHybridModbus.start(config['Solax-XHybrid-Modbus']['poll_period'])
 
 if 'SDM630ModbusV2' in config:
     print("Setting up SDM630ModbusV2")

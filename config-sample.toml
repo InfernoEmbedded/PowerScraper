@@ -2,16 +2,25 @@
 #[Solax-Wifi]
 #poll_period = 10 # seconds
 #timeout = 5 # seconds
-#inverters = ['solax1-wifi', 'solax2-wifi', 'solax3-wifi']
+#inverters = ['solax1-wifi.lan', 'solax2-wifi.lan', 'solax3-wifi.lan']
 
-# Enable this section to scrape the Modbus/TCP (Ethernet port) of Solax inverters
+# Enable this section to scrape the Modbus/TCP (Ethernet port) of Solax SK-SU5000E inverters
 [Solax-Modbus]
 poll_period = 10 # seconds
 timeout = 5 # seconds
 #power_budget_avg_samples = 30 # The maximum number of samples to average power budget over
 #installer_password = 12345 # The installer password for the inverter (same as used on the front panel), required if you want to use battery control
 #inverter_power = 5000 # Limit the inverter power to this amount, required if you want to use battery control
-inverters = ['solax1']
+inverters = ['solax1.lan']
+
+# Enable this section to scrape the Modbus/TCP (Ethernet port) of Solax X series hybrid inverters& chargers
+[Solax-XHybrid-Modbus]
+poll_period = 10 # seconds
+timeout = 5 # seconds
+#power_budget_avg_samples = 30 # The maximum number of samples to average power budget over
+#installer_password = 12345 # The installer password for the inverter (same as used on the front panel), required if you want to use battery control
+#inverter_power = 5000 # Limit the inverter power to this amount, required if you want to use battery control
+inverters = ['solax-x1-hybrid.lan']
 
 # Enable this section to scrape Modbus/RTU (RS485) connected SDM630v2 energy meters
 #[SDM630Modbusv2]
