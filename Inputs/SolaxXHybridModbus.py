@@ -183,10 +183,10 @@ class SolaxXHybridModbus(object):
         self.vals['Battery Temperature'] = signed16(result, 0x18)
         self.vals['Charger Boost Temperature'] = signed16(result, 0x19)
         self.vals['Battery Capacity'] = unsigned16(result, 0x1C)
-        self.vals['Battery Energy Charged'] = unsigned32(result, 0x1D) / 10
+        self.vals['Battery Energy Discharged'] = unsigned32(result, 0x1D) / 10
         self.vals['BMS Warning'] = unsigned32Split(result, 0x1F, 0x26)
-        self.vals['Battery Energy Charged Today'] = unsigned16(result, 0x20)
-        self.vals['Battery Energy Discharged'] = unsigned32(result, 0x21) / 10
+        self.vals['Battery Energy Discharged Today'] = unsigned16(result, 0x20)
+        self.vals['Battery Energy Charged'] = unsigned32(result, 0x21) / 10
         self.vals['Battery Energy Charged Today'] = unsigned16(result, 0x23)
         self.vals['BMS Max Charge Current'] = unsigned16(result, 0x24) / 10
         self.vals['BMS Max Discharge Current'] = unsigned16(result, 0x25) / 10
