@@ -61,7 +61,7 @@ class SolaxBatteryControl(object):
         if power < (inverter['max-charge'] * -1):
             power = inverter['max-charge'] * -1
 
-        if inverter['Battery Capacity'] < period['min-charge'] and power > 0:
+        if inverter['Battery Capacity'] <= period['min-charge'] and power > 0:
             power = 0
             #print("Inverter battery power clamped to 0\n")
 
@@ -96,7 +96,7 @@ class SolaxBatteryControl(object):
     def send(self, vals, batteryAPI):
         valCopy = vals.copy()
         inverterName = valCopy.pop('name', None)
-
+        
         if 'source' in self.config:
             if inverterName == self.config['source']:
                 self.handleMeterPower(valCopy)
@@ -219,7 +219,7 @@ class SolaxBatteryControl(object):
             elif inverter['DischargePower'] < (inverter['grace-charge-power'] * -1):
                 inverter['DischargePower'] = inverter['grace-charge-power'] * -1
 
-        #print("{} to discharge at {}W".format(inverterName, inverter['DischargePower']))
+        print("{} to discharge at {}W".format(inverterName, inverter['DischargePower']))
         self.dischargeAt(batteryAPI, inverter, period, inverter['DischargePower'])
 
 
