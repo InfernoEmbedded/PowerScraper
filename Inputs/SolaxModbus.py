@@ -92,6 +92,7 @@ class SolaxModbus(object):
     host = None
     config = None
     factory = None
+    requestedBatteryPower = 0
     powerBudgets = []
 
     ##
@@ -138,6 +139,7 @@ class SolaxModbus(object):
     def solaxRegisterCallback(self, result, completionCallback):
         vals = {}
         vals['name'] = self.host;
+        vals['Requested Battery Power'] = self.requestedBatteryPower
         vals['Grid Voltage'] = unsigned16(result, 0x00) / 10
         vals['Grid Current'] = signed16(result, 0x01) / 10
         vals['Inverter Power'] = signed16(result, 0x02)
@@ -200,6 +202,8 @@ class SolaxModbus(object):
         result = self.factory.getClient().write_register(0x90, 1)
 
     def chargeBattery(self, power):
+        self.requestedBatteryPower = power
+
         # Convert to int16
         if power < 0:
             power += 65536

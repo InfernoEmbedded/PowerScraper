@@ -6,7 +6,7 @@ from twisted.internet import defer, reactor, protocol
 from twisted.web.client import Agent, readBody
 from twisted.web.http_headers import Headers
 
-import datetime
+import datetime, traceback
 
 def unsigned16(result, addr):
     val = result.getRegister(addr)
@@ -86,6 +86,11 @@ class SolaxXHybridFactory(protocol.ReconnectingClientFactory):
     def setReactivePower(self, result):
         result = self.client.write_register(0x53, 0)
         if result != None:
+             result.addCallback(self.allowGridCharge)
+
+    def allowGridCharge(self, result):
+        result = self.client.write_register(0x40, 3)
+        if result != None:
              result.addCallback(self.markReady)
 
     def markReady(self, result):
@@ -116,6 +121,7 @@ class SolaxXHybridModbus(object):
     host = None
     config = None
     factory = None
+    requestedBatteryPower = 0
     powerBudgets = []
 
     ##
@@ -164,6 +170,7 @@ class SolaxXHybridModbus(object):
 
         self.vals = {}
         self.vals['name'] = self.host;
+        self.vals['Requested Battery Power'] = self.requestedBatteryPower;
         self.vals['Grid Voltage (X1)'] = unsigned16(result, 0x00) / 10
         self.vals['Grid Current (X1)'] = signed16(result, 0x01) / 10
         self.vals['Inverter Power (X1)'] = signed16(result, 0x02)
@@ -313,8 +320,16 @@ class SolaxXHybridModbus(object):
 
         self.completionCallback(self.vals, self)
 
+    def wakeupInverter(self, result):
+        result = self.factory.getClient().write_register(0x56, 1)
+
     def chargeBattery(self, power):
-        print("{} power={}".format(self.host, power))
+        self.requestedBatteryPower = power
+
+        if power == 0:
+          print("0 power requested for {}\n".format(self.host))
+#          traceback.print_stack()
+
         if power < 0:
             # Convert to int16
             power += 65536
@@ -322,4 +337,7 @@ class SolaxXHybridModbus(object):
 #        else:
 #            result = self.factory.getClient().write_registers(0x07C, [1, power, 0, 0, 0])
         result = self.factory.getClient().write_register(0x52, power)
+#        if power != 0:
+#            result.addCallback(self.wakeupInverter)
+
 
