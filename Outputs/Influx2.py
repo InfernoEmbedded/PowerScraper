@@ -9,16 +9,15 @@ class Influx2(object):
         self.influx_pass = config['influx_pass']
         self.influx_retention_policy = config['influx_retention_policy']
 
-    def send(self, vals):
+    def send(self, vals, batteryAPI):
         client = InfluxDBClient(url=self.influx_url, token=f'{self.influx_user}:{self.influx_pass}', org='-')
         bucket = f'{self.influx_database}/{self.influx_retention_policy}'
         write_api = client.write_api()
 
         inverterDetails = vals.copy()
         inverterDetails.pop('Serial', None)
-        inverterDetails.pop('#SolaxClient', None)
 
-        point = Point("solax").tag("inverter", "solax1")
+        point = Point("solax").tag("inverter", vals['name'])
         for x, y in inverterDetails.items():
             point.field(x, y)
         #        print(point.to_line_protocol())

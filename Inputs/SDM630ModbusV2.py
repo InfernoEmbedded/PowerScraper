@@ -19,9 +19,9 @@ def float32(result, base, addr):
     data[1] = high >> 8
     data[2] = low & 0xff
     data[3] = low >> 8
-    
+
     val = unpack('f', bytes(data))
-    
+
     return val[0]
 
 class SDM630ModbusV2(object):
@@ -32,14 +32,14 @@ class SDM630ModbusV2(object):
         self.port = port
         self.client = ModbusSerialClient(method="rtu", port=self.port, baudrate=baudrate, parity=parity,
                                          stopbits=stopbits, timeout=timeout)
-        
+
     def fetch(self, completionCallback):
         base = 0x0000
         result = self.client.read_input_registers(base, 60)
         if isinstance(result, ModbusException):
             print("Exception from SDM630V2: {}".format(result))
             return
-         
+
         self.vals = {}
         self.vals['name'] = self.port.replace("/dev/tty", "");
         self.vals['Phase 1 line to neutral volts'] = float32(result, base, 0x0000)
@@ -68,7 +68,7 @@ class SDM630ModbusV2(object):
         self.vals['Sum of line currents'] = float32(result, base, 0x0030)
         self.vals['Total system power'] = float32(result, base, 0x0034)
         self.vals['Total system volt amps'] = float32(result, base, 0x0038)
-                
+
         base = 0x003C
         result = self.client.read_input_registers(base, 48)
         if isinstance(result, ModbusException):
@@ -91,7 +91,7 @@ class SDM630ModbusV2(object):
         self.vals['Maximum total system VA demand'] = float32(result, base, 0x0066)
         self.vals['Neutral current demand'] = float32(result, base, 0x0068)
         self.vals['Maximum neutral current demand'] = float32(result, base, 0x006A)
-        
+
         base = 0x00C8
         result = self.client.read_input_registers(base, 8)
         if isinstance(result, ModbusException):
@@ -124,7 +124,7 @@ class SDM630ModbusV2(object):
         self.vals['Maximum phase 1 current demand'] = float32(result, base, 0x0108)
         self.vals['Maximum phase 2 current demand'] = float32(result, base, 0x010A)
         self.vals['Maximum phase 3 current demand'] = float32(result, base, 0x010C)
-        
+
         base = 0x014E
         result = self.client.read_input_registers(base, 48)
         if isinstance(result, ModbusException):
@@ -154,6 +154,6 @@ class SDM630ModbusV2(object):
         self.vals['Phase 3 export kvarh'] = float32(result, base, 0x0176)
         self.vals['Phase 1 total kvarh'] = float32(result, base, 0x0178)
         self.vals['Phase 2 total kvarh'] = float32(result, base, 0x017a)
-        self.vals['Phase 3 total kvarh'] = float32(result, base, 0x017c)        
-        
-        completionCallback(self.vals)
+        self.vals['Phase 3 total kvarh'] = float32(result, base, 0x017c)
+
+        completionCallback(self.vals, None)

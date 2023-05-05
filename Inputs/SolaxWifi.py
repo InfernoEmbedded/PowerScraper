@@ -35,7 +35,7 @@ def httpResponse(response, context):
         'message': response.phrase,
         'headers': response.headers.getAllRawHeaders(),
     })
-    
+
     # cancel a possible connect timeout
     if 'timeoutCall' in context:
         if context['timeoutCall'].active():
@@ -43,11 +43,11 @@ def httpResponse(response, context):
 
     # capture the body data
     body = readBody(response)
-    
+
     # a timeout for the request body to be delivered
     if 'body_timeout' in context:
         context['timeoutCall'] = reactor.callLater(context['body_timeout'], body.cancel)
-    
+
     body.addCallback(inverterBody, context)
     return body
 
@@ -109,8 +109,8 @@ def inverterBody(body, context):
     vals['EPS VA'] = metadata['Data'][55]
     vals['EPS Frequency'] = metadata['Data'][56]
     vals['Status'] = metadata['Data'][67]
-    
-    context['completionCallback'](vals)
+
+    context['completionCallback'](vals, None)
 
 
 class SolaxWifi(object):
@@ -120,10 +120,10 @@ class SolaxWifi(object):
     def __init__(self, host, timeout):
         self.host = host
         self.timeout = timeout
-        
+
     def fetch(self, completionCallback):
         semaphore = defer.DeferredSemaphore(1)
-    
+
         httpContext = {
             'inverter': self.host,
             'method': b'GET',

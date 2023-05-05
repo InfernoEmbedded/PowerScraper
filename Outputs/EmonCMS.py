@@ -3,7 +3,7 @@ import urllib.parse
 from twisted.internet import defer, reactor
 from twisted.web.client import Agent
 from twisted.web.http_headers import Headers
-  
+
 
 ##
 # An HTTP error has occurred when accessing the inverter
@@ -31,7 +31,7 @@ def nullResponse(response, context):
         'message': response.phrase,
         'headers': response.headers.getAllRawHeaders(),
     })
-    
+
     # cancel a possible connect timeout
     if 'timeoutCall' in context:
         if context['timeoutCall'].active():
@@ -62,20 +62,18 @@ class EmonCMS(object):
         self.apikey = config['api_key']
         self.timeout = config['timeout']
 
-    def send(self, vals):
+    def send(self, vals, batteryAPI):
         inverterDetails = vals.copy()
         inverterDetails.pop('Serial', None)
-        inverterDetails.pop('#SolaxClient', None)
-  
         url = self.host + "/input/post"
-         
+
         vars = {}
         vars['apikey'] = self.apikey
         vars['node'] = inverterDetails.pop('name', None)
         vars['fulljson'] = json.dumps(inverterDetails)
- 
+
         url += "?" + urllib.parse.urlencode(vars)
- 
+
         httpContext = {
             'method': b'GET',
             'url':  url,
@@ -83,8 +81,7 @@ class EmonCMS(object):
             'errback':  httpError,
             'connect_timeout': self.timeout
         }
- 
+
         semaphore = defer.DeferredSemaphore(1)
         semaphore.run(requestHTTP, context=httpContext)
-        
-        
+

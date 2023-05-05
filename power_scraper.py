@@ -36,7 +36,9 @@ import traceback
 
 from Inputs.SolaxWifi import SolaxWifi
 from Inputs.SolaxModbus import SolaxModbus
+from Inputs.SolaxXHybridModbus import SolaxXHybridModbus
 from Inputs.SDM630ModbusV2 import SDM630ModbusV2
+from Inputs.SolaxX3RS485 import SolaxX3RS485
 from Outputs.SolaxBatteryControl import SolaxBatteryControl
 from Outputs.EmonCMS import EmonCMS
 from Outputs.Influx2 import Influx2
@@ -51,13 +53,13 @@ def analyze(event):
     if event.get("log_level") == LogLevel.critical:
         print("Critical: ", event)
 
-def outputActions(vals):
+def outputActions(vals, batteryAPI):
     global outputs
     if outputs is None:
         return
 
     for output in outputs:
-        output.send(vals)
+        output.send(vals, batteryAPI)
 
 def inputActions(inputs):
     for input in inputs:
@@ -122,6 +124,16 @@ if 'Solax-Modbus' in config:
     looperSolaxModbus = task.LoopingCall(inputActions, SolaxModbusInverters)
     looperSolaxModbus.start(config['Solax-Modbus']['poll_period'])
 
+if 'Solax-XHybrid-Modbus' in config:
+    print("Setting up Solax-XHybrid-Modbus")
+    SolaxXHybridModbusInverters = []
+    for inverter in config['Solax-XHybrid-Modbus']['inverters']:
+        modbusInverter = SolaxXHybridModbus(config, inverter)
+        SolaxXHybridModbusInverters.append(modbusInverter)
+
+    looperSolaxXHybridModbus = task.LoopingCall(inputActions, SolaxXHybridModbusInverters)
+    looperSolaxXHybridModbus.start(config['Solax-XHybrid-Modbus']['poll_period'])
+
 if 'SDM630ModbusV2' in config:
     print("Setting up SDM630ModbusV2")
     SDM630Meters = []
@@ -132,6 +144,17 @@ if 'SDM630ModbusV2' in config:
 
     looperSDM630 = task.LoopingCall(inputActions, SDM630Meters)
     looperSDM630.start(config['SDM630ModbusV2']['poll_period'])
+
+if 'SolaxX3RS485' in config:
+    print("Setting up SolaxX3RS485")
+    SolaxRS485Meters = []
+    for meter in config['SolaxX3RS485']['ports']:
+        modbusMeter = SolaxX3RS485(meter, config['SolaxX3RS485']['baud'], config['SolaxX3RS485']['parity'],
+                                 config['SolaxX3RS485']['stopbits'], config['SolaxX3RS485']['timeout'])
+        SolaxRS485Meters.append(modbusMeter)
+
+    looperSolaxRS485 = task.LoopingCall(inputActions, SolaxRS485Meters)
+    looperSolaxRS485.start(config['SolaxX3RS485']['poll_period'])
 
 reactor.addSystemEventTrigger('before', 'shutdown', shutdown)
 
