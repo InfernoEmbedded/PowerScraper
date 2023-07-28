@@ -103,7 +103,7 @@ if 'Solax-Wifi' in config:
     print("Setting up Solax-Wifi")
     SolaxWifiInverters = []
     for inverter in config['Solax-Wifi']['inverters']:
-        wifiInverter = SolaxWifi(inverter, config['solax-Wifi']['timeout'])
+        wifiInverter = SolaxWifi(inverter, config['Solax-Wifi']['timeout'])
         SolaxWifiInverters.append(wifiInverter)
 
     looperSolaxWifi = task.LoopingCall(inputActions, SolaxWifiInverters)
