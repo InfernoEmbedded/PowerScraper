@@ -80,6 +80,7 @@ inverters = ['solax-x1-hybrid.lan']
 # Defines the inverters that will participate
 #[Solax-BatteryControl.Inverter.solax1] # First inverter
 #phase = 1                          # Which phase the inverter is connected to, as seen by the power consumption meter
+#use-total-power = false            # If true, the inverter will try to zero the total power, rather than the phase power
 #single-phase-charge-limit = 1000   # If the charge rate is below this, aim to zero our own phase, if it's above, aim to zero total power
 #single-phase-discharge-limit = 1000   # If the discharge rate is below this, aim to zero our own phase, if it's above, aim to zero total power
 #max-charge = 2000                  # Maximum battery charge rate in Watts
