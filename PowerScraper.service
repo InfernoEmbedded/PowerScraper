@@ -1,0 +1,13 @@
+[Unit]
+Description=Power Scraper
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/usr/local/PowerScraper
+ExecStart=/usr/local/PowerScraper/power_scraper.py
+Restart=on-abort
+
+[Install]
+WantedBy=multi-user.target
+
