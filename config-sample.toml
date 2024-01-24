@@ -29,6 +29,15 @@ inverters = ['solax-x1-hybrid.lan']
 #stopbits = 1
 #ports = ["/dev/ttyMainsMeter"]
 
+# Enable this section to scrape Modbus/RTU (RS485) connected DTSU666 energy meters
+#[DTSU666]
+#poll_period = 1 # seconds
+#timeout = 1 # seconds
+#baud = 9600
+#parity = 'N'
+#stopbits = 1
+#ports = ["/dev/ttyMainsMeter"]
+
 # Enable this section to scrape Modbus/RTU (RS485, "meter" connection in the manual) for Solax X3 inverters
 #[SolaxX3RS485]
 #poll_period = 10 # seconds
