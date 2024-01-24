@@ -323,6 +323,9 @@ class SolaxXHybridModbus(object):
     def wakeupInverter(self, result):
         result = self.factory.getClient().write_register(0x56, 1)
 
+    def tickleRemoteControl(self, result):
+        result = self.factory.getClient().write_register(0x51, 1)
+
     def chargeBattery(self, power):
         self.requestedBatteryPower = power
 
@@ -337,6 +340,9 @@ class SolaxXHybridModbus(object):
 #        else:
 #            result = self.factory.getClient().write_registers(0x07C, [1, power, 0, 0, 0])
         result = self.factory.getClient().write_register(0x52, power)
+        inverter = self.config['Solax-BatteryControl']['Inverter'][self.vals['name']]
+        if 'tickle-remote-control' in inverter and inverter['tickle-remote-control']:
+            result.addCallback(self.tickleRemoteControl)
 #        if power != 0:
 #            result.addCallback(self.wakeupInverter)
 
