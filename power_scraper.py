@@ -38,6 +38,7 @@ from Inputs.SolaxWifi import SolaxWifi
 from Inputs.SolaxModbus import SolaxModbus
 from Inputs.SolaxXHybridModbus import SolaxXHybridModbus
 from Inputs.SDM630ModbusV2 import SDM630ModbusV2
+from Inputs.DTSU666Modbus import DTSU666Modbus
 from Inputs.SolaxX3RS485 import SolaxX3RS485
 from Outputs.SolaxBatteryControl import SolaxBatteryControl
 from Outputs.EmonCMS import EmonCMS
@@ -144,6 +145,17 @@ if 'SDM630ModbusV2' in config:
 
     looperSDM630 = task.LoopingCall(inputActions, SDM630Meters)
     looperSDM630.start(config['SDM630ModbusV2']['poll_period'])
+
+if 'DTSU666' in config:
+    print("Setting up DTSU666")
+    DTSU666Meters = []
+    for meter in config['DTSU666']['ports']:
+        modbusMeter = DTSU666Modbus(meter, config['DTSU666']['baud'], config['DTSU666']['parity'],
+                                 config['DTSU666']['stopbits'], config['DTSU666']['timeout'])
+        DTSU666Meters.append(modbusMeter)
+
+    looperDTSU666 = task.LoopingCall(inputActions, DTSU666Meters)
+    looperDTSU666.start(config['DTSU666']['poll_period'])
 
 if 'SolaxX3RS485' in config:
     print("Setting up SolaxX3RS485")

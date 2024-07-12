@@ -119,6 +119,9 @@ class SolaxBatteryControl(object):
         if 'name' not in inverter:
             inverter['name'] = inverterName
 
+        if 'use-total-power' not in inverter:
+            inverter['use-total-power'] = False
+
         inverter['Battery Capacity'] = vals['Battery Capacity']
 
         phase = inverter['phase']
@@ -152,9 +155,12 @@ class SolaxBatteryControl(object):
             self.assistNeeded[inverterName] = True
             return
 
-        # Try and zero our phase power
-        #print("Initial discharge power is {}, additional from phase is {}\n".format(inverter['DischargePower'], self.phasePower[phase]))
-        inverter['DischargePower'] += self.phasePower[phase] * 0.25
+        if inverter['use-total-power']:
+            inverter['DischargePower'] += self.totalPower * 0.25
+        else:
+            # Try and zero our phase power
+            #print("Initial discharge power is {}, additional from phase is {}\n".format(inverter['DischargePower'], self.phasePower[phase]))
+            inverter['DischargePower'] += self.phasePower[phase] * 0.25
 
         if self.assistNeeded[inverterName]:
             if inverter['DischargePower'] >= 0 and inverter['DischargePower'] < inverter['single-phase-discharge-limit'] / len(self.config['Inverter']):
