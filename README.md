@@ -12,6 +12,7 @@ A scraper for power devices to feed data to OpenEnergyMonitor
 # Supported Outputs
 - Open Energy Monitor (EmonCMS)
 - InfluxDB
+- MQTT
 
 # Prerequisites
 ```pip3 install pymodbus Twisted influxdb-client```
