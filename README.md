@@ -1,6 +1,10 @@
 # PowerScraper
 A scraper for power devices to feed data to OpenEnergyMonitor
 
+We recommend that TCP Modbus inverters are connected through [Modbus Proxy](https://github.com/tiagocoutinho/modbus-proxy), as the inverters only allow a single connection at a time.
+
+You can also use [ModbusGUI4Solax](https://github.com/InfernoEmbedded/ModbusGUI4Solax) to interrogate the inverters through the proxy, while PowerScraper is controlling it.
+
 # Supported Hardware
 - Solax SK-SU5000E Wifi interface (Solax-Wifi)
 - Solax SK-SU5000E Modbus/TCP Interface (Solax-Modbus)

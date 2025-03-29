@@ -97,11 +97,21 @@ class SolaxModbus(object):
 
     ##
     # Create a new class to fetch data from the Modbus interface of Solax inverters
-    def __init__(self, config, host):
+    def __init__(self, config, host, hostname):
+        # Check if the host string includes a port specification.
+        if ':' in hostname:
+            hostname, port_str = hostname.split(':', 1)
+            try:
+                port = int(port_str)
+            except ValueError:
+                raise ValueError("Invalid port number specified in host:port")
+        else:
+            port = 502  # Default Modbus port
+
         self.host = host
         self.config = config
         self.factory = SolaxFactory(config)
-        reactor.connectTCP(host, 502, self.factory)
+        reactor.connectTCP(hostname, port, self.factory)
 
     def err(self, arg):
         print('err', arg)

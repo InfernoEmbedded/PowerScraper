@@ -113,20 +113,23 @@ if 'Solax-Wifi' in config:
 if 'Solax-Modbus' in config:
     print("Setting up Solax-Modbus")
     SolaxModbusInverters = []
-    for inverter in config['Solax-Modbus']['inverters']:
-        modbusInverter = SolaxModbus(config, inverter)
+    # If hostnames are defined, use them; otherwise default to the inverter entry.
+    hostnames = config['Solax-Modbus'].get('hostnames', [])
+    for idx, inverter in enumerate(config['Solax-Modbus']['inverters']):
+        hostname = hostnames[idx] if idx < len(hostnames) else inverter
+        modbusInverter = SolaxModbus(config, inverter, hostname)
         SolaxModbusInverters.append(modbusInverter)
-
     looperSolaxModbus = task.LoopingCall(inputActions, SolaxModbusInverters)
     looperSolaxModbus.start(config['Solax-Modbus']['poll_period'])
 
 if 'Solax-XHybrid-Modbus' in config:
     print("Setting up Solax-XHybrid-Modbus")
     SolaxXHybridModbusInverters = []
-    for inverter in config['Solax-XHybrid-Modbus']['inverters']:
-        modbusInverter = SolaxXHybridModbus(config, inverter)
+    hostnames = config['Solax-XHybrid-Modbus'].get('hostnames', [])
+    for idx, inverter in enumerate(config['Solax-XHybrid-Modbus']['inverters']):
+        hostname = hostnames[idx] if idx < len(hostnames) else inverter
+        modbusInverter = SolaxXHybridModbus(config, inverter, hostname)
         SolaxXHybridModbusInverters.append(modbusInverter)
-
     looperSolaxXHybridModbus = task.LoopingCall(inputActions, SolaxXHybridModbusInverters)
     looperSolaxXHybridModbus.start(config['Solax-XHybrid-Modbus']['poll_period'])
 
