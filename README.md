@@ -16,6 +16,7 @@ You can also use [ModbusGUI4Solax](https://github.com/InfernoEmbedded/ModbusGUI4
 # Supported Outputs
 - Open Energy Monitor (EmonCMS)
 - InfluxDB
+- MQTT
 
 # Prerequisites
 ```pip3 install pymodbus Twisted influxdb-client```
