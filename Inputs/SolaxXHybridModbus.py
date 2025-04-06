@@ -310,7 +310,7 @@ class SolaxXHybridModbus(object):
         self.vals['BMS Energy Throughput'] = unsigned32(result, 0xCC - base)
 
         fullLimit = 95
-        if self.vals['name'] in self.config['Solax-BatteryControl']['Inverter']:
+        if 'Solax-BatteryControl' in self.config and self.vals['name'] in self.config['Solax-BatteryControl']['Inverter']:
             inverter = self.config['Solax-BatteryControl']['Inverter'][self.vals['name']]
             period = self.getPeriod()
             if period is not None and 'grace' in period and 'grace-capacity' in inverter and inverter['grace-capacity'] > 0:

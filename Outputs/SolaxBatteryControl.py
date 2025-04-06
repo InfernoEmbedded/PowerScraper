@@ -8,16 +8,20 @@ pp = pprint.PrettyPrinter(indent=4)
 class SolaxBatteryControl(object):
     def __init__(self, config):
         self.config = config
+
+        if 'timezone' in config:
+                os.environ['TZ'] = config['timezone']
+                tzset()
+
+        if 'Inverter' not in self.config:
+            self.config['Inverter'] = {}
+
         self.phasePower = [0]*16
         self.assistNeeded = {}
         self.totalPower = 0
         self.totalDischargePower = 0
         self.maxTotalChargePower = self.maxTotalChargePower()
         self.maxTotalDischargePower = self.maxTotalDischargePower()
-
-        if 'timezone' in config:
-                os.environ['TZ'] = config['timezone']
-                tzset()
 
     def handleMeterPower(self, vals):
         self.totalPower = vals['Total system power']
