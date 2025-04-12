@@ -77,6 +77,14 @@ inverters = ['solax-x1-hybrid.lan']
 #influx_pass = "influxpassword"
 #influx_retention_policy = 'autogen'
 
+# Enable this section to output to an MQTT broker under base_topic/...
+#[MQTT]
+#broker = "mqtt.example.com"       # MQTT broker address
+#port = 1883                       # MQTT broker port
+#base_topic = "sensors"            # Base topic for publishing measurement data
+#username = "mqtt_user"            # Username for MQTT authentication
+#password = "mqtt_password"        # Password for MQTT authentication
+
 # Enable these sections to control battery charge/discharge on Solax SK-SU5000E inverters
 # This does a number of things:
 # 1. Allows more than 2 time periods through the day
@@ -103,6 +111,7 @@ inverters = ['solax-x1-hybrid.lan']
 #grace-capacity = 70                # Percentage of total capacity at which to stop charging to reserve for absorbing power greater than inverter output
 #grace-power-threshold = 4500       # Ignore the grace capacity if PV power is greater than this
 #grace-charge-power = 500           # The amount of power to charge the battery at when in the grace period
+#control-grid-power = true          # On newer firmware on G3 inverters, the output power of the inverter is controlled, not the battery. This is exhibited as PV output dropping significantly when the battery is full.
 #[Solax-BatteryControl.Inverter.solax2]
 #phase = 2
 #single-phase-charge-limit = 1000

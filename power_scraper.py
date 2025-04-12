@@ -97,6 +97,10 @@ if 'influx' in config:
     print("Setting up Influx")
     outputs.append(Influx2(config['influx']))
 
+if 'MQTT' in config:
+    print("Setting up MQTT Output")
+    outputs.append(MQTT(config['MQTT']))
+
 if 'Solax-BatteryControl' in config:
     print("Setting up Solax-BatteryControl")
     outputs.append(SolaxBatteryControl(config['Solax-BatteryControl']))
