@@ -40,6 +40,19 @@ inverters = ['solax-x1-hybrid.lan']
 #stopbits = 1
 #ports = ["/dev/ttyMainsMeter"]
 
+# Enable this section to accept MQTT inputs for a power meter
+#[MQTTPowerMeter]
+#poll_period = 10     # Polling period in seconds
+#meters = ["Meter1"]
+#
+#[MQTTPowerMeter.Meter1]
+#broker = "mqtt.example.com"         # MQTT broker address
+#port = 1883                         # MQTT broker port
+#topic = "sensors/TotalSystemPower"  # Topic to subscribe to (or omit to use default from base_topic)
+#username = "mqtt_user"              # MQTT username (optional)
+#password = "mqtt_password"          # MQTT password (optional)
+#poll_period = 10                    # Polling period in seconds
+
 # Enable this section to scrape Modbus/RTU (RS485, "meter" connection in the manual) for Solax X3 inverters
 #[SolaxX3RS485]
 #poll_period = 10 # seconds

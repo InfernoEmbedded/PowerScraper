@@ -40,6 +40,7 @@ from Inputs.SolaxXHybridModbus import SolaxXHybridModbus
 from Inputs.SDM630ModbusV2 import SDM630ModbusV2
 from Inputs.DTSU666Modbus import DTSU666Modbus
 from Inputs.SolaxX3RS485 import SolaxX3RS485
+from Inputs.MQTTPowerMeter import MQTTPowerMeter
 from Outputs.SolaxBatteryControl import SolaxBatteryControl
 from Outputs.EmonCMS import EmonCMS
 from Outputs.Influx2 import Influx2
@@ -154,6 +155,25 @@ if 'DTSU666' in config:
 
     looperDTSU666 = task.LoopingCall(inputActions, DTSU666Meters)
     looperDTSU666.start(config['DTSU666']['poll_period'])
+
+if 'MQTTPowerMeter' in config:
+    print("Setting up MQTT Power Meters")
+    mqtt_meters = []
+
+    # Get the list of meter configurations from the configuration file.
+    meters = config['MQTTPowerMeter'].get('meters', [])
+
+    # Create an instance of MQTTPowerMeter for each meter defined.
+    for meterName in meters:
+        meter = MQTTPowerMeter(config['MQTTPowerMeter'], meterName)
+        mqtt_meters.append(meter)
+
+    # Use the polling period defined in the configuration (default to 10 seconds if not defined).
+    poll_period = config['MQTTPowerMeter'].get('poll_period', 10)
+
+    # Start a looping call to poll all MQTT meter inputs
+    looperMQTT = task.LoopingCall(inputActions, mqtt_meters)
+    looperMQTT.start(poll_period)
 
 if 'SolaxX3RS485' in config:
     print("Setting up SolaxX3RS485")
