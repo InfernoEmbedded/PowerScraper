@@ -45,7 +45,7 @@ class MQTTPowerMeter(object):
         self.topic_phase3 = self.config[self.name].get("topic_phase3", "Phase3Power")
 
         # Create the MQTT client instance.
-        self.client = mqtt.Client()
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
 
         # Set username and password if provided.
         if "username" in config[self.name] and config[self.name]["username"]:
@@ -63,9 +63,9 @@ class MQTTPowerMeter(object):
         # Start the network loop in a separate thread.
         self.client.loop_start()
 
-    def on_connect(self, client, userdata, flags, rc):
+    def on_connect(self, client, userdata, flags, reason_code, properties):
         """Called upon connection to the MQTT broker."""
-        print(f"MQTTPowerMeter ({self.name}): Connected to broker with result code {rc}")
+        print(f"MQTTPowerMeter ({self.name}): Connected to broker with result code {reason_code}")
         # Subscribe to each topic.
         print(f"MQTTPowerMeter ({self.name}): Subscribing to topic: {self.topic_total}")
         client.subscribe(self.topic_total)
