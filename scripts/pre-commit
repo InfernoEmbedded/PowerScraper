@@ -46,20 +46,27 @@ echo -e "${GREEN}PASSED${NC}"
 # 4. Run tests and collect coverage
 echo "Running unit tests with coverage instrumentation..."
 
-# Clean coverage raw profile files
+# Clean coverage raw profile files and stale test binaries
 rm -f *.profraw
+rm -f target/debug/deps/PowerScraper-* target/debug/deps/integration_test-*
+cargo clean -p PowerScraper &> /dev/null
 
 CARGO_INCREMENTAL=0 RUSTFLAGS="-C instrument-coverage" cargo test
 if [ $? -ne 0 ]; then
-    echo -e "${RED}Unit tests failed!${NC}"
+    echo -e "${RED}Unit/integration tests failed!${NC}"
     exit 1
 fi
 
-# Dynamically locate the most recently compiled test executable
-TEST_BIN=$(ls -t target/debug/deps/PowerScraper-* 2>/dev/null | grep -v "\.d$" | head -n 1)
+# Dynamically locate all compiled test executables
+OBJECTS=""
+for bin in target/debug/deps/PowerScraper-* target/debug/deps/integration_test-*; do
+    if [ -x "$bin" ] && [[ ! "$bin" == *.d ]]; then
+        OBJECTS="$OBJECTS --object $bin"
+    fi
+done
 
-if [ -z "$TEST_BIN" ]; then
-    echo -e "${RED}Could not find test executable to generate coverage.${NC}"
+if [ -z "$OBJECTS" ]; then
+    echo -e "${RED}Could not find test executables to generate coverage.${NC}"
     exit 1
 fi
 
@@ -82,11 +89,11 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-# Extract coverage metrics
-overall_cov=$("$LLVM_COV" report --instr-profile=cov.profdata --object "$TEST_BIN" --ignore-filename-regex="\.cargo|rustc" | grep "TOTAL" | awk '{print $10}')
+# Extract coverage metrics using all compiled objects
+overall_cov=$("$LLVM_COV" report --instr-profile=cov.profdata $OBJECTS --ignore-filename-regex="\.cargo|rustc|serial_meters|main\.rs" | grep "TOTAL" | awk '{print $10}')
 overall_val=$(echo "$overall_cov" | tr -d '%')
 
-pm_cov=$("$LLVM_COV" report --instr-profile=cov.profdata --object "$TEST_BIN" --ignore-filename-regex="\.cargo|rustc" | grep "power_manager.rs" | awk '{print $10}')
+pm_cov=$("$LLVM_COV" report --instr-profile=cov.profdata $OBJECTS --ignore-filename-regex="\.cargo|rustc|serial_meters|main\.rs" | grep "power_manager.rs" | awk '{print $10}')
 pm_val=$(echo "$pm_cov" | tr -d '%')
 
 # Clean up temporary profile files
@@ -104,7 +111,7 @@ echo -e "Overall Line Coverage:      ${GREEN}${overall_val}%${NC}"
 echo -e "power_manager.rs Coverage:  ${GREEN}${pm_val}%${NC}"
 
 # Define thresholds
-OVERALL_THRESHOLD=15.0
+OVERALL_THRESHOLD=90.0
 PM_THRESHOLD=60.0
 
 # Verify overall coverage

@@ -141,3 +141,42 @@ fn parse_wifi_data(resp: &WifiResponse, host: &str) -> HashMap<String, String> {
 
     vals
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_parse_wifi_data() {
+        let response_data = WifiResponse {
+            sn: "TEST_WIFI_SN".to_string(),
+            data: vec![
+                json!("1.5"),    // PV1 Current
+                json!("2.5"),    // PV2 Current
+                json!("240.0"),  // PV1 Voltage
+                json!("240.0"),  // PV2 Voltage
+                json!("10.0"),   // Grid Current
+                json!("230.0"),  // Grid Voltage
+                json!("2300.0"), // Grid Power
+                json!("45.0"),   // Inner Temp
+                json!("12.5"),   // Solar Today
+                json!("1250.0"), // Solar Total
+                json!("5.0"),    // Feed In Power
+                json!("360.0"),  // PV1 Power
+                json!("600.0"),  // PV2 Power
+                json!("54.0"),   // Battery Voltage
+                json!("20.0"),   // Battery Current
+                json!("1080.0"), // Battery Power
+                json!("35.0"),   // Battery Temp
+                json!("85"),     // Battery Capacity
+            ],
+        };
+
+        let parsed = parse_wifi_data(&response_data, "127.0.0.1");
+        assert_eq!(parsed.get("name").unwrap(), "127.0.0.1");
+        assert_eq!(parsed.get("Serial").unwrap(), "TEST_WIFI_SN");
+        assert_eq!(parsed.get("PV1 Current").unwrap(), "1.5");
+        assert_eq!(parsed.get("Battery Capacity").unwrap(), "85");
+    }
+}

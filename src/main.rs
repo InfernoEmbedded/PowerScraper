@@ -7,17 +7,7 @@
     clippy::io_other_error
 )]
 
-mod config;
-mod mqtt_helper;
-mod drivers {
-    pub mod mqtt_meter;
-    pub mod serial_meters;
-    pub mod solax_modbus;
-    pub mod solax_wifi;
-}
-mod forwarders;
-mod power_manager;
-
+use PowerScraper::{config, drivers, forwarders, power_manager};
 use config::Config;
 use std::path::Path;
 use tokio::signal;

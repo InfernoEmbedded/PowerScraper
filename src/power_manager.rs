@@ -684,4 +684,276 @@ mod tests {
         let cmd3 = PowerManager::discharge_at(&inverter, &period, 500.0, 15);
         assert_eq!(cmd3, 0); // clamp to 0
     }
+
+    #[test]
+    fn test_evaluate_and_command_linked_batteries() {
+        let mut periods = HashMap::new();
+        periods.insert(
+            "Always".to_string(),
+            mock_period("00:00:00", "23:59:59", 10, false, false),
+        );
+
+        let mut inverters = HashMap::new();
+        inverters.insert("solax1".to_string(), mock_inverter(1, 2000.0, 2000.0));
+
+        let config = SolaxBatteryControlConfig {
+            source: None,
+            linked_batteries: true,
+            timezone: None,
+            inverter: inverters,
+            period: periods,
+        };
+
+        let mut pm = PowerManager::new(config, "sensors".to_string());
+        pm.total_power = 1000.0;
+
+        let state = InverterState {
+            battery_capacity: 50,
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state);
+
+        pm.assist_needed.insert("solax1".to_string(), true);
+
+        let cmd = pm.evaluate_and_command("solax1");
+        assert!(cmd.is_some());
+    }
+
+    #[test]
+    fn test_discharge_at_force_discharge() {
+        let mut period = mock_period("00:00:00", "23:59:59", 20, false, false);
+        period.force_discharge = Some(1200.0);
+        let inverter = mock_inverter(1, 1500.0, 2000.0);
+
+        let cmd = PowerManager::discharge_at(&inverter, &period, 500.0, 50);
+        assert_eq!(cmd, -1200);
+    }
+
+    #[test]
+    fn test_evaluate_and_command_use_total_power() {
+        let mut periods = HashMap::new();
+        periods.insert(
+            "Always".to_string(),
+            mock_period("00:00:00", "23:59:59", 10, false, false),
+        );
+
+        let mut inverters = HashMap::new();
+        let mut inv = mock_inverter(1, 2000.0, 2000.0);
+        inv.use_total_power = true;
+        inverters.insert("solax1".to_string(), inv);
+
+        let config = SolaxBatteryControlConfig {
+            source: None,
+            linked_batteries: false,
+            timezone: None,
+            inverter: inverters,
+            period: periods,
+        };
+
+        let mut pm = PowerManager::new(config, "sensors".to_string());
+        pm.total_power = 800.0;
+
+        let state = InverterState {
+            battery_capacity: 50,
+            discharge_power: 100.0,
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state);
+
+        let cmd = pm.evaluate_and_command("solax1");
+        assert_eq!(cmd, Some(-300));
+    }
+
+    #[test]
+    fn test_get_period_midnight_wrap() {
+        let now_time = Local::now().time();
+        let hr = now_time.hour();
+        let start_hr = (hr + 22) % 24;
+        let end_hr = (hr + 20) % 24;
+
+        let start_str = format!("{:02}:00:00", start_hr);
+        let end_str = format!("{:02}:00:00", end_hr);
+
+        let mut periods = HashMap::new();
+        periods.insert(
+            "WrapPeriod".to_string(),
+            mock_period(&start_str, &end_str, 25, false, false),
+        );
+
+        let config = SolaxBatteryControlConfig {
+            source: None,
+            linked_batteries: false,
+            timezone: None,
+            inverter: HashMap::new(),
+            period: periods,
+        };
+
+        let pm = PowerManager::new(config, "sensors".to_string());
+        let period = pm.get_period();
+        assert!(period.is_some());
+        assert_eq!(period.unwrap().min_charge, 25);
+    }
+
+    #[test]
+    fn test_power_manager_extra_coverage() {
+        let mut periods = HashMap::new();
+        periods.insert(
+            "Always".to_string(),
+            mock_period("00:00:00", "23:59:59", 10, false, false),
+        );
+
+        let mut inverters = HashMap::new();
+        let mut inv = mock_inverter(1, 2000.0, 2000.0);
+        // Let's enable grace period settings to test line 232
+        inv.grace_capacity = 80;
+        inv.grace_power_threshold = 1000.0;
+        inv.grace_charge_power = 300.0;
+        inverters.insert("solax1".to_string(), inv);
+
+        let config = SolaxBatteryControlConfig {
+            source: Some("custom-meter".to_string()),
+            linked_batteries: true,
+            timezone: None,
+            inverter: inverters,
+            period: periods,
+        };
+
+        let mut pm = PowerManager::new(config, "sensors".to_string());
+
+        // 1. Call handle_meter_power to cover lines 90-95
+        pm.handle_meter_power(500.0, 100.0, 200.0, 300.0);
+        assert_eq!(pm.total_power, 500.0);
+        assert_eq!(pm.phase_power[1], 100.0);
+        assert_eq!(pm.phase_power[2], 200.0);
+        assert_eq!(pm.phase_power[3], 300.0);
+
+        // 2. Call handle_inverter_power to cover lines 97-103
+        pm.handle_inverter_power("solax1", 1, 400.0);
+        assert_eq!(pm.phase_power[1], -400.0); // measured_power * -1.0
+
+        // 3. Test lines 110-113: evaluate_and_command for non-existent inverter to insert InverterState::default()
+        // Remove it first to verify insertion behavior
+        pm.inverters.remove("solax1");
+        assert!(!pm.inverters.contains_key("solax1"));
+        let _ = pm.evaluate_and_command("solax1");
+        assert!(pm.inverters.contains_key("solax1"));
+
+        // 4. Test lines 134-135: discharge_power < -max_charge
+        // We set prefer_battery = true, min_charge = 60, battery_capacity = 50.
+        // PV power is very high so discharge_power = -pv1 - pv2 is less than -max_charge.
+        let mut periods_pref = HashMap::new();
+        periods_pref.insert(
+            "Always".to_string(),
+            mock_period("00:00:00", "23:59:59", 60, false, true),
+        );
+        pm.config.period = periods_pref;
+
+        let state = InverterState {
+            battery_capacity: 50,
+            pv1_power: 1500.0,
+            pv2_power: 1000.0, // sum = 2500 > max_charge (2000)
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state);
+        let cmd = pm.evaluate_and_command("solax1");
+        assert_eq!(cmd, Some(2000)); // capped at max_charge
+
+        // 5. Test lines 160-161 / 163: assist_needed is true, but discharge power is within bounds -> assist_needed becomes false
+        // We need to trigger Case 3 (Try to zero power) with assist_needed = true.
+        // Let's use a period with prefer_battery = false and capacity = 50.
+        let mut periods_normal = HashMap::new();
+        periods_normal.insert(
+            "Always".to_string(),
+            mock_period("00:00:00", "23:59:59", 10, false, false),
+        );
+        pm.config.period = periods_normal;
+
+        // assist_needed is true
+        pm.assist_needed.insert("solax1".to_string(), true);
+        pm.total_power = -100.0;
+        pm.phase_power[1] = -100.0;
+
+        // State has discharge_power = -50.0 (charging)
+        // single_phase_charge_limit is 1000, so upper_limit is -1000.
+        // discharge_power = -50.0 + phase_power_val * 0.25 = -50.0 + -100.0 * 0.25 = -75.0.
+        // -75.0 is < 0.0 and > -1000.0, so it is within bounds -> assist_needed becomes false.
+        let state_assist = InverterState {
+            battery_capacity: 50,
+            discharge_power: -50.0,
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state_assist);
+        let _ = pm.evaluate_and_command("solax1");
+        assert!(!*pm.assist_needed.get("solax1").unwrap());
+
+        // 6. Test lines 175-177: capacity <= min_charge and discharge_power > 0.0 -> sets discharge_power to 0.0, assist_needed to true
+        let state_low_cap = InverterState {
+            battery_capacity: 5,    // <= min_charge 10
+            discharge_power: 100.0, // > 0
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state_low_cap);
+        // phase power is positive, so it tries to discharge
+        pm.total_power = 200.0;
+        pm.phase_power[1] = 200.0;
+        let cmd = pm.evaluate_and_command("solax1");
+        assert_eq!(cmd, Some(0)); // discharge set to 0
+        assert!(*pm.assist_needed.get("solax1").unwrap());
+
+        // 7. Test lines 191-195: linked_batteries clamps total_discharge_power
+        // We will call evaluate_and_command multiple times with high positive and negative total_power
+        pm.config.linked_batteries = true;
+        pm.linked_batteries = true;
+        pm.max_total_discharge_power = 500.0;
+        pm.max_total_charge_power = 500.0;
+        pm.total_discharge_power = 450.0;
+
+        let state_linked = InverterState {
+            battery_capacity: 50,
+            discharge_power: 1000.0, // Prevent assist_needed from clearing
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state_linked);
+        pm.assist_needed.insert("solax1".to_string(), true);
+
+        // High positive power to trigger clamp to max_total_discharge_power
+        pm.total_power = 1000.0;
+        pm.phase_power[1] = 1000.0;
+        let _ = pm.evaluate_and_command("solax1");
+        assert_eq!(pm.total_discharge_power, 500.0);
+
+        // High negative power to trigger clamp to -max_total_charge_power
+        pm.total_power = -10000.0;
+        pm.phase_power[1] = -10000.0; // Ensure negative phase power so assist_needed is not cleared
+        let _ = pm.evaluate_and_command("solax1");
+        assert_eq!(pm.total_discharge_power, -500.0);
+
+        // 8. Test line 232: grace period clamp to -grace_charge_power
+        // We need: grace = true (period.grace = true, grace_capacity > 0, grace_charge_power > 0)
+        // discharge_power < 0
+        // capacity > grace_capacity (capacity = 85, grace_capacity = 80)
+        // total_pv >= grace_power_threshold (pv1 + pv2 = 1200 >= 1000)
+        // discharge_power < -grace_charge_power (discharge_power = -500 < -300)
+        let mut periods_grace = HashMap::new();
+        let mut p_grace = mock_period("00:00:00", "23:59:59", 10, false, false);
+        p_grace.grace = true;
+        periods_grace.insert("Always".to_string(), p_grace);
+        pm.config.period = periods_grace;
+        pm.config.linked_batteries = false;
+        pm.linked_batteries = false;
+
+        let state_grace = InverterState {
+            battery_capacity: 85,
+            discharge_power: -500.0,
+            pv1_power: 600.0,
+            pv2_power: 600.0, // total 1200 >= 1000
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state_grace);
+        pm.total_power = 0.0;
+        pm.phase_power[1] = 0.0;
+        let cmd = pm.evaluate_and_command("solax1");
+        // should be clamped to -grace_charge_power = -300 -> negated to 300
+        assert_eq!(cmd, Some(300));
+    }
 }

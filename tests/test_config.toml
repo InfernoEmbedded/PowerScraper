@@ -1,0 +1,72 @@
+[MQTT]
+broker = "127.0.0.1"
+port = 18830
+base_topic = "sensors"
+username = "testuser"
+password = "testpass"
+
+[Solax-Modbus]
+poll-period = 1
+timeout = 5
+inverters = ["solax-modbus"]
+hostnames = ["127.0.0.1:5020"]
+
+[Solax-XHybrid-Modbus]
+poll-period = 1
+timeout = 5
+inverters = ["solax-xhybrid"]
+hostnames = ["127.0.0.1:5020"]
+
+[Solax-Wifi]
+poll-period = 1
+timeout = 5
+inverters = ["127.0.0.1:8080"]
+
+[MQTTPowerMeter]
+poll-period = 1
+meters = ["custom-meter"]
+
+[MQTTPowerMeter.custom-meter]
+broker = "127.0.0.1"
+port = 18830
+topic-total = "custom/total"
+topic-phase1 = "custom/p1"
+topic-phase2 = "custom/p2"
+topic-phase3 = "custom/p3"
+
+[emoncms]
+server = "http://127.0.0.1:8080"
+api_key = "test-api"
+timeout = 5
+
+[influx]
+influx_url = "http://127.0.0.1:8080"
+influx_database = "testdb"
+influx_measurement = "testmeas"
+influx_user = "testuser"
+influx_pass = "testpass"
+influx_retention_policy = "autogen"
+
+[Solax-BatteryControl]
+linked-batteries = false
+timezone = "UTC"
+
+[Solax-BatteryControl.inverter.solax-modbus]
+phase = 1
+max-charge = 2000.0
+max-discharge = 2000.0
+use-total-power = false
+
+[Solax-BatteryControl.inverter.solax-xhybrid]
+phase = 2
+max-charge = 2000.0
+max-discharge = 2000.0
+use-total-power = false
+
+[Solax-BatteryControl.period.always]
+start = "00:00:00"
+end = "23:59:59"
+min-charge = 30
+grid-charge = true
+prefer-battery = false
+grace = false
