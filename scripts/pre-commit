@@ -1,0 +1,123 @@
+#!/usr/bin/env bash
+
+# Premium git pre-commit hook for PowerScraper
+
+# Colors for terminal output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e "${BLUE}=== PowerScraper Pre-Commit Checks ===${NC}"
+
+# Add local cargo path to PATH if not already present
+if ! command -v cargo &> /dev/null; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+fi
+
+# 1. Format check
+echo -n "Checking code formatting (cargo fmt)... "
+if ! cargo fmt --check; then
+    echo -e "${RED}FAILED${NC}"
+    echo -e "${YELLOW}Please run 'cargo fmt' to fix formatting before committing.${NC}"
+    exit 1
+fi
+echo -e "${GREEN}PASSED${NC}"
+
+# 2. Clippy static analysis
+echo -n "Running linter and warnings check (cargo clippy)... "
+if ! cargo clippy --all-targets -- -D warnings; then
+    echo -e "${RED}FAILED${NC}"
+    echo -e "${YELLOW}Please resolve all compiler/clippy warnings and errors.${NC}"
+    exit 1
+fi
+echo -e "${GREEN}PASSED${NC}"
+
+# 3. Documentation build check
+echo -n "Checking documentation build (cargo doc)... "
+if ! RUSTDOCFLAGS="-D warnings" cargo doc --no-deps &> /dev/null; then
+    echo -e "${RED}FAILED${NC}"
+    echo -e "${YELLOW}Please fix any documentation compilation errors/warnings.${NC}"
+    exit 1
+fi
+echo -e "${GREEN}PASSED${NC}"
+
+# 4. Run tests and collect coverage
+echo "Running unit tests with coverage instrumentation..."
+
+# Clean coverage raw profile files
+rm -f *.profraw
+
+CARGO_INCREMENTAL=0 RUSTFLAGS="-C instrument-coverage" cargo test
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Unit tests failed!${NC}"
+    exit 1
+fi
+
+# Dynamically locate the most recently compiled test executable
+TEST_BIN=$(ls -t target/debug/deps/PowerScraper-* 2>/dev/null | grep -v "\.d$" | head -n 1)
+
+if [ -z "$TEST_BIN" ]; then
+    echo -e "${RED}Could not find test executable to generate coverage.${NC}"
+    exit 1
+fi
+
+# Dynamically locate llvm-profdata and llvm-cov
+RUSTC_SYSROOT=$(rustc --print sysroot)
+HOST_TRIPLE=$(rustc -vV | grep host | awk '{print $2}')
+LLVM_PROFDATA="$RUSTC_SYSROOT/lib/rustlib/$HOST_TRIPLE/bin/llvm-profdata"
+LLVM_COV="$RUSTC_SYSROOT/lib/rustlib/$HOST_TRIPLE/bin/llvm-cov"
+
+if [ ! -f "$LLVM_PROFDATA" ] || [ ! -f "$LLVM_COV" ]; then
+    echo -e "${RED}LLVM coverage tools not found in Rust toolchain.${NC}"
+    echo -e "${YELLOW}Please run: rustup component add llvm-tools-preview${NC}"
+    exit 1
+fi
+
+# Merge profile data
+"$LLVM_PROFDATA" merge -sparse *.profraw -o cov.profdata
+if [ $? -ne 0 ]; then
+    echo -e "${RED}Failed to merge profile data.${NC}"
+    exit 1
+fi
+
+# Extract coverage metrics
+overall_cov=$("$LLVM_COV" report --instr-profile=cov.profdata --object "$TEST_BIN" --ignore-filename-regex="\.cargo|rustc" | grep "TOTAL" | awk '{print $10}')
+overall_val=$(echo "$overall_cov" | tr -d '%')
+
+pm_cov=$("$LLVM_COV" report --instr-profile=cov.profdata --object "$TEST_BIN" --ignore-filename-regex="\.cargo|rustc" | grep "power_manager.rs" | awk '{print $10}')
+pm_val=$(echo "$pm_cov" | tr -d '%')
+
+# Clean up temporary profile files
+rm -f *.profraw cov.profdata
+
+# Verify coverage values are parsed
+if [ -z "$overall_val" ] || [ -z "$pm_val" ]; then
+    echo -e "${RED}FAILED: Coverage metrics could not be extracted from llvm-cov report.${NC}"
+    exit 1
+fi
+
+# Display coverage report summary
+echo -e "${BLUE}--- Coverage Summary ---${NC}"
+echo -e "Overall Line Coverage:      ${GREEN}${overall_val}%${NC}"
+echo -e "power_manager.rs Coverage:  ${GREEN}${pm_val}%${NC}"
+
+# Define thresholds
+OVERALL_THRESHOLD=15.0
+PM_THRESHOLD=60.0
+
+# Verify overall coverage
+if awk "BEGIN { if ($overall_val < $OVERALL_THRESHOLD) exit 0; else exit 1 }"; then
+    echo -e "${RED}FAILED: Overall coverage ($overall_val%) is below the required threshold of $OVERALL_THRESHOLD%${NC}"
+    exit 1
+fi
+
+# Verify core logic coverage
+if awk "BEGIN { if ($pm_val < $PM_THRESHOLD) exit 0; else exit 1 }"; then
+    echo -e "${RED}FAILED: power_manager.rs coverage ($pm_val%) is below the required threshold of $PM_THRESHOLD%${NC}"
+    exit 1
+fi
+
+echo -e "${GREEN}All checks passed successfully! Commit approved.${NC}"
+exit 0
