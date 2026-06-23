@@ -145,7 +145,7 @@ pub struct BatteryControlPeriod {
     pub prefer_battery: bool,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct SolaxBatteryControlConfig {
     pub source: Option<String>,
@@ -156,6 +156,8 @@ pub struct SolaxBatteryControlConfig {
     pub inverter: HashMap<String, BatteryControlInverter>,
     #[serde(default)]
     pub period: HashMap<String, BatteryControlPeriod>,
+    pub grid_target: Option<f64>,
+    pub initial_mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
