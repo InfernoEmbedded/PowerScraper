@@ -5,11 +5,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
+use tokio_util::sync::CancellationToken;
 
 pub async fn run_forwarders_task(
     emoncms_config: Option<EmonCMSConfig>,
     influx_config: Option<InfluxConfig>,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     if emoncms_config.is_none() && influx_config.is_none() {
         return;
@@ -45,6 +47,7 @@ pub async fn run_forwarders_task(
     let buffer_clone = buffer.clone();
     let emon_clone = emoncms_config.clone();
     let influx_clone = influx_config.clone();
+    let cancel_token_flush = cancel_token.clone();
     tokio::spawn(async move {
         let http_client = reqwest::Client::new();
         #[cfg(test)]
@@ -53,7 +56,10 @@ pub async fn run_forwarders_task(
         let flush_interval = Duration::from_secs(10);
 
         loop {
-            sleep(flush_interval).await;
+            tokio::select! {
+                _ = cancel_token_flush.cancelled() => break,
+                _ = sleep(flush_interval) => {}
+            }
 
             let mut data_to_flush = HashMap::new();
             {
@@ -87,25 +93,29 @@ pub async fn run_forwarders_task(
                         let emon_url = url.clone();
                         let client = http_client.clone();
                         let timeout_sec = emon.timeout;
+                        let cancel_token_emon = cancel_token_flush.clone();
                         tokio::spawn(async move {
-                            match client
-                                .get(&emon_url)
-                                .query(&query_params)
-                                .timeout(Duration::from_secs(timeout_sec))
-                                .send()
-                                .await
-                            {
-                                Ok(resp) => {
-                                    if !resp.status().is_success() {
-                                        println!(
-                                            "EmonCMS forward failed with status: {}",
-                                            resp.status()
-                                        );
+                            tokio::select! {
+                                _ = cancel_token_emon.cancelled() => {}
+                                res = client
+                                    .get(&emon_url)
+                                    .query(&query_params)
+                                    .timeout(Duration::from_secs(timeout_sec))
+                                    .send() => {
+                                        match res {
+                                            Ok(resp) => {
+                                                if !resp.status().is_success() {
+                                                    println!(
+                                                        "EmonCMS forward failed with status: {}",
+                                                        resp.status()
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                println!("EmonCMS request error: {}", e);
+                                            }
+                                        }
                                     }
-                                }
-                                Err(e) => {
-                                    println!("EmonCMS request error: {}", e);
-                                }
                             }
                         });
                     }
@@ -141,26 +151,30 @@ pub async fn run_forwarders_task(
                         let token = format!("{}:{}", influx.influx_user, influx.influx_pass);
 
                         let client = http_client.clone();
+                        let cancel_token_influx = cancel_token_flush.clone();
                         tokio::spawn(async move {
-                            match client
-                                .post(&write_url)
-                                .header("Authorization", format!("Token {}", token))
-                                .body(line)
-                                .send()
-                                .await
-                            {
-                                Ok(resp) => {
-                                    if !resp.status().is_success() {
-                                        let text = resp.text().await.unwrap_or_default();
-                                        println!(
-                                            "InfluxDB forward failed: {} - {}",
-                                            text, write_url
-                                        );
+                            tokio::select! {
+                                _ = cancel_token_influx.cancelled() => {}
+                                res = client
+                                    .post(&write_url)
+                                    .header("Authorization", format!("Token {}", token))
+                                    .body(line)
+                                    .send() => {
+                                        match res {
+                                            Ok(resp) => {
+                                                if !resp.status().is_success() {
+                                                    let text = resp.text().await.unwrap_or_default();
+                                                    println!(
+                                                        "InfluxDB forward failed: {} - {}",
+                                                        text, write_url
+                                                    );
+                                                }
+                                            }
+                                            Err(e) => {
+                                                println!("InfluxDB request error: {}", e);
+                                            }
+                                        }
                                     }
-                                }
-                                Err(e) => {
-                                    println!("InfluxDB request error: {}", e);
-                                }
                             }
                         });
                     }
@@ -171,31 +185,39 @@ pub async fn run_forwarders_task(
 
     // Main MQTT subscription polling loop
     loop {
-        match eventloop.poll().await {
-            Ok(notification) => {
-                if let Event::Incoming(Packet::Publish(publish)) = notification {
-                    let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
-                    if let Some(suffix) = topic_suffix {
-                        let parts: Vec<&str> = suffix.split('/').collect();
-                        if parts.len() >= 2 {
-                            let device_name = parts[0];
-                            let metric = parts[1..].join("/");
-                            let payload =
-                                String::from_utf8_lossy(&publish.payload).trim().to_string();
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            res = eventloop.poll() => {
+                match res {
+                    Ok(notification) => {
+                        if let Event::Incoming(Packet::Publish(publish)) = notification {
+                            let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
+                            if let Some(suffix) = topic_suffix {
+                                let parts: Vec<&str> = suffix.split('/').collect();
+                                if parts.len() >= 2 {
+                                    let device_name = parts[0];
+                                    let metric = parts[1..].join("/");
+                                    let payload =
+                                        String::from_utf8_lossy(&publish.payload).trim().to_string();
 
-                            // Buffer the metric
-                            let mut buf_lock = buffer.lock().await;
-                            buf_lock
-                                .entry(device_name.to_string())
-                                .or_default()
-                                .insert(metric, payload);
+                                    // Buffer the metric
+                                    let mut buf_lock = buffer.lock().await;
+                                    buf_lock
+                                        .entry(device_name.to_string())
+                                        .or_default()
+                                        .insert(metric, payload);
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("Forwarder MQTT error: {}", e);
+                        tokio::select! {
+                            _ = cancel_token.cancelled() => break,
+                            _ = sleep(Duration::from_secs(5)) => {}
                         }
                     }
                 }
-            }
-            Err(e) => {
-                println!("Forwarder MQTT error: {}", e);
-                sleep(Duration::from_secs(5)).await;
             }
         }
     }

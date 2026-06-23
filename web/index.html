@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PowerScraper Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+    <aside>
+        <div class="logo">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--primary)"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+            PowerScraper
+        </div>
+        <nav>
+            <button class="nav-btn active" onclick="switchTab('tab-dashboard', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+                Dashboard
+            </button>
+            <button class="nav-btn" onclick="switchTab('tab-mqtt', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
+                MQTT Settings
+            </button>
+            <button class="nav-btn" onclick="switchTab('tab-hardware', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
+                Hardware Drivers
+            </button>
+            <button class="nav-btn" onclick="switchTab('tab-battery', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line></svg>
+                Battery Control
+            </button>
+            <button class="nav-btn" onclick="switchTab('tab-periods', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+                TOU Periods
+            </button>
+            <button class="nav-btn" onclick="switchTab('tab-forwarders', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+                Forwarders
+            </button>
+        </nav>
+    </aside>
+
+    <main>
+        <header>
+            <h1 id="page-title">System Dashboard</h1>
+            <button class="btn-apply" onclick="saveConfiguration()">Apply Changes</button>
+        </header>
+
+        <!-- DASHBOARD TAB -->
+        <div id="tab-dashboard" class="tab-content active">
+            <div class="grid-3">
+                <div class="glass-card">
+                    <div class="card-title">Mains Grid Power</div>
+                    <div class="stat-val" id="stat-mains">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Power Manager Mode</div>
+                    <div class="stat-val" id="stat-mode" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">Auto</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Grid Regulate Target</div>
+                    <div class="stat-val" id="stat-target" style="color: var(--warning); text-shadow: 0 0 10px rgba(245,158,11,0.2);">0 W</div>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <div class="card-title">Live Control Modes</div>
+                <div class="mode-container">
+                    <div class="mode-card" id="mode-auto" onclick="setInstantMode('Auto')">
+                        <h3>Auto Mode</h3>
+                        <p>Regulate grid export/import dynamically</p>
+                    </div>
+                    <div class="mode-card" id="mode-charge" onclick="setInstantMode('ChargeBatteries')">
+                        <h3>Charge Batteries</h3>
+                        <p>Force maximum battery charging rate</p>
+                    </div>
+                    <div class="mode-card" id="mode-feedin" onclick="setInstantMode('MaximumFeedin')">
+                        <h3>Maximum Feedin</h3>
+                        <p>Force maximum battery discharge rate</p>
+                    </div>
+                </div>
+                <div class="form-group" style="margin-top: 10px;">
+                    <label for="instant-target">Change Grid Target (W)</label>
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <input type="range" id="instant-target-slider" min="-5000" max="5000" step="50" style="flex: 1; accent-color: var(--primary);" oninput="updateTargetText(this.value)">
+                        <input type="number" id="instant-target-val" style="width: 100px;" onchange="updateTargetText(this.value)">
+                        <button class="sub-btn" onclick="applyInstantTarget()">Set Target</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <div class="card-title">Inverter Telemetry</div>
+                <div class="inverter-list-dashboard" id="dash-inverters-list">
+                    <div class="inverter-item" style="color: var(--text-muted); text-align: center; grid-template-columns: 1fr;">No inverters connected.</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MQTT SETTINGS TAB -->
+        <div id="tab-mqtt" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">MQTT Broker Credentials</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="mqtt-broker">Broker Hostname / IP</label>
+                        <input type="text" id="mqtt-broker" placeholder="mqtt.example.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="mqtt-port">Broker Port</label>
+                        <input type="number" id="mqtt-port" placeholder="1883">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="mqtt-username">Username</label>
+                        <input type="text" id="mqtt-username" placeholder="Optional">
+                    </div>
+                    <div class="form-group">
+                        <label for="mqtt-password">Password</label>
+                        <input type="password" id="mqtt-password" placeholder="Optional">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="mqtt-base">Base Topic Path</label>
+                        <input type="text" id="mqtt-base" placeholder="sensors">
+                    </div>
+                </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" id="mqtt-ha-discovery">
+                    <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery</label>
+                </div>
+                <div class="form-row" style="margin-top: 15px;">
+                    <div class="form-group" id="mqtt-ha-prefix-group">
+                        <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix</label>
+                        <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- HARDWARE DRIVERS TAB -->
+        <div id="tab-hardware" class="tab-content">
+            <!-- SolaX Wifi -->
+            <div class="glass-card">
+                <div class="card-title">
+                    SolaX Wi-Fi HTTP API
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="wifi-enable" onchange="toggleFormSection('wifi-section', this.checked)">
+                        <label for="wifi-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="wifi-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="wifi-poll">Poll Period (seconds)</label>
+                            <input type="number" id="wifi-poll">
+                        </div>
+                        <div class="form-group">
+                            <label for="wifi-timeout">Request Timeout (seconds)</label>
+                            <input type="number" id="wifi-timeout">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="wifi-inverters">WiFi Inverters (IPs or Hostnames, comma separated)</label>
+                        <input type="text" id="wifi-inverters" placeholder="e.g. 192.168.1.15, 192.168.1.16">
+                    </div>
+                </div>
+            </div>
+
+            <!-- SolaX Modbus -->
+            <div class="glass-card">
+                <div class="card-title">
+                    SolaX Modbus TCP (Standard)
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="modbus-enable" onchange="toggleFormSection('modbus-section', this.checked)">
+                        <label for="modbus-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="modbus-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="modbus-poll">Poll Period (seconds)</label>
+                            <input type="number" id="modbus-poll">
+                        </div>
+                        <div class="form-group">
+                            <label for="modbus-timeout">Timeout (seconds)</label>
+                            <input type="number" id="modbus-timeout">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="modbus-pwd">Installer Password</label>
+                            <input type="number" id="modbus-pwd">
+                        </div>
+                        <div class="form-group">
+                            <label for="modbus-avg">Power Budget Avg Samples</label>
+                            <input type="number" id="modbus-avg">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="modbus-inverters">Inverters List (Comma separated names)</label>
+                            <input type="text" id="modbus-inverters" placeholder="e.g. solax1, solax2">
+                        </div>
+                        <div class="form-group">
+                            <label for="modbus-hostnames">Hostnames/Endpoints (Comma separated host:port)</label>
+                            <input type="text" id="modbus-hostnames" placeholder="e.g. 192.168.1.20:502, 192.168.1.21:502">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SolaX XHybrid Modbus -->
+            <div class="glass-card">
+                <div class="card-title">
+                    SolaX XHybrid Modbus TCP
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="hybrid-enable" onchange="toggleFormSection('hybrid-section', this.checked)">
+                        <label for="hybrid-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="hybrid-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="hybrid-poll">Poll Period (seconds)</label>
+                            <input type="number" id="hybrid-poll">
+                        </div>
+                        <div class="form-group">
+                            <label for="hybrid-timeout">Timeout (seconds)</label>
+                            <input type="number" id="hybrid-timeout">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="hybrid-pwd">Installer Password</label>
+                            <input type="number" id="hybrid-pwd">
+                        </div>
+                        <div class="form-group">
+                            <label for="hybrid-avg">Power Budget Avg Samples</label>
+                            <input type="number" id="hybrid-avg">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="hybrid-inverters">Inverters List (Comma separated names)</label>
+                            <input type="text" id="hybrid-inverters" placeholder="e.g. solax-x1">
+                        </div>
+                        <div class="form-group">
+                            <label for="hybrid-hostnames">Hostnames/Endpoints (Comma separated host:port)</label>
+                            <input type="text" id="hybrid-hostnames" placeholder="e.g. 192.168.1.25:502">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SDM630 Meter -->
+            <div class="glass-card">
+                <div class="card-title">
+                    Eastron SDM630 Serial Meter
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="sdm-enable" onchange="toggleFormSection('sdm-section', this.checked)">
+                        <label for="sdm-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="sdm-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="sdm-poll">Poll Period (seconds)</label>
+                            <input type="number" id="sdm-poll">
+                        </div>
+                        <div class="form-group">
+                            <label for="sdm-timeout">Timeout (seconds)</label>
+                            <input type="number" id="sdm-timeout">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="sdm-baud">Baud Rate</label>
+                            <input type="number" id="sdm-baud" placeholder="38400">
+                        </div>
+                        <div class="form-group">
+                            <label for="sdm-parity">Parity</label>
+                            <select id="sdm-parity">
+                                <option value="N">None (N)</option>
+                                <option value="E">Even (E)</option>
+                                <option value="O">Odd (O)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="sdm-stop">Stop Bits</label>
+                            <input type="number" id="sdm-stop" placeholder="1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="sdm-ports">Serial Port TTY Paths (Comma separated)</label>
+                        <input type="text" id="sdm-ports" placeholder="e.g. /dev/ttyUSB0">
+                    </div>
+                </div>
+            </div>
+
+            <!-- DTSU666 Meter -->
+            <div class="glass-card">
+                <div class="card-title">
+                    Chint DTSU666 Serial Meter
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="dtsu-enable" onchange="toggleFormSection('dtsu-section', this.checked)">
+                        <label for="dtsu-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="dtsu-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="dtsu-poll">Poll Period (seconds)</label>
+                            <input type="number" id="dtsu-poll">
+                        </div>
+                        <div class="form-group">
+                            <label for="dtsu-timeout">Timeout (seconds)</label>
+                            <input type="number" id="dtsu-timeout">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="dtsu-baud">Baud Rate</label>
+                            <input type="number" id="dtsu-baud" placeholder="9600">
+                        </div>
+                        <div class="form-group">
+                            <label for="dtsu-parity">Parity</label>
+                            <select id="dtsu-parity">
+                                <option value="N">None (N)</option>
+                                <option value="E">Even (E)</option>
+                                <option value="O">Odd (O)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="dtsu-stop">Stop Bits</label>
+                            <input type="number" id="dtsu-stop" placeholder="1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="dtsu-ports">Serial Port TTY Paths (Comma separated)</label>
+                        <input type="text" id="dtsu-ports" placeholder="e.g. /dev/ttyUSB1">
+                    </div>
+                </div>
+            </div>
+
+            <!-- MQTT Custom Power Meter -->
+            <div class="glass-card">
+                <div class="card-title">
+                    MQTT Custom Power Meter Bridge
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="mqtt-meter-enable" onchange="toggleFormSection('mqtt-meter-section', this.checked)">
+                        <label for="mqtt-meter-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="mqtt-meter-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-meter-poll">Poll Period (seconds)</label>
+                            <input type="number" id="mqtt-meter-poll">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-meter-name">Meter Name</label>
+                            <input type="text" id="mqtt-meter-name" placeholder="MainsMeter">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-meter-broker">Broker IP/Hostname</label>
+                            <input type="text" id="mqtt-meter-broker">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-meter-port">Broker Port</label>
+                            <input type="number" id="mqtt-meter-port" placeholder="1883">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-meter-user">Username</label>
+                            <input type="text" id="mqtt-meter-user" placeholder="Optional">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-meter-pass">Password</label>
+                            <input type="password" id="mqtt-meter-pass" placeholder="Optional">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-meter-topic-total">Total Power Topic</label>
+                            <input type="text" id="mqtt-meter-topic-total">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-meter-topic-p1">Phase 1 Topic</label>
+                            <input type="text" id="mqtt-meter-topic-p1">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-meter-topic-p2">Phase 2 Topic</label>
+                            <input type="text" id="mqtt-meter-topic-p2">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-meter-topic-p3">Phase 3 Topic</label>
+                            <input type="text" id="mqtt-meter-topic-p3">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- BATTERY CONTROL TAB -->
+        <div id="tab-battery" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">
+                    Battery Control Settings
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="battery-enable" onchange="toggleFormSection('battery-section', this.checked)">
+                        <label for="battery-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="battery-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="battery-source">Grid Power Source (Meter Name)</label>
+                            <input type="text" id="battery-source" placeholder="e.g. MainsMeter">
+                        </div>
+                        <div class="form-group">
+                            <label for="battery-tz">Local Timezone</label>
+                            <input type="text" id="battery-tz" placeholder="e.g. Australia/Sydney">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="battery-grid-target">Grid Regulate Target (W)</label>
+                            <input type="number" id="battery-grid-target">
+                        </div>
+                        <div class="form-group">
+                            <label for="battery-init-mode">Initial Mode</label>
+                            <select id="battery-init-mode">
+                                <option value="Auto">Auto</option>
+                                <option value="ChargeBatteries">Charge Batteries</option>
+                                <option value="MaximumFeedin">Maximum Feedin</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="battery-linked">
+                        <label for="battery-linked">Enable Linked Batteries (balances charge rates proportionately)</label>
+                    </div>
+
+                    <div style="margin-top: 30px;">
+                        <div class="card-title">
+                            Inverter Constraint Matrix
+                            <button class="sub-btn" onclick="addInverterConstraint()">Add Inverter</button>
+                        </div>
+                        <div id="inverters-constraints-list">
+                            <!-- Dynamic inverter constraint cards -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TOU PERIODS TAB -->
+        <div id="tab-periods" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">
+                    Time-of-Use Periods
+                    <button class="sub-btn" onclick="addTOUPeriod()">Add Period</button>
+                </div>
+                <div id="periods-list-container">
+                    <!-- Dynamic periods list -->
+                </div>
+            </div>
+        </div>
+
+        <!-- FORWARDERS TAB -->
+        <div id="tab-forwarders" class="tab-content">
+            <!-- EmonCMS -->
+            <div class="glass-card">
+                <div class="card-title">
+                    EmonCMS Forwarder
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="emon-enable" onchange="toggleFormSection('emon-section', this.checked)">
+                        <label for="emon-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="emon-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="emon-server">EmonCMS Server URL</label>
+                            <input type="text" id="emon-server" placeholder="http://emoncms">
+                        </div>
+                        <div class="form-group">
+                            <label for="emon-timeout">Timeout (seconds)</label>
+                            <input type="number" id="emon-timeout">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="emon-api">Write API Key</label>
+                        <input type="password" id="emon-api">
+                    </div>
+                </div>
+            </div>
+
+            <!-- InfluxDB -->
+            <div class="glass-card">
+                <div class="card-title">
+                    InfluxDB v1.8+ Forwarder
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="influx-enable" onchange="toggleFormSection('influx-section', this.checked)">
+                        <label for="influx-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="influx-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="influx-url">InfluxDB Server URL</label>
+                            <input type="text" id="influx-url" placeholder="http://localhost:8086">
+                        </div>
+                        <div class="form-group">
+                            <label for="influx-db">Target Database Name</label>
+                            <input type="text" id="influx-db">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="influx-measurement">Measurement / Table Name</label>
+                            <input type="text" id="influx-measurement">
+                        </div>
+                        <div class="form-group">
+                            <label for="influx-rp">Retention Policy</label>
+                            <input type="text" id="influx-rp" placeholder="autogen">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="influx-user">Username</label>
+                            <input type="text" id="influx-user" placeholder="Optional">
+                        </div>
+                        <div class="form-group">
+                            <label for="influx-pass">Password</label>
+                            <input type="password" id="influx-pass" placeholder="Optional">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/app.js"></script>
+</body>
+</html>

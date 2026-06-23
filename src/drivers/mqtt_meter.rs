@@ -3,11 +3,13 @@ use crate::mqtt_helper::create_mqtt_client;
 use rumqttc::{Event, Packet, QoS};
 use std::time::Duration;
 use tokio::time::sleep;
+use tokio_util::sync::CancellationToken;
 
 pub async fn run_mqtt_meter_driver(
     meter_name: String,
     config: MQTTPowerMeterDeviceConfig,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
         .base_topic
@@ -51,51 +53,59 @@ pub async fn run_mqtt_meter_driver(
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
-        match eventloop.poll().await {
-            Ok(notification) => {
-                if let Event::Incoming(Packet::Publish(publish)) = notification {
-                    let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
-                    let target_metric = if publish.topic == topic_total {
-                        Some("Total system power")
-                    } else if publish.topic == topic_p1 {
-                        Some("Phase 1 power")
-                    } else if publish.topic == topic_p2 {
-                        Some("Phase 2 power")
-                    } else if publish.topic == topic_p3 {
-                        Some("Phase 3 power")
-                    } else {
-                        None
-                    };
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            res = eventloop.poll() => {
+                match res {
+                    Ok(notification) => {
+                        if let Event::Incoming(Packet::Publish(publish)) = notification {
+                            let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
+                            let target_metric = if publish.topic == topic_total {
+                                Some("Total system power")
+                            } else if publish.topic == topic_p1 {
+                                Some("Phase 1 power")
+                            } else if publish.topic == topic_p2 {
+                                Some("Phase 2 power")
+                            } else if publish.topic == topic_p3 {
+                                Some("Phase 3 power")
+                            } else {
+                                None
+                            };
 
-                    if let Some(metric_name) = target_metric {
-                        if !discovered_metrics.contains(metric_name) {
-                            crate::mqtt_helper::publish_home_assistant_discovery(
-                                &mqtt_client,
-                                &mqtt_config,
-                                &meter_name,
-                                metric_name,
-                                false,
-                            )
-                            .await;
-                            discovered_metrics.insert(metric_name.to_string());
+                            if let Some(metric_name) = target_metric {
+                                if !discovered_metrics.contains(metric_name) {
+                                    crate::mqtt_helper::publish_home_assistant_discovery(
+                                        &mqtt_client,
+                                        &mqtt_config,
+                                        &meter_name,
+                                        metric_name,
+                                        false,
+                                    )
+                                    .await;
+                                    discovered_metrics.insert(metric_name.to_string());
+                                }
+
+                                let target_topic = format!("{}/{}/{}", base_topic, meter_name, metric_name);
+                                if let Err(e) = mqtt_client
+                                    .publish(&target_topic, QoS::AtMostOnce, false, payload)
+                                    .await
+                                {
+                                    println!(
+                                        "MQTT Meter [{}] failed to publish standard topic {}: {}",
+                                        meter_name, target_topic, e
+                                    );
+                                }
+                            }
                         }
-
-                        let target_topic = format!("{}/{}/{}", base_topic, meter_name, metric_name);
-                        if let Err(e) = mqtt_client
-                            .publish(&target_topic, QoS::AtMostOnce, false, payload)
-                            .await
-                        {
-                            println!(
-                                "MQTT Meter [{}] failed to publish standard topic {}: {}",
-                                meter_name, target_topic, e
-                            );
+                    }
+                    Err(e) => {
+                        println!("MQTT Meter [{}] connection error: {}", meter_name, e);
+                        tokio::select! {
+                            _ = cancel_token.cancelled() => break,
+                            _ = sleep(Duration::from_secs(5)) => {}
                         }
                     }
                 }
-            }
-            Err(e) => {
-                println!("MQTT Meter [{}] connection error: {}", meter_name, e);
-                sleep(Duration::from_secs(5)).await;
             }
         }
     }

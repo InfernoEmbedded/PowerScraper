@@ -6,6 +6,7 @@ use tokio::time::{Duration, sleep};
 use tokio_modbus::client::{Context, Reader, rtu};
 use tokio_modbus::prelude::Slave;
 use tokio_serial::{Parity, SerialStream, StopBits};
+use tokio_util::sync::CancellationToken;
 
 fn float32(registers: &[u16], base: usize, addr: usize) -> f32 {
     let low = registers[addr - base];
@@ -49,6 +50,7 @@ pub async fn run_sdm630_driver(
     port_path: String,
     config: SerialMeterConfig,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
         .base_topic
@@ -60,11 +62,20 @@ pub async fn run_sdm630_driver(
 
     // Spawn dummy MQTT loop to keep connection alive
     let device_name_mqtt = device_name.clone();
+    let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
         loop {
-            if let Err(e) = eventloop.poll().await {
-                println!("SDM630 [{}] MQTT error: {}", device_name_mqtt, e);
-                sleep(Duration::from_secs(5)).await;
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    if let Err(e) = res {
+                        println!("SDM630 [{}] MQTT error: {}", device_name_mqtt, e);
+                        tokio::select! {
+                            _ = cancel_token_clone.cancelled() => break,
+                            _ = sleep(Duration::from_secs(5)) => {}
+                        }
+                    }
+                }
             }
         }
     });
@@ -74,6 +85,9 @@ pub async fn run_sdm630_driver(
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
         if ctx_opt.is_none() {
             match connect_serial_meter(&port_path, &config).await {
                 Ok(ctx) => ctx_opt = Some(ctx),
@@ -82,7 +96,10 @@ pub async fn run_sdm630_driver(
                         "SDM630 [{}] failed to connect to serial port: {}",
                         device_name, e
                     );
-                    sleep(poll_interval).await;
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => break,
+                        _ = sleep(poll_interval) => {}
+                    }
                     continue;
                 }
             }
@@ -492,7 +509,10 @@ pub async fn run_sdm630_driver(
             }
         }
 
-        sleep(poll_interval).await;
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = sleep(poll_interval) => {}
+        }
     }
 }
 
@@ -500,6 +520,7 @@ pub async fn run_dtsu666_driver(
     port_path: String,
     config: SerialMeterConfig,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
         .base_topic
@@ -511,11 +532,20 @@ pub async fn run_dtsu666_driver(
 
     // Spawn dummy MQTT loop to keep connection alive
     let device_name_mqtt = device_name.clone();
+    let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
         loop {
-            if let Err(e) = eventloop.poll().await {
-                println!("DTSU666 [{}] MQTT error: {}", device_name_mqtt, e);
-                sleep(Duration::from_secs(5)).await;
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    if let Err(e) = res {
+                        println!("DTSU666 [{}] MQTT error: {}", device_name_mqtt, e);
+                        tokio::select! {
+                            _ = cancel_token_clone.cancelled() => break,
+                            _ = sleep(Duration::from_secs(5)) => {}
+                        }
+                    }
+                }
             }
         }
     });
@@ -525,6 +555,9 @@ pub async fn run_dtsu666_driver(
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
         if ctx_opt.is_none() {
             match connect_serial_meter(&port_path, &config).await {
                 Ok(ctx) => ctx_opt = Some(ctx),
@@ -533,7 +566,10 @@ pub async fn run_dtsu666_driver(
                         "DTSU666 [{}] failed to connect to serial port: {}",
                         device_name, e
                     );
-                    sleep(poll_interval).await;
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => break,
+                        _ = sleep(poll_interval) => {}
+                    }
                     continue;
                 }
             }
@@ -704,6 +740,9 @@ pub async fn run_dtsu666_driver(
             }
         }
 
-        sleep(poll_interval).await;
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = sleep(poll_interval) => {}
+        }
     }
 }

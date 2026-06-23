@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Clone, Default)]
 struct InverterState {
@@ -364,6 +365,7 @@ fn parse_time(s: &str) -> Option<NaiveTime> {
 pub async fn run_power_manager_task(
     config: SolaxBatteryControlConfig,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
         .base_topic
@@ -411,9 +413,14 @@ pub async fn run_power_manager_task(
     )
     .await;
 
-    // Publish initial state
+    // Publish initial state and update global system status
     {
         let pm_lock = pm.lock().await;
+        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+            status.active_mode = pm_lock.mode.to_string();
+            status.grid_target = pm_lock.grid_target;
+        }
+
         let mode_topic = format!("{}/power_manager/mode", base_topic);
         let _ = mqtt_client
             .publish(
@@ -436,193 +443,215 @@ pub async fn run_power_manager_task(
     }
 
     loop {
-        match eventloop.poll().await {
-            Ok(notification) => {
-                if let Event::Incoming(Packet::Publish(publish)) = notification {
-                    // Extract topic components
-                    // Expected structure: sensors/<device_name>/<metric>
-                    let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
-                    if let Some(suffix) = topic_suffix {
-                        let parts: Vec<&str> = suffix.split('/').collect();
-                        if parts.len() >= 2 {
-                            let device_name = parts[0];
-                            let metric = parts[1..].join("/");
-                            let payload = String::from_utf8_lossy(&publish.payload);
-                            let payload_trim = payload.trim();
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            res = eventloop.poll() => {
+                match res {
+                    Ok(notification) => {
+                        if let Event::Incoming(Packet::Publish(publish)) = notification {
+                            // Extract topic components
+                            // Expected structure: sensors/<device_name>/<metric>
+                            let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
+                            if let Some(suffix) = topic_suffix {
+                                let parts: Vec<&str> = suffix.split('/').collect();
+                                if parts.len() >= 2 {
+                                    let device_name = parts[0];
+                                    let metric = parts[1..].join("/");
+                                    let payload = String::from_utf8_lossy(&publish.payload);
+                                    let payload_trim = payload.trim();
 
-                            if device_name == "power_manager" {
-                                if metric == "command/mode" {
-                                    if let Ok(new_mode) = payload_trim.parse::<PowerManagerMode>() {
-                                        let mut pm_lock = pm.lock().await;
-                                        pm_lock.mode = new_mode;
-                                        println!("Power Manager mode changed to: {}", new_mode);
+                                    if device_name == "power_manager" {
+                                        if metric == "command/mode" {
+                                            if let Ok(new_mode) = payload_trim.parse::<PowerManagerMode>() {
+                                                let mut pm_lock = pm.lock().await;
+                                                pm_lock.mode = new_mode;
+                                                println!("Power Manager mode changed to: {}", new_mode);
 
-                                        // Publish status update
-                                        let status_topic =
-                                            format!("{}/power_manager/mode", base_topic);
-                                        let _ = mqtt_client
-                                            .publish(
-                                                &status_topic,
-                                                QoS::AtLeastOnce,
-                                                true,
-                                                new_mode.to_string(),
-                                            )
-                                            .await;
+                                                if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                                    status.active_mode = new_mode.to_string();
+                                                }
 
-                                        // Re-evaluate and command all inverters immediately
-                                        let inverter_names: Vec<String> =
-                                            pm_lock.config.inverter.keys().cloned().collect();
-                                        for inv_name in inverter_names {
-                                            if let Some(command_power) =
-                                                pm_lock.evaluate_and_command(&inv_name)
-                                            {
-                                                let cmd_topic = format!(
-                                                    "{}/{}/command/charge_battery",
-                                                    base_topic, inv_name
-                                                );
+                                                // Publish status update
+                                                let status_topic =
+                                                    format!("{}/power_manager/mode", base_topic);
                                                 let _ = mqtt_client
                                                     .publish(
-                                                        &cmd_topic,
+                                                        &status_topic,
                                                         QoS::AtLeastOnce,
-                                                        false,
-                                                        command_power.to_string(),
+                                                        true,
+                                                        new_mode.to_string(),
                                                     )
                                                     .await;
+
+                                                // Re-evaluate and command all inverters immediately
+                                                let inverter_names: Vec<String> =
+                                                    pm_lock.config.inverter.keys().cloned().collect();
+                                                for inv_name in inverter_names {
+                                                    if let Some(command_power) =
+                                                        pm_lock.evaluate_and_command(&inv_name)
+                                                    {
+                                                        let cmd_topic = format!(
+                                                            "{}/{}/command/charge_battery",
+                                                            base_topic, inv_name
+                                                        );
+                                                        let _ = mqtt_client
+                                                            .publish(
+                                                                &cmd_topic,
+                                                                QoS::AtLeastOnce,
+                                                                false,
+                                                                command_power.to_string(),
+                                                            )
+                                                            .await;
+                                                    }
+                                                }
                                             }
-                                        }
-                                    }
-                                } else if metric == "command/grid_target" {
-                                    if let Ok(target) = payload_trim.parse::<f64>() {
-                                        let mut pm_lock = pm.lock().await;
-                                        pm_lock.grid_target = target;
-                                        println!(
-                                            "Power Manager grid target changed to: {}W",
-                                            target
-                                        );
-
-                                        // Publish status update
-                                        let status_topic =
-                                            format!("{}/power_manager/grid_target", base_topic);
-                                        let _ = mqtt_client
-                                            .publish(
-                                                &status_topic,
-                                                QoS::AtLeastOnce,
-                                                true,
-                                                target.to_string(),
-                                            )
-                                            .await;
-
-                                        // Re-evaluate and command all inverters immediately
-                                        let inverter_names: Vec<String> =
-                                            pm_lock.config.inverter.keys().cloned().collect();
-                                        for inv_name in inverter_names {
-                                            if let Some(command_power) =
-                                                pm_lock.evaluate_and_command(&inv_name)
-                                            {
-                                                let cmd_topic = format!(
-                                                    "{}/{}/command/charge_battery",
-                                                    base_topic, inv_name
+                                        } else if metric == "command/grid_target" {
+                                            if let Ok(target) = payload_trim.parse::<f64>() {
+                                                let mut pm_lock = pm.lock().await;
+                                                pm_lock.grid_target = target;
+                                                println!(
+                                                    "Power Manager grid target changed to: {}W",
+                                                    target
                                                 );
+
+                                                if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                                    status.grid_target = target;
+                                                }
+
+                                                // Publish status update
+                                                let status_topic =
+                                                    format!("{}/power_manager/grid_target", base_topic);
                                                 let _ = mqtt_client
                                                     .publish(
-                                                        &cmd_topic,
+                                                        &status_topic,
                                                         QoS::AtLeastOnce,
-                                                        false,
-                                                        command_power.to_string(),
+                                                        true,
+                                                        target.to_string(),
                                                     )
                                                     .await;
+
+                                                // Re-evaluate and command all inverters immediately
+                                                let inverter_names: Vec<String> =
+                                                    pm_lock.config.inverter.keys().cloned().collect();
+                                                for inv_name in inverter_names {
+                                                    if let Some(command_power) =
+                                                        pm_lock.evaluate_and_command(&inv_name)
+                                                    {
+                                                        let cmd_topic = format!(
+                                                            "{}/{}/command/charge_battery",
+                                                            base_topic, inv_name
+                                                        );
+                                                        let _ = mqtt_client
+                                                            .publish(
+                                                                &cmd_topic,
+                                                                QoS::AtLeastOnce,
+                                                                false,
+                                                                command_power.to_string(),
+                                                            )
+                                                            .await;
+                                                    }
+                                                }
                                             }
                                         }
-                                    }
-                                }
-                            } else if let Ok(val) = payload_trim.parse::<f64>() {
-                                let mut pm_lock = pm.lock().await;
+                                    } else if let Ok(val) = payload_trim.parse::<f64>() {
+                                        let mut pm_lock = pm.lock().await;
 
-                                // 1. Check if it's the configured power consumption source
-                                let is_source = pm_lock
-                                    .config
-                                    .source
-                                    .as_ref()
-                                    .map(|s| s == device_name)
-                                    .unwrap_or(false);
-                                if is_source {
-                                    if metric == "Total system power" {
-                                        pm_lock.total_power = val;
-                                    } else if metric == "Phase 1 power" {
-                                        pm_lock.phase_power[1] = val;
-                                    } else if metric == "Phase 2 power" {
-                                        pm_lock.phase_power[2] = val;
-                                    } else if metric == "Phase 3 power" {
-                                        pm_lock.phase_power[3] = val;
-                                    }
-                                }
-
-                                // 2. Check if it's one of our configured participating inverters
-                                if pm_lock.config.inverter.contains_key(device_name) {
-                                    // Update inverter-specific state
-                                    let mut state = pm_lock
-                                        .inverters
-                                        .entry(device_name.to_string())
-                                        .or_default()
-                                        .clone();
-                                    let mut updated = false;
-
-                                    if metric == "Battery Capacity" {
-                                        state.battery_capacity = val as u8;
-                                        updated = true;
-                                    } else if metric == "Battery Power" {
-                                        state.battery_power = val;
-                                        updated = true;
-                                    } else if metric == "PV1 Power" {
-                                        state.pv1_power = val;
-                                        updated = true;
-                                    } else if metric == "PV2 Power" {
-                                        state.pv2_power = val;
-                                        updated = true;
-                                    } else if metric == "Measured Power" {
-                                        state.measured_power = val;
-                                        updated = true;
-                                        // If source is not configured, we use inverter measured power
-                                        if pm_lock.config.source.is_none()
-                                            && let Some(inv_cfg) =
-                                                pm_lock.config.inverter.get(device_name)
-                                        {
-                                            let phase = inv_cfg.phase;
-                                            pm_lock.handle_inverter_power(device_name, phase, val);
+                                        // 1. Check if it's the configured power consumption source
+                                        let is_source = pm_lock
+                                            .config
+                                            .source
+                                            .as_ref()
+                                            .map(|s| s == device_name)
+                                            .unwrap_or(false);
+                                        if is_source {
+                                            if metric == "Total system power" {
+                                                pm_lock.total_power = val;
+                                                if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                                    status.meter_power = val;
+                                                }
+                                            } else if metric == "Phase 1 power" {
+                                                pm_lock.phase_power[1] = val;
+                                            } else if metric == "Phase 2 power" {
+                                                pm_lock.phase_power[2] = val;
+                                            } else if metric == "Phase 3 power" {
+                                                pm_lock.phase_power[3] = val;
+                                            }
                                         }
-                                    }
 
-                                    if updated {
-                                        pm_lock.inverters.insert(device_name.to_string(), state);
+                                        // 2. Check if it's one of our configured participating inverters
+                                        if pm_lock.config.inverter.contains_key(device_name) {
+                                            // Update inverter-specific state
+                                            let mut state = pm_lock
+                                                .inverters
+                                                .entry(device_name.to_string())
+                                                .or_default()
+                                                .clone();
+                                            let mut updated = false;
 
-                                        // Recalculate control and command
-                                        if let Some(command_power) =
-                                            pm_lock.evaluate_and_command(device_name)
-                                        {
-                                            let cmd_topic = format!(
-                                                "{}/{}/command/charge_battery",
-                                                base_topic, device_name
-                                            );
-                                            let payload_str = command_power.to_string();
-                                            let _ = mqtt_client
-                                                .publish(
-                                                    &cmd_topic,
-                                                    QoS::AtLeastOnce,
-                                                    false,
-                                                    payload_str,
-                                                )
-                                                .await;
+                                            if metric == "Battery Capacity" {
+                                                state.battery_capacity = val as u8;
+                                                updated = true;
+                                            } else if metric == "Battery Power" {
+                                                state.battery_power = val;
+                                                updated = true;
+                                            } else if metric == "PV1 Power" {
+                                                state.pv1_power = val;
+                                                updated = true;
+                                            } else if metric == "PV2 Power" {
+                                                state.pv2_power = val;
+                                                updated = true;
+                                            } else if metric == "Measured Power" {
+                                                state.measured_power = val;
+                                                updated = true;
+                                                // If source is not configured, we use inverter measured power
+                                                if pm_lock.config.source.is_none()
+                                                    && let Some(inv_cfg) =
+                                                        pm_lock.config.inverter.get(device_name)
+                                                {
+                                                    let phase = inv_cfg.phase;
+                                                    pm_lock.handle_inverter_power(device_name, phase, val);
+                                                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                                        status.meter_power = pm_lock.total_power;
+                                                    }
+                                                }
+                                            }
+
+                                            if updated {
+                                                pm_lock.inverters.insert(device_name.to_string(), state);
+
+                                                // Recalculate control and command
+                                                if let Some(command_power) =
+                                                    pm_lock.evaluate_and_command(device_name)
+                                                {
+                                                    let cmd_topic = format!(
+                                                        "{}/{}/command/charge_battery",
+                                                        base_topic, device_name
+                                                    );
+                                                    let payload_str = command_power.to_string();
+                                                    let _ = mqtt_client
+                                                        .publish(
+                                                            &cmd_topic,
+                                                            QoS::AtLeastOnce,
+                                                            false,
+                                                            payload_str,
+                                                        )
+                                                        .await;
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    Err(e) => {
+                        println!("Power Manager MQTT error: {}", e);
+                        tokio::select! {
+                            _ = cancel_token.cancelled() => break,
+                            _ = sleep(Duration::from_secs(5)) => {}
+                        }
+                    }
                 }
-            }
-            Err(e) => {
-                println!("Power Manager MQTT error: {}", e);
-                sleep(Duration::from_secs(5)).await;
             }
         }
     }

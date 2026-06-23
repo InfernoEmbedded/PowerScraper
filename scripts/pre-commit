@@ -90,10 +90,10 @@ if [ $? -ne 0 ]; then
 fi
 
 # Extract coverage metrics using all compiled objects
-overall_cov=$("$LLVM_COV" report --instr-profile=cov.profdata $OBJECTS --ignore-filename-regex="\.cargo|rustc|serial_meters|main\.rs" | grep "TOTAL" | awk '{print $10}')
+overall_cov=$("$LLVM_COV" report --instr-profile=cov.profdata $OBJECTS --ignore-filename-regex="\.cargo|rustc|serial_meters|main\.rs|web_assets\.rs" | grep "TOTAL" | awk '{print $10}')
 overall_val=$(echo "$overall_cov" | tr -d '%')
 
-pm_cov=$("$LLVM_COV" report --instr-profile=cov.profdata $OBJECTS --ignore-filename-regex="\.cargo|rustc|serial_meters|main\.rs" | grep "power_manager.rs" | awk '{print $10}')
+pm_cov=$("$LLVM_COV" report --instr-profile=cov.profdata $OBJECTS --ignore-filename-regex="\.cargo|rustc|serial_meters|main\.rs|web_assets\.rs" | grep "power_manager.rs" | awk '{print $10}')
 pm_val=$(echo "$pm_cov" | tr -d '%')
 
 # Clean up temporary profile files
