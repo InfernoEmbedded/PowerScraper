@@ -14,3 +14,7 @@ reqwest = { version = "0.11", default-features = false, features = ["json", "rus
 chrono = { version = "0.4", features = ["serde"] }
 futures-util = "0.3"
 tokio-serial = "5.4"
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+tokio-util = "0.7"

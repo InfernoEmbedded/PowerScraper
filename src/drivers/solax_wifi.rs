@@ -5,6 +5,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use tokio::time::{Duration, sleep};
 
+use tokio_util::sync::CancellationToken;
+
 #[derive(Debug, Deserialize)]
 struct WifiResponse {
     #[serde(rename = "SN")]
@@ -17,6 +19,7 @@ pub async fn run_solax_wifi_driver(
     inverter_host: String,
     config: SolaxWifiConfig,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
         .base_topic
@@ -27,11 +30,20 @@ pub async fn run_solax_wifi_driver(
 
     // Spawn dummy MQTT loop to keep connection alive
     let host_mqtt = inverter_host.clone();
+    let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
         loop {
-            if let Err(e) = eventloop.poll().await {
-                println!("Wifi Driver [{}] MQTT error: {}", host_mqtt, e);
-                sleep(Duration::from_secs(5)).await;
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    if let Err(e) = res {
+                        println!("Wifi Driver [{}] MQTT error: {}", host_mqtt, e);
+                        tokio::select! {
+                            _ = cancel_token_clone.cancelled() => break,
+                            _ = sleep(Duration::from_secs(5)) => {}
+                        }
+                    }
+                }
             }
         }
     });
@@ -47,6 +59,10 @@ pub async fn run_solax_wifi_driver(
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
+
         match client.get(&url).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
@@ -56,6 +72,41 @@ pub async fn run_solax_wifi_driver(
                             match serde_json::from_str::<WifiResponse>(&fixed_text) {
                                 Ok(wifi_data) => {
                                     let vals = parse_wifi_data(&wifi_data, &inverter_host);
+
+                                    // Extract status values for the web UI dashboard
+                                    let bat_cap = vals
+                                        .get("Battery Capacity")
+                                        .and_then(|v| v.parse::<u8>().ok())
+                                        .unwrap_or(0);
+                                    let bat_pow = vals
+                                        .get("Battery Power")
+                                        .and_then(|v| v.parse::<i32>().ok())
+                                        .unwrap_or(0);
+                                    let pv1 = vals
+                                        .get("PV1 Power")
+                                        .and_then(|v| v.parse::<u32>().ok())
+                                        .unwrap_or(0);
+                                    let pv2 = vals
+                                        .get("PV2 Power")
+                                        .and_then(|v| v.parse::<u32>().ok())
+                                        .unwrap_or(0);
+                                    let run_mode = vals
+                                        .get("Status")
+                                        .and_then(|v| v.parse::<u32>().ok())
+                                        .unwrap_or(0);
+
+                                    if let Ok(mut status) =
+                                        crate::web_server::get_system_status().lock()
+                                    {
+                                        let inv = status
+                                            .inverters
+                                            .entry(inverter_host.clone())
+                                            .or_default();
+                                        inv.battery_capacity = bat_cap;
+                                        inv.battery_power = bat_pow;
+                                        inv.pv_power = pv1 + pv2;
+                                        inv.run_mode = run_mode;
+                                    }
 
                                     for (metric, val) in vals {
                                         if !discovered_metrics.contains(&metric) {
@@ -105,7 +156,10 @@ pub async fn run_solax_wifi_driver(
             }
         }
 
-        sleep(poll_interval).await;
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = sleep(poll_interval) => {}
+        }
     }
 }
 

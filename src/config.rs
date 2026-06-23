@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct SolaxWifiConfig {
     #[serde(alias = "poll_period")]
@@ -14,7 +14,7 @@ pub struct SolaxWifiConfig {
     pub inverters: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct SolaxModbusConfig {
     #[serde(alias = "poll_period")]
@@ -28,7 +28,7 @@ pub struct SolaxModbusConfig {
     pub hostnames: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct SolaxXHybridModbusConfig {
     #[serde(alias = "poll_period")]
@@ -42,7 +42,7 @@ pub struct SolaxXHybridModbusConfig {
     pub hostnames: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct SerialMeterConfig {
     #[serde(alias = "poll_period")]
@@ -54,7 +54,7 @@ pub struct SerialMeterConfig {
     pub ports: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct MQTTPowerMeterDeviceConfig {
     pub broker: String,
@@ -69,7 +69,7 @@ pub struct MQTTPowerMeterDeviceConfig {
     pub poll_period: Option<u64>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct MQTTPowerMeterConfig {
     #[serde(alias = "poll_period")]
@@ -79,14 +79,14 @@ pub struct MQTTPowerMeterConfig {
     pub meter_devices: HashMap<String, MQTTPowerMeterDeviceConfig>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct EmonCMSConfig {
     pub server: String,
     pub api_key: String,
     pub timeout: u64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct InfluxConfig {
     pub influx_url: String,
     pub influx_database: String,
@@ -96,7 +96,7 @@ pub struct InfluxConfig {
     pub influx_retention_policy: String,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct MqttBrokerConfig {
     pub broker: String,
@@ -123,7 +123,7 @@ impl MqttBrokerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct BatteryControlInverter {
     pub phase: usize,
@@ -147,7 +147,7 @@ pub struct BatteryControlInverter {
     pub tickle_remote_control: bool,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct BatteryControlPeriod {
     pub start: String,
@@ -161,7 +161,7 @@ pub struct BatteryControlPeriod {
     pub prefer_battery: bool,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct SolaxBatteryControlConfig {
     pub source: Option<String>,
@@ -176,7 +176,7 @@ pub struct SolaxBatteryControlConfig {
     pub initial_mode: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 pub struct Config {
     #[serde(rename = "Solax-Wifi")]
@@ -215,6 +215,92 @@ impl Config {
         let content = fs::read_to_string(path)?;
         let config: Config = toml::from_str(&content)?;
         Ok(config)
+    }
+
+    pub fn load_from_db(db_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        let conn = rusqlite::Connection::open(db_path)?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                config_json TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        let mut stmt = conn.prepare("SELECT config_json FROM settings WHERE id = 1")?;
+        let mut rows = stmt.query([])?;
+
+        if let Some(row) = rows.next()? {
+            let json_str: String = row.get(0)?;
+            let config: Config = serde_json::from_str(&json_str)?;
+            Ok(config)
+        } else {
+            // Seed database from config.toml if present, else config-sample.toml, else empty config
+            let config = if Path::new("config.toml").exists() {
+                println!("Seeding SQLite database from config.toml...");
+                match Config::load_from_file("config.toml") {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        println!("Failed to load config.toml, using defaults: {}", e);
+                        Config::default_empty()
+                    }
+                }
+            } else if Path::new("config-sample.toml").exists() {
+                println!("Seeding SQLite database from config-sample.toml...");
+                match Config::load_from_file("config-sample.toml") {
+                    Ok(cfg) => cfg,
+                    Err(e) => {
+                        println!("Failed to load config-sample.toml, using defaults: {}", e);
+                        Config::default_empty()
+                    }
+                }
+            } else {
+                Config::default_empty()
+            };
+            config.save_to_db(db_path)?;
+            Ok(config)
+        }
+    }
+
+    pub fn save_to_db(&self, db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let conn = rusqlite::Connection::open(db_path)?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS settings (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                config_json TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        let json_str = serde_json::to_string_pretty(self)?;
+        conn.execute(
+            "INSERT OR REPLACE INTO settings (id, config_json) VALUES (1, ?1)",
+            rusqlite::params![json_str],
+        )?;
+        Ok(())
+    }
+
+    pub fn default_empty() -> Self {
+        Config {
+            solax_wifi: None,
+            solax_modbus: None,
+            solax_xhybrid_modbus: None,
+            sdm630_modbus_v2: None,
+            dtsu666: None,
+            mqtt_power_meter: None,
+            emoncms: None,
+            influx: None,
+            mqtt: Some(MqttBrokerConfig {
+                broker: "127.0.0.1".to_string(),
+                port: Some(1883),
+                base_topic: Some("sensors".to_string()),
+                username: None,
+                password: None,
+                home_assistant_discovery: Some(true),
+                home_assistant_prefix: Some("homeassistant".to_string()),
+            }),
+            battery_control: None,
+        }
     }
 }
 

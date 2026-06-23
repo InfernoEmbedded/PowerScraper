@@ -16,3 +16,5 @@ pub mod drivers {
 }
 pub mod forwarders;
 pub mod power_manager;
+pub mod web_assets;
+pub mod web_server;

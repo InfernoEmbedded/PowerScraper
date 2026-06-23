@@ -298,86 +298,147 @@ async fn test_integration_loop() {
         run_mock_wifi_server(8080, http_clone, shutdown_rx2).await;
     });
 
-    // 3. Load config file
+    // 3. Seed config to sqlite database config.db and run web server
     let config =
         Config::load_from_file("tests/test_config.toml").expect("Failed to load test config");
+    let db_path = "config.db".to_string();
+    let _ = std::fs::remove_file(&db_path);
+    config
+        .save_to_db(&db_path)
+        .expect("Failed to seed config to DB");
+
+    let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(10);
+    let db_path_clone = db_path.clone();
+    tokio::spawn(async move {
+        PowerScraper::web_server::run_web_server(reload_tx, db_path_clone).await;
+    });
+    sleep(Duration::from_millis(500)).await; // Allow server to start
+
+    let active_cancel_token = Arc::new(Mutex::new(tokio_util::sync::CancellationToken::new()));
+    let act_token_clone = active_cancel_token.clone();
+    let db_path_loop = db_path.clone();
+
+    let reload_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let rc_clone = reload_count.clone();
+
+    tokio::spawn(async move {
+        loop {
+            let current_cfg = match Config::load_from_db(&db_path_loop).map_err(|e| e.to_string()) {
+                Ok(cfg) => cfg,
+                Err(err_msg) => {
+                    println!("Error loading integration config: {}", err_msg);
+                    sleep(Duration::from_millis(500)).await;
+                    continue;
+                }
+            };
+            let mqtt_config = current_cfg.mqtt.clone().unwrap();
+            let token = tokio_util::sync::CancellationToken::new();
+            {
+                let mut lock = act_token_clone.lock().unwrap();
+                *lock = token.clone();
+            }
+
+            if let Some(wifi_cfg) = current_cfg.solax_wifi.clone() {
+                let token_clone = token.clone();
+                let mqtt_clone = mqtt_config.clone();
+                tokio::spawn(async move {
+                    drivers::solax_wifi::run_solax_wifi_driver(
+                        "127.0.0.1:8080".to_string(),
+                        wifi_cfg,
+                        mqtt_clone,
+                        token_clone,
+                    )
+                    .await;
+                });
+            }
+
+            if let Some(modbus_cfg) = current_cfg.solax_modbus.clone() {
+                let token_clone = token.clone();
+                let mqtt_clone = mqtt_config.clone();
+                tokio::spawn(async move {
+                    drivers::solax_modbus::run_solax_modbus_driver(
+                        "solax-modbus".to_string(),
+                        "127.0.0.1:5020".to_string(),
+                        modbus_cfg,
+                        mqtt_clone,
+                        token_clone,
+                    )
+                    .await;
+                });
+            }
+
+            if let Some(hybrid_cfg) = current_cfg.solax_xhybrid_modbus.clone() {
+                let token_clone = token.clone();
+                let mqtt_clone = mqtt_config.clone();
+                tokio::spawn(async move {
+                    drivers::solax_modbus::run_solax_xhybrid_driver(
+                        "solax-xhybrid".to_string(),
+                        "127.0.0.1:5020".to_string(),
+                        hybrid_cfg,
+                        mqtt_clone,
+                        token_clone,
+                    )
+                    .await;
+                });
+            }
+
+            if let Some(battery_cfg) = current_cfg.battery_control.clone() {
+                let token_clone = token.clone();
+                let mqtt_clone = mqtt_config.clone();
+                tokio::spawn(async move {
+                    power_manager::run_power_manager_task(battery_cfg, mqtt_clone, token_clone)
+                        .await;
+                });
+            }
+
+            if let Some(mqtt_meter_cfg) = current_cfg.mqtt_power_meter.clone() {
+                if let Some(meter_dev_cfg) = mqtt_meter_cfg.meter_devices.get("custom-meter") {
+                    let token_clone = token.clone();
+                    let mqtt_clone = mqtt_config.clone();
+                    let dev_cfg = meter_dev_cfg.clone();
+                    tokio::spawn(async move {
+                        drivers::mqtt_meter::run_mqtt_meter_driver(
+                            "custom-meter".to_string(),
+                            dev_cfg,
+                            mqtt_clone,
+                            token_clone,
+                        )
+                        .await;
+                    });
+                }
+            }
+
+            {
+                let emoncms_cfg = current_cfg.emoncms.clone();
+                let influx_cfg = current_cfg.influx.clone();
+                let mqtt_clone = mqtt_config.clone();
+                let token_clone = token.clone();
+                tokio::spawn(async move {
+                    forwarders::run_forwarders_task(
+                        emoncms_cfg,
+                        influx_cfg,
+                        mqtt_clone,
+                        token_clone,
+                    )
+                    .await;
+                });
+            }
+
+            tokio::select! {
+                reload_signal = reload_rx.recv() => {
+                    if reload_signal.is_none() {
+                        break;
+                    }
+                }
+            }
+            println!("Integration Test reload triggered.");
+            token.cancel();
+            rc_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            sleep(Duration::from_millis(200)).await;
+        }
+    });
+
     let mqtt_config = config.mqtt.clone().expect("Missing MQTT config");
-
-    // 4. Spawn drivers, power manager, and forwarders tasks
-    let wifi_cfg = config.solax_wifi.clone().expect("Missing Wifi config");
-    let mqtt_wifi = mqtt_config.clone();
-    tokio::spawn(async move {
-        drivers::solax_wifi::run_solax_wifi_driver(
-            "127.0.0.1:8080".to_string(),
-            wifi_cfg,
-            mqtt_wifi,
-        )
-        .await;
-    });
-
-    let modbus_cfg = config.solax_modbus.clone().expect("Missing Modbus config");
-    let mqtt_modbus = mqtt_config.clone();
-    tokio::spawn(async move {
-        drivers::solax_modbus::run_solax_modbus_driver(
-            "solax-modbus".to_string(),
-            "127.0.0.1:5020".to_string(),
-            modbus_cfg,
-            mqtt_modbus,
-        )
-        .await;
-    });
-
-    let hybrid_cfg = config
-        .solax_xhybrid_modbus
-        .clone()
-        .expect("Missing Hybrid Modbus config");
-    let mqtt_hybrid = mqtt_config.clone();
-    tokio::spawn(async move {
-        drivers::solax_modbus::run_solax_xhybrid_driver(
-            "solax-xhybrid".to_string(),
-            "127.0.0.1:5020".to_string(),
-            hybrid_cfg,
-            mqtt_hybrid,
-        )
-        .await;
-    });
-
-    let battery_cfg = config
-        .battery_control
-        .clone()
-        .expect("Missing Battery control config");
-    let mqtt_pm = mqtt_config.clone();
-    tokio::spawn(async move {
-        power_manager::run_power_manager_task(battery_cfg, mqtt_pm).await;
-    });
-
-    // Spawn MQTT Meter Driver
-    let mqtt_meter_cfg = config
-        .mqtt_power_meter
-        .clone()
-        .expect("Missing MQTT meter config");
-    let meter_dev_cfg = mqtt_meter_cfg
-        .meter_devices
-        .get("custom-meter")
-        .expect("Missing custom-meter config")
-        .clone();
-    let mqtt_meter = mqtt_config.clone();
-    tokio::spawn(async move {
-        drivers::mqtt_meter::run_mqtt_meter_driver(
-            "custom-meter".to_string(),
-            meter_dev_cfg,
-            mqtt_meter,
-        )
-        .await;
-    });
-
-    // Spawn Forwarders Task with both EmonCMS and InfluxDB
-    let emoncms_cfg = config.emoncms.clone();
-    let influx_cfg = config.influx.clone();
-    let mqtt_fwd = mqtt_config.clone();
-    tokio::spawn(async move {
-        forwarders::run_forwarders_task(emoncms_cfg, influx_cfg, mqtt_fwd).await;
-    });
 
     // Connect test MQTT client to verify custom meter and forwarder bridging
     let received_bridged_power = Arc::new(Mutex::new([false; 4]));
@@ -573,8 +634,73 @@ async fn test_integration_loop() {
         }
     }
 
+    // 6. POST new config via REST API to trigger reload
+    let mut new_config = config.clone();
+    if let Some(ref mut pm_cfg) = new_config.battery_control {
+        pm_cfg.grid_target = Some(-500.0);
+    }
+    let client = reqwest::Client::new();
+
+    // Exercise static web UI and REST API endpoints to ensure 100% test coverage
+    let dashboard_res = client
+        .get("http://127.0.0.1:3000/")
+        .send()
+        .await
+        .expect("Failed to GET /");
+    assert_eq!(dashboard_res.status(), reqwest::StatusCode::OK);
+
+    let style_res = client
+        .get("http://127.0.0.1:3000/style.css")
+        .send()
+        .await
+        .expect("Failed to GET /style.css");
+    assert_eq!(style_res.status(), reqwest::StatusCode::OK);
+
+    let js_res = client
+        .get("http://127.0.0.1:3000/app.js")
+        .send()
+        .await
+        .expect("Failed to GET /app.js");
+    assert_eq!(js_res.status(), reqwest::StatusCode::OK);
+
+    let get_config_res = client
+        .get("http://127.0.0.1:3000/api/config")
+        .send()
+        .await
+        .expect("Failed to GET /api/config");
+    assert_eq!(get_config_res.status(), reqwest::StatusCode::OK);
+
+    let status_res = client
+        .get("http://127.0.0.1:3000/api/status")
+        .send()
+        .await
+        .expect("Failed to GET /api/status");
+    assert_eq!(status_res.status(), reqwest::StatusCode::OK);
+
+    let res = client
+        .post("http://127.0.0.1:3000/api/config")
+        .json(&new_config)
+        .send()
+        .await
+        .expect("Failed to POST new config to Web server");
+    assert_eq!(res.status(), reqwest::StatusCode::OK);
+
+    let mut success_reload = false;
+    for _ in 0..30 {
+        sleep(Duration::from_millis(200)).await;
+        let t = received_target_status.lock().unwrap().clone();
+        if t == "-500" || t == "-500.0" {
+            success_reload = true;
+            break;
+        }
+    }
+
     let _ = shutdown_tx.send(());
-    sleep(Duration::from_millis(100)).await;
+    active_cancel_token.lock().unwrap().cancel();
+    sleep(Duration::from_millis(200)).await;
+
+    // Clean up SQLite DB
+    let _ = std::fs::remove_file("config.db");
 
     assert!(
         success_modbus_standard,
@@ -607,5 +733,13 @@ async fn test_integration_loop() {
     assert!(
         success_ha_discovery,
         "Integration test failed: Home Assistant MQTT discovery configs not published correctly"
+    );
+    assert!(
+        success_reload,
+        "Integration test failed: Reload did not update grid target to -500"
+    );
+    assert!(
+        reload_count.load(std::sync::atomic::Ordering::SeqCst) >= 1,
+        "Integration test failed: reload count was 0"
     );
 }

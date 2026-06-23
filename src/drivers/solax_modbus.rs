@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 use tokio_modbus::client::{Context, Reader, Writer};
 use tokio_modbus::prelude::*;
+use tokio_util::sync::CancellationToken;
 
 async fn resolve_address(host: &str) -> std::io::Result<std::net::SocketAddr> {
     let mut addrs = tokio::net::lookup_host(host).await?;
@@ -25,6 +26,7 @@ pub async fn run_solax_modbus_driver(
     hostname: String,
     config: SolaxModbusConfig,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
         .base_topic
@@ -74,46 +76,55 @@ pub async fn run_solax_modbus_driver(
     let hostname_clone = hostname.clone();
     let req_power_clone = requested_battery_power.clone();
     let inverter_name_clone = inverter_name.clone();
+    let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
         loop {
-            match eventloop.poll().await {
-                Ok(notification) => {
-                    if let Event::Incoming(Packet::Publish(publish)) = notification {
-                        if publish.topic == command_topic {
-                            let payload = String::from_utf8_lossy(&publish.payload);
-                            if let Ok(power) = payload.trim().parse::<i32>() {
-                                println!(
-                                    "Driver [{}] received charge_battery command: {}W",
-                                    inverter_name_clone, power
-                                );
-                                *req_power_clone.lock().await = power;
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    match res {
+                        Ok(notification) => {
+                            if let Event::Incoming(Packet::Publish(publish)) = notification {
+                                if publish.topic == command_topic {
+                                    let payload = String::from_utf8_lossy(&publish.payload);
+                                    if let Ok(power) = payload.trim().parse::<i32>() {
+                                        println!(
+                                            "Driver [{}] received charge_battery command: {}W",
+                                            inverter_name_clone, power
+                                        );
+                                        *req_power_clone.lock().await = power;
 
-                                let power_u16 = power as u16;
-                                let mut lock = ctx_clone.lock().await;
-                                if lock.is_none() {
-                                    if let Ok(addr) = resolve_address(&hostname_clone).await {
-                                        if let Ok(ctx) = tcp::connect(addr).await {
-                                            *lock = Some(ctx);
+                                        let power_u16 = power as u16;
+                                        let mut lock = ctx_clone.lock().await;
+                                        if lock.is_none() {
+                                            if let Ok(addr) = resolve_address(&hostname_clone).await {
+                                                if let Ok(ctx) = tcp::connect(addr).await {
+                                                    *lock = Some(ctx);
+                                                }
+                                            }
                                         }
-                                    }
-                                }
-                                if let Some(ref mut ctx) = *lock {
-                                    if ctx.write_single_register(0x51, power_u16).await.is_ok()
-                                        && power != 0
-                                    {
-                                        let _ = ctx.write_single_register(0x90, 1).await;
+                                        if let Some(ref mut ctx) = *lock {
+                                            if ctx.write_single_register(0x51, power_u16).await.is_ok()
+                                                && power != 0
+                                            {
+                                                let _ = ctx.write_single_register(0x90, 1).await;
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                        Err(e) => {
+                            println!(
+                                "Driver [{}] MQTT eventloop error: {}",
+                                inverter_name_clone, e
+                            );
+                            tokio::select! {
+                                _ = cancel_token_clone.cancelled() => break,
+                                _ = sleep(Duration::from_secs(5)) => {}
+                            }
+                        }
                     }
-                }
-                Err(e) => {
-                    println!(
-                        "Driver [{}] MQTT eventloop error: {}",
-                        inverter_name_clone, e
-                    );
-                    sleep(Duration::from_secs(5)).await;
                 }
             }
         }
@@ -126,6 +137,9 @@ pub async fn run_solax_modbus_driver(
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
         let req_power = *requested_battery_power.lock().await;
 
         let read_res = {
@@ -165,6 +179,36 @@ pub async fn run_solax_modbus_driver(
             Ok(registers) => {
                 if registers.len() >= 0x72 {
                     let mut vals = parse_solax_registers(&registers, req_power);
+
+                    // Update global status for dashboard
+                    let bat_cap = vals
+                        .get("Battery Capacity")
+                        .and_then(|v| v.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    let bat_pow = vals
+                        .get("Battery Power")
+                        .and_then(|v| v.parse::<i32>().ok())
+                        .unwrap_or(0);
+                    let pv1 = vals
+                        .get("PV1 Power")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    let pv2 = vals
+                        .get("PV2 Power")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    let run_mode = vals
+                        .get("Run Mode")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
+
+                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                        let inv = status.inverters.entry(inverter_name.clone()).or_default();
+                        inv.battery_capacity = bat_cap;
+                        inv.battery_power = bat_pow;
+                        inv.pv_power = pv1 + pv2;
+                        inv.run_mode = run_mode;
+                    }
 
                     // Add power budget average calculation
                     if let Some(pb_str) = vals.get("Power Budget") {
@@ -206,7 +250,10 @@ pub async fn run_solax_modbus_driver(
             }
         }
 
-        sleep(poll_interval).await;
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = sleep(poll_interval) => {}
+        }
     }
 }
 
@@ -215,6 +262,7 @@ pub async fn run_solax_xhybrid_driver(
     hostname: String,
     config: SolaxXHybridModbusConfig,
     mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
         .base_topic
@@ -230,8 +278,12 @@ pub async fn run_solax_xhybrid_driver(
     let ctx_clone = ctx_opt.clone();
     let hostname_clone = hostname.clone();
     let password = config.installer_password;
+    let cancel_token_handshake = cancel_token.clone();
     tokio::spawn(async move {
-        sleep(Duration::from_secs(2)).await;
+        tokio::select! {
+            _ = cancel_token_handshake.cancelled() => return,
+            _ = sleep(Duration::from_secs(2)) => {}
+        }
         let mut lock = ctx_clone.lock().await;
         if lock.is_none() {
             if let Ok(addr) = resolve_address(&hostname_clone).await {
@@ -278,44 +330,53 @@ pub async fn run_solax_xhybrid_driver(
     let hostname_clone = hostname.clone();
     let req_power_clone = requested_battery_power.clone();
     let inverter_name_clone = inverter_name.clone();
+    let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
         loop {
-            match eventloop.poll().await {
-                Ok(notification) => {
-                    if let Event::Incoming(Packet::Publish(publish)) = notification {
-                        if publish.topic == command_topic {
-                            let payload = String::from_utf8_lossy(&publish.payload);
-                            if let Ok(power) = payload.trim().parse::<i32>() {
-                                println!(
-                                    "Driver [{}] (XHybrid) received charge_battery command: {}W",
-                                    inverter_name_clone, power
-                                );
-                                *req_power_clone.lock().await = power;
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    match res {
+                        Ok(notification) => {
+                            if let Event::Incoming(Packet::Publish(publish)) = notification {
+                                if publish.topic == command_topic {
+                                    let payload = String::from_utf8_lossy(&publish.payload);
+                                    if let Ok(power) = payload.trim().parse::<i32>() {
+                                        println!(
+                                            "Driver [{}] (XHybrid) received charge_battery command: {}W",
+                                            inverter_name_clone, power
+                                        );
+                                        *req_power_clone.lock().await = power;
 
-                                let power_u16 = power as u16;
-                                let mut lock = ctx_clone.lock().await;
-                                if lock.is_none() {
-                                    if let Ok(addr) = resolve_address(&hostname_clone).await {
-                                        if let Ok(ctx) = tcp::connect(addr).await {
-                                            *lock = Some(ctx);
+                                        let power_u16 = power as u16;
+                                        let mut lock = ctx_clone.lock().await;
+                                        if lock.is_none() {
+                                            if let Ok(addr) = resolve_address(&hostname_clone).await {
+                                                if let Ok(ctx) = tcp::connect(addr).await {
+                                                    *lock = Some(ctx);
+                                                }
+                                            }
                                         }
-                                    }
-                                }
-                                if let Some(ref mut ctx) = *lock {
-                                    if ctx.write_single_register(0x52, power_u16).await.is_ok() {
-                                        let _ = ctx.write_single_register(0x51, 1).await;
+                                        if let Some(ref mut ctx) = *lock {
+                                            if ctx.write_single_register(0x52, power_u16).await.is_ok() {
+                                                let _ = ctx.write_single_register(0x51, 1).await;
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
+                        Err(e) => {
+                            println!(
+                                "Driver [{}] MQTT eventloop error: {}",
+                                inverter_name_clone, e
+                            );
+                            tokio::select! {
+                                _ = cancel_token_clone.cancelled() => break,
+                                _ = sleep(Duration::from_secs(5)) => {}
+                            }
+                        }
                     }
-                }
-                Err(e) => {
-                    println!(
-                        "Driver [{}] MQTT eventloop error: {}",
-                        inverter_name_clone, e
-                    );
-                    sleep(Duration::from_secs(5)).await;
                 }
             }
         }
@@ -328,6 +389,9 @@ pub async fn run_solax_xhybrid_driver(
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
         let req_power = *requested_battery_power.lock().await;
 
         let read_res = {
@@ -382,6 +446,36 @@ pub async fn run_solax_xhybrid_driver(
                 {
                     let mut vals = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power);
 
+                    // Update global status for dashboard
+                    let bat_cap = vals
+                        .get("Battery Capacity")
+                        .and_then(|v| v.parse::<u8>().ok())
+                        .unwrap_or(0);
+                    let bat_pow = vals
+                        .get("Battery Power")
+                        .and_then(|v| v.parse::<i32>().ok())
+                        .unwrap_or(0);
+                    let pv1 = vals
+                        .get("PV1 Power")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    let pv2 = vals
+                        .get("PV2 Power")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    let run_mode = vals
+                        .get("Run Mode")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
+
+                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                        let inv = status.inverters.entry(inverter_name.clone()).or_default();
+                        inv.battery_capacity = bat_cap;
+                        inv.battery_power = bat_pow;
+                        inv.pv_power = pv1 + pv2;
+                        inv.run_mode = run_mode;
+                    }
+
                     // Add power budget average calculation
                     if let Some(pb_str) = vals.get("Power Budget") {
                         if let Ok(pb) = pb_str.parse::<i32>() {
@@ -422,7 +516,10 @@ pub async fn run_solax_xhybrid_driver(
             }
         }
 
-        sleep(poll_interval).await;
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = sleep(poll_interval) => {}
+        }
     }
 }
 
