@@ -71,6 +71,7 @@ pub async fn run_sdm630_driver(
 
     let poll_interval = Duration::from_secs(config.poll_period);
     let mut ctx_opt = None;
+    let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
         if ctx_opt.is_none() {
@@ -464,6 +465,18 @@ pub async fn run_sdm630_driver(
                 }
 
                 for (metric, val) in vals {
+                    if !discovered_metrics.contains(&metric) {
+                        crate::mqtt_helper::publish_home_assistant_discovery(
+                            &mqtt_client,
+                            &mqtt_config,
+                            &device_name,
+                            &metric,
+                            false,
+                        )
+                        .await;
+                        discovered_metrics.insert(metric.clone());
+                    }
+
                     let topic = format!("{}/{}/{}", base_topic, device_name, metric);
                     let _ = mqtt_client
                         .publish(&topic, QoS::AtMostOnce, false, val)
@@ -509,6 +522,7 @@ pub async fn run_dtsu666_driver(
 
     let poll_interval = Duration::from_secs(config.poll_period);
     let mut ctx_opt = None;
+    let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
         if ctx_opt.is_none() {
@@ -663,6 +677,18 @@ pub async fn run_dtsu666_driver(
                 }
 
                 for (metric, val) in vals {
+                    if !discovered_metrics.contains(&metric) {
+                        crate::mqtt_helper::publish_home_assistant_discovery(
+                            &mqtt_client,
+                            &mqtt_config,
+                            &device_name,
+                            &metric,
+                            false,
+                        )
+                        .await;
+                        discovered_metrics.insert(metric.clone());
+                    }
+
                     let topic = format!("{}/{}/{}", base_topic, device_name, metric);
                     let _ = mqtt_client
                         .publish(&topic, QoS::AtMostOnce, false, val)

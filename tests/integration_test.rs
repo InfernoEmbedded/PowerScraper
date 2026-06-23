@@ -386,6 +386,8 @@ async fn test_integration_loop() {
     let rms_clone = received_mode_status.clone();
     let received_target_status = Arc::new(Mutex::new(String::new()));
     let rts_clone = received_target_status.clone();
+    let received_ha_discovery = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let rha_clone = received_ha_discovery.clone();
 
     let (test_client, mut test_eventloop) =
         PowerScraper::mqtt_helper::create_mqtt_client("integration-test-client", &mqtt_config);
@@ -395,6 +397,10 @@ async fn test_integration_loop() {
         .unwrap();
     test_client
         .subscribe("sensors/power_manager/#", QoS::AtLeastOnce)
+        .await
+        .unwrap();
+    test_client
+        .subscribe("homeassistant/#", QoS::AtLeastOnce)
         .await
         .unwrap();
 
@@ -426,6 +432,10 @@ async fn test_integration_loop() {
                         let mut lock = rts_clone.lock().unwrap();
                         *lock = val.to_string();
                     }
+                } else if let Some(suffix) = p.topic.strip_prefix("homeassistant/") {
+                    let val = String::from_utf8_lossy(&p.payload);
+                    let mut lock = rha_clone.lock().unwrap();
+                    lock.insert(suffix.to_string(), val.to_string());
                 }
             }
         }
@@ -480,6 +490,7 @@ async fn test_integration_loop() {
     let mut success_influx = false;
     let mut success_mode = false;
     let mut success_target = false;
+    let mut success_ha_discovery = false;
 
     // Poll assertions over a 12 second window
     for _ in 0..60 {
@@ -516,6 +527,18 @@ async fn test_integration_loop() {
             }
         }
 
+        if !success_ha_discovery {
+            let lock = received_ha_discovery.lock().unwrap();
+            let has_pm_mode = lock.contains_key("select/power_manager/mode/config");
+            let has_pm_target = lock.contains_key("number/power_manager/grid_target/config");
+            let has_inv_cmd = lock.contains_key("number/solax_modbus/charge_battery/config");
+            let has_meter_sensor =
+                lock.contains_key("sensor/custom_meter/total_system_power/config");
+            if has_pm_mode && has_pm_target && has_inv_cmd && has_meter_sensor {
+                success_ha_discovery = true;
+            }
+        }
+
         if !success_emoncms || !success_influx {
             let reqs = http_requests.lock().unwrap();
             if !success_emoncms {
@@ -544,6 +567,7 @@ async fn test_integration_loop() {
             && success_influx
             && success_mode
             && success_target
+            && success_ha_discovery
         {
             break;
         }
@@ -579,5 +603,9 @@ async fn test_integration_loop() {
     assert!(
         success_target,
         "Integration test failed: Power Manager did not update grid target to -200 or report status"
+    );
+    assert!(
+        success_ha_discovery,
+        "Integration test failed: Home Assistant MQTT discovery configs not published correctly"
     );
 }

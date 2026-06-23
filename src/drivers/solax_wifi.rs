@@ -44,6 +44,8 @@ pub async fn run_solax_wifi_driver(
     let url = format!("http://{}/api/realTimeData.htm", inverter_host);
     let poll_interval = Duration::from_secs(config.poll_period);
 
+    let mut discovered_metrics = std::collections::HashSet::new();
+
     loop {
         match client.get(&url).send().await {
             Ok(resp) => {
@@ -56,6 +58,18 @@ pub async fn run_solax_wifi_driver(
                                     let vals = parse_wifi_data(&wifi_data, &inverter_host);
 
                                     for (metric, val) in vals {
+                                        if !discovered_metrics.contains(&metric) {
+                                            crate::mqtt_helper::publish_home_assistant_discovery(
+                                                &mqtt_client,
+                                                &mqtt_config,
+                                                &inverter_host,
+                                                &metric,
+                                                false,
+                                            )
+                                            .await;
+                                            discovered_metrics.insert(metric.clone());
+                                        }
+
                                         let topic =
                                             format!("{}/{}/{}", base_topic, inverter_host, metric);
                                         let _ = mqtt_client
