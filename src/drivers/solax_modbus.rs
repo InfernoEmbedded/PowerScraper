@@ -59,6 +59,16 @@ pub async fn run_solax_modbus_driver(
         );
     }
 
+    // Publish Home Assistant auto-discovery for charge_battery command
+    crate::mqtt_helper::publish_home_assistant_discovery(
+        &mqtt_client,
+        &mqtt_config,
+        &inverter_name,
+        "charge_battery",
+        true,
+    )
+    .await;
+
     // Spawn MQTT handler task
     let ctx_clone = ctx_opt.clone();
     let hostname_clone = hostname.clone();
@@ -113,6 +123,7 @@ pub async fn run_solax_modbus_driver(
     let mut power_budgets = VecDeque::new();
     let avg_samples = config.power_budget_avg_samples.unwrap_or(30);
     let poll_interval = Duration::from_secs(config.poll_period);
+    let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
         let req_power = *requested_battery_power.lock().await;
@@ -171,6 +182,18 @@ pub async fn run_solax_modbus_driver(
                     vals.insert("name".to_string(), inverter_name.clone());
 
                     for (metric, val) in vals {
+                        if !discovered_metrics.contains(&metric) {
+                            crate::mqtt_helper::publish_home_assistant_discovery(
+                                &mqtt_client,
+                                &mqtt_config,
+                                &inverter_name,
+                                &metric,
+                                false,
+                            )
+                            .await;
+                            discovered_metrics.insert(metric.clone());
+                        }
+
                         let topic = format!("{}/{}/{}", base_topic, inverter_name, metric);
                         let _ = mqtt_client
                             .publish(&topic, QoS::AtMostOnce, false, val)
@@ -240,6 +263,16 @@ pub async fn run_solax_xhybrid_driver(
         );
     }
 
+    // Publish Home Assistant auto-discovery for charge_battery command
+    crate::mqtt_helper::publish_home_assistant_discovery(
+        &mqtt_client,
+        &mqtt_config,
+        &inverter_name,
+        "charge_battery",
+        true,
+    )
+    .await;
+
     // Spawn MQTT command handler
     let ctx_clone = ctx_opt.clone();
     let hostname_clone = hostname.clone();
@@ -292,6 +325,7 @@ pub async fn run_solax_xhybrid_driver(
     let mut power_budgets = VecDeque::new();
     let avg_samples = config.power_budget_avg_samples.unwrap_or(30);
     let poll_interval = Duration::from_secs(config.poll_period);
+    let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
         let req_power = *requested_battery_power.lock().await;
@@ -364,6 +398,18 @@ pub async fn run_solax_xhybrid_driver(
                     vals.insert("name".to_string(), inverter_name.clone());
 
                     for (metric, val) in vals {
+                        if !discovered_metrics.contains(&metric) {
+                            crate::mqtt_helper::publish_home_assistant_discovery(
+                                &mqtt_client,
+                                &mqtt_config,
+                                &inverter_name,
+                                &metric,
+                                false,
+                            )
+                            .await;
+                            discovered_metrics.insert(metric.clone());
+                        }
+
                         let topic = format!("{}/{}/{}", base_topic, inverter_name, metric);
                         let _ = mqtt_client
                             .publish(&topic, QoS::AtMostOnce, false, val)

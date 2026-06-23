@@ -392,6 +392,25 @@ pub async fn run_power_manager_task(
         status_wildcard
     );
 
+    // Publish Home Assistant discovery configs
+    crate::mqtt_helper::publish_home_assistant_discovery(
+        &mqtt_client,
+        &mqtt_config,
+        "power_manager",
+        "mode",
+        false,
+    )
+    .await;
+
+    crate::mqtt_helper::publish_home_assistant_discovery(
+        &mqtt_client,
+        &mqtt_config,
+        "power_manager",
+        "grid_target",
+        false,
+    )
+    .await;
+
     // Publish initial state
     {
         let pm_lock = pm.lock().await;

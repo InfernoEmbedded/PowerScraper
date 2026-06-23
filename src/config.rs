@@ -105,6 +105,22 @@ pub struct MqttBrokerConfig {
     pub base_topic: Option<String>,
     pub username: Option<String>,
     pub password: Option<String>,
+    #[serde(alias = "home_assistant_discovery")]
+    pub home_assistant_discovery: Option<bool>,
+    #[serde(alias = "home_assistant_prefix")]
+    pub home_assistant_prefix: Option<String>,
+}
+
+impl MqttBrokerConfig {
+    pub fn is_ha_discovery_enabled(&self) -> bool {
+        self.home_assistant_discovery.unwrap_or(true)
+    }
+
+    pub fn ha_discovery_prefix(&self) -> String {
+        self.home_assistant_prefix
+            .clone()
+            .unwrap_or_else(|| "homeassistant".to_string())
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -248,8 +264,22 @@ influx_retention_policy = "autogen"
         "#;
         let config: Config = toml::from_str(config_str).unwrap();
         assert!(config.mqtt.is_some());
+        let mqtt = config.mqtt.as_ref().unwrap();
+        assert!(mqtt.is_ha_discovery_enabled());
+        assert_eq!(mqtt.ha_discovery_prefix(), "homeassistant");
+
         assert!(config.solax_wifi.is_some());
         assert!(config.emoncms.is_some());
         assert!(config.influx.is_some());
+
+        // Test custom HA discovery config
+        let custom_mqtt_str = r#"
+            broker = "127.0.0.1"
+            home-assistant-discovery = false
+            home-assistant-prefix = "myha"
+        "#;
+        let custom_mqtt: MqttBrokerConfig = toml::from_str(custom_mqtt_str).unwrap();
+        assert!(!custom_mqtt.is_ha_discovery_enabled());
+        assert_eq!(custom_mqtt.ha_discovery_prefix(), "myha");
     }
 }

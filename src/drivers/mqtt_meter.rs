@@ -48,6 +48,8 @@ pub async fn run_mqtt_meter_driver(
         meter_name, base_topic
     );
 
+    let mut discovered_metrics = std::collections::HashSet::new();
+
     loop {
         match eventloop.poll().await {
             Ok(notification) => {
@@ -66,6 +68,18 @@ pub async fn run_mqtt_meter_driver(
                     };
 
                     if let Some(metric_name) = target_metric {
+                        if !discovered_metrics.contains(metric_name) {
+                            crate::mqtt_helper::publish_home_assistant_discovery(
+                                &mqtt_client,
+                                &mqtt_config,
+                                &meter_name,
+                                metric_name,
+                                false,
+                            )
+                            .await;
+                            discovered_metrics.insert(metric_name.to_string());
+                        }
+
                         let target_topic = format!("{}/{}/{}", base_topic, meter_name, metric_name);
                         if let Err(e) = mqtt_client
                             .publish(&target_topic, QoS::AtMostOnce, false, payload)
