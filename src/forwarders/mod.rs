@@ -47,7 +47,9 @@ pub async fn run_forwarders_task(
     let influx_clone = influx_config.clone();
     tokio::spawn(async move {
         let http_client = reqwest::Client::new();
-        // Flush every 10 seconds
+        #[cfg(test)]
+        let flush_interval = Duration::from_secs(1);
+        #[cfg(not(test))]
         let flush_interval = Duration::from_secs(10);
 
         loop {

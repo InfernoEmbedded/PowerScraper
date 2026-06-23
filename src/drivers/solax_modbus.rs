@@ -929,3 +929,36 @@ fn parse_hybrid_registers(
 
     vals
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_solax_registers() {
+        let mut regs = vec![0u16; 114];
+        regs[0x00] = 2300; // Grid Voltage = 230.0V
+        regs[0x01] = 105; // Grid Current = 10.5A
+        regs[0x02] = 2000; // Inverter Power = 2000W
+        regs[0x1C] = 15; // Battery Capacity = 15%
+        regs[0x46] = 1000; // Measured Power = 1000W
+
+        let parsed = parse_solax_registers(&regs, 500);
+        assert_eq!(parsed.get("Grid Voltage").unwrap(), "230.0");
+        assert_eq!(parsed.get("Grid Current").unwrap(), "10.5");
+        assert_eq!(parsed.get("Inverter Power").unwrap(), "2000");
+        assert_eq!(parsed.get("Battery Capacity").unwrap(), "15");
+        assert_eq!(parsed.get("Measured Power").unwrap(), "1000");
+        assert_eq!(parsed.get("Requested Battery Power").unwrap(), "500");
+    }
+
+    #[test]
+    fn test_parse_hybrid_registers() {
+        let reg_a = vec![0u16; 0x27];
+        let reg_b = vec![0u16; 0x69 - 0x40 + 1];
+        let reg_c = vec![0u16; 0xCD - 0x6A + 1];
+
+        let parsed = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, 100);
+        assert_eq!(parsed.get("Requested Battery Power").unwrap(), "100");
+    }
+}

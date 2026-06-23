@@ -1,0 +1,18 @@
+#![allow(
+    clippy::collapsible_if,
+    clippy::redundant_closure,
+    clippy::neg_multiply,
+    clippy::io_other_error,
+    non_snake_case
+)]
+
+pub mod config;
+pub mod mqtt_helper;
+pub mod drivers {
+    pub mod mqtt_meter;
+    pub mod serial_meters;
+    pub mod solax_modbus;
+    pub mod solax_wifi;
+}
+pub mod forwarders;
+pub mod power_manager;
