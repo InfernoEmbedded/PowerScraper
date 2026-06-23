@@ -382,10 +382,19 @@ async fn test_integration_loop() {
     // Connect test MQTT client to verify custom meter and forwarder bridging
     let received_bridged_power = Arc::new(Mutex::new([false; 4]));
     let rbp_clone = received_bridged_power.clone();
+    let received_mode_status = Arc::new(Mutex::new(String::new()));
+    let rms_clone = received_mode_status.clone();
+    let received_target_status = Arc::new(Mutex::new(String::new()));
+    let rts_clone = received_target_status.clone();
+
     let (test_client, mut test_eventloop) =
         PowerScraper::mqtt_helper::create_mqtt_client("integration-test-client", &mqtt_config);
     test_client
         .subscribe("sensors/custom-meter/#", QoS::AtLeastOnce)
+        .await
+        .unwrap();
+    test_client
+        .subscribe("sensors/power_manager/#", QoS::AtLeastOnce)
         .await
         .unwrap();
 
@@ -394,18 +403,29 @@ async fn test_integration_loop() {
             if let Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(p))) =
                 test_eventloop.poll().await
             {
-                let suffix = p.topic.strip_prefix("sensors/custom-meter/").unwrap_or("");
-                let payload = String::from_utf8_lossy(&p.payload);
-                let val = payload.trim();
-                let mut lock = rbp_clone.lock().unwrap();
-                if suffix == "Total system power" && val == "1500" {
-                    lock[0] = true;
-                } else if suffix == "Phase 1 power" && val == "400" {
-                    lock[1] = true;
-                } else if suffix == "Phase 2 power" && val == "500" {
-                    lock[2] = true;
-                } else if suffix == "Phase 3 power" && val == "600" {
-                    lock[3] = true;
+                if let Some(suffix) = p.topic.strip_prefix("sensors/custom-meter/") {
+                    let payload = String::from_utf8_lossy(&p.payload);
+                    let val = payload.trim();
+                    let mut lock = rbp_clone.lock().unwrap();
+                    if suffix == "Total system power" && val == "1500" {
+                        lock[0] = true;
+                    } else if suffix == "Phase 1 power" && val == "400" {
+                        lock[1] = true;
+                    } else if suffix == "Phase 2 power" && val == "500" {
+                        lock[2] = true;
+                    } else if suffix == "Phase 3 power" && val == "600" {
+                        lock[3] = true;
+                    }
+                } else if let Some(suffix) = p.topic.strip_prefix("sensors/power_manager/") {
+                    let payload = String::from_utf8_lossy(&p.payload);
+                    let val = payload.trim();
+                    if suffix == "mode" {
+                        let mut lock = rms_clone.lock().unwrap();
+                        *lock = val.to_string();
+                    } else if suffix == "grid_target" {
+                        let mut lock = rts_clone.lock().unwrap();
+                        *lock = val.to_string();
+                    }
                 }
             }
         }
@@ -432,12 +452,34 @@ async fn test_integration_loop() {
         .await
         .unwrap();
 
+    // Publish commands to verify Power Manager mode change and target change via MQTT
+    test_client
+        .publish(
+            "sensors/power_manager/command/mode",
+            QoS::AtLeastOnce,
+            false,
+            "ChargeBatteries",
+        )
+        .await
+        .unwrap();
+    test_client
+        .publish(
+            "sensors/power_manager/command/grid_target",
+            QoS::AtLeastOnce,
+            false,
+            "-200",
+        )
+        .await
+        .unwrap();
+
     // 5. Wait for integration loop to execute and write commands, and for forwarders to flush (10.5 seconds)
     let mut success_modbus_standard = false;
     let mut success_modbus_hybrid = false;
     let mut success_mqtt_meter = false;
     let mut success_emoncms = false;
     let mut success_influx = false;
+    let mut success_mode = false;
+    let mut success_target = false;
 
     // Poll assertions over a 12 second window
     for _ in 0..60 {
@@ -457,6 +499,20 @@ async fn test_integration_loop() {
             let lock = received_bridged_power.lock().unwrap();
             if lock[0] && lock[1] && lock[2] && lock[3] {
                 success_mqtt_meter = true;
+            }
+        }
+
+        if !success_mode {
+            let m = received_mode_status.lock().unwrap();
+            if *m == "ChargeBatteries" {
+                success_mode = true;
+            }
+        }
+
+        if !success_target {
+            let t = received_target_status.lock().unwrap();
+            if *t == "-200" || *t == "-200.0" {
+                success_target = true;
             }
         }
 
@@ -486,6 +542,8 @@ async fn test_integration_loop() {
             && success_mqtt_meter
             && success_emoncms
             && success_influx
+            && success_mode
+            && success_target
         {
             break;
         }
@@ -513,5 +571,13 @@ async fn test_integration_loop() {
     assert!(
         success_influx,
         "Integration test failed: InfluxDB forwarder did not post metrics to HTTP mock server"
+    );
+    assert!(
+        success_mode,
+        "Integration test failed: Power Manager did not transition to ChargeBatteries mode or report status"
+    );
+    assert!(
+        success_target,
+        "Integration test failed: Power Manager did not update grid target to -200 or report status"
     );
 }
