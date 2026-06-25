@@ -47,9 +47,15 @@ pub fn get_system_status() -> &'static Mutex<SystemStatus> {
     SYSTEM_STATUS.get_or_init(|| Mutex::new(SystemStatus::default()))
 }
 
+#[derive(serde::Deserialize)]
+struct SimQuery {
+    range: Option<String>,
+}
+
 pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String, listener: tokio::net::TcpListener) {
     let state = Arc::new(reload_tx);
     let db_path_clone = db_path.clone();
+    let db_path_sim = db_path.clone();
 
     let app = Router::new()
         .route("/", get(serve_dashboard))
@@ -58,6 +64,19 @@ pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String
         .route(
             "/api/mqtt/test",
             post(handle_mqtt_test),
+        )
+        .route(
+            "/api/simulation/run",
+            get(move |axum::extract::Query(query): axum::extract::Query<SimQuery>| {
+                let path = db_path_sim.clone();
+                async move {
+                    let range_str = query.range.as_deref().unwrap_or("1m");
+                    match crate::power_manager::run_historical_simulation(&path, range_str) {
+                        Ok(res) => Ok(Json(res)),
+                        Err(e) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e)),
+                    }
+                }
+            }),
         )
         .route(
             "/api/config/import",
