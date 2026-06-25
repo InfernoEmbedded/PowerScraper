@@ -1793,9 +1793,10 @@ async function runHistoricalSimulation() {
                 const models = [
                     { name: "Scenario A: No Battery", key: "no_battery", isBaseline: true },
                     { name: "Scenario B: Baseline (Solar Self-Consumption)", key: "baseline" },
-                    { name: "Scenario C: Smart Heuristic", key: "smart_heuristic" },
-                    { name: "Scenario D: Look-Ahead MPC", key: "lookahead_mpc" },
-                    { name: "Scenario E: Adaptive Peak Shaving", key: "adaptive_peak" }
+                    { name: "Scenario C: Auto (Period-Aware Regulation)", key: "auto" },
+                    { name: "Scenario D: Smart Heuristic", key: "smart_heuristic" },
+                    { name: "Scenario E: Look-Ahead MPC", key: "lookahead_mpc" },
+                    { name: "Scenario F: Adaptive Peak Shaving", key: "adaptive_peak" }
                 ];
 
                 const noBatteryBill = data.no_battery.net_bill;

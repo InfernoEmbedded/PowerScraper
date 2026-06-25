@@ -524,7 +524,11 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                                 <span class="text-muted">Simple logic charging battery from excess solar and discharging to cover home load. It is price-blind and has no demand-tariff peak shaving.</span>
                             </div>
                             <div>
-                                <strong style="color: #fff;">Scenario C: Smart Heuristic</strong><br>
+                                <strong style="color: #fff;">Scenario C: Auto (Period-Aware Regulation)</strong><br>
+                                <span class="text-muted">Live regulation loop that charges from the grid during configured cheap windows, blocks discharge during peak charge windows, and respects minimum SOC limits.</span>
+                            </div>
+                            <div>
+                                <strong style="color: #fff;">Scenario D: Smart Heuristic</strong><br>
                                 <span class="text-muted">Charges battery during negative wholesale price intervals or cheap windows before the demand period. Shaves demand imports to 0.</span>
                             </div>
                         </div>
@@ -533,11 +537,11 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                         <div class="card-title">Advanced Strategies</div>
                         <div style="display: flex; flex-direction: column; gap: 15px; font-size: 0.95rem; line-height: 1.5; margin-top: 10px;">
                             <div>
-                                <strong style="color: #fff;">Scenario D: Look-Ahead MPC</strong><br>
+                                <strong style="color: #fff;">Scenario E: Look-Ahead MPC</strong><br>
                                 <span class="text-muted">An optimal predictive controller utilizing look-ahead foresight. Schedules charging/discharging to minimize total monthly energy cost and peak demand charges.</span>
                             </div>
                             <div>
-                                <strong style="color: #fff;">Scenario E: Adaptive Peak Shaving</strong><br>
+                                <strong style="color: #fff;">Scenario F: Adaptive Peak Shaving</strong><br>
                                 <span class="text-muted">Tracks monthly-to-date peak draw and shaves imports dynamically. Reduces unnecessary shallow cycles, maintaining excellent savings with vastly reduced battery wear.</span>
                             </div>
                         </div>
@@ -2879,9 +2883,10 @@ async function runHistoricalSimulation() {
                 const models = [
                     { name: "Scenario A: No Battery", key: "no_battery", isBaseline: true },
                     { name: "Scenario B: Baseline (Solar Self-Consumption)", key: "baseline" },
-                    { name: "Scenario C: Smart Heuristic", key: "smart_heuristic" },
-                    { name: "Scenario D: Look-Ahead MPC", key: "lookahead_mpc" },
-                    { name: "Scenario E: Adaptive Peak Shaving", key: "adaptive_peak" }
+                    { name: "Scenario C: Auto (Period-Aware Regulation)", key: "auto" },
+                    { name: "Scenario D: Smart Heuristic", key: "smart_heuristic" },
+                    { name: "Scenario E: Look-Ahead MPC", key: "lookahead_mpc" },
+                    { name: "Scenario F: Adaptive Peak Shaving", key: "adaptive_peak" }
                 ];
 
                 const noBatteryBill = data.no_battery.net_bill;
