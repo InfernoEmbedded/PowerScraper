@@ -44,29 +44,58 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
                 Forwarders
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-tariff', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                Electricity Tariff
+            </button>
         </nav>
     </aside>
 
     <main>
         <header>
             <h1 id="page-title">System Dashboard</h1>
-            <button class="btn-apply" onclick="saveConfiguration()">Apply Changes</button>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-import" onclick="triggerImportConfig()">Import Config</button>
+                <input type="file" id="import-config-file" accept=".toml" style="display: none;" onchange="handleImportConfig(event)">
+                <button class="btn-apply" onclick="saveConfiguration()">Apply Changes</button>
+            </div>
         </header>
 
         <!-- DASHBOARD TAB -->
         <div id="tab-dashboard" class="tab-content active">
             <div class="grid-3">
                 <div class="glass-card">
-                    <div class="card-title">Mains Grid Power</div>
+                    <div class="card-title">Current Grid Power</div>
                     <div class="stat-val" id="stat-mains">0 W</div>
+                    <div class="stat-updated" id="stat-mains-updated"></div>
                 </div>
                 <div class="glass-card">
                     <div class="card-title">Power Manager Mode</div>
                     <div class="stat-val" id="stat-mode" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">Auto</div>
                 </div>
                 <div class="glass-card">
-                    <div class="card-title">Grid Regulate Target</div>
-                    <div class="stat-val" id="stat-target" style="color: var(--warning); text-shadow: 0 0 10px rgba(245,158,11,0.2);">0 W</div>
+                    <div class="card-title">Grid Target</div>
+                    <div class="stat-val" id="stat-target">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Total Inverter Grid Interaction</div>
+                    <div class="stat-val" id="stat-total-inverter">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Total Solar Power</div>
+                    <div class="stat-val" id="stat-total-solar" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Import Price</div>
+                    <div class="stat-val" id="stat-import-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Export Price</div>
+                    <div class="stat-val" id="stat-export-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">MQTT Status</div>
+                    <div class="stat-val" id="stat-mqtt-status" style="color: var(--danger); text-shadow: 0 0 10px rgba(239, 68, 68, 0.2);">Disconnected</div>
                 </div>
             </div>
 
@@ -84,6 +113,10 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     <div class="mode-card" id="mode-feedin" onclick="setInstantMode('MaximumFeedin')">
                         <h3>Maximum Feedin</h3>
                         <p>Force maximum battery discharge rate</p>
+                    </div>
+                    <div class="mode-card" id="mode-optimise" onclick="setInstantMode('OptimiseTariff')">
+                        <h3>Optimise Tariff</h3>
+                        <p>Optimize battery schedules based on pricing</p>
                     </div>
                 </div>
                 <div class="form-group" style="margin-top: 10px;">
@@ -144,275 +177,22 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                         <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
                     </div>
                 </div>
+                <div style="margin-top: 25px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                    <button class="sub-btn" id="btn-mqtt-test" onclick="testMqttConnection()">Test MQTT Connection</button>
+                    <span id="mqtt-test-result" style="font-weight: 500; font-size: 0.9rem; transition: all 0.3s ease;"></span>
+                </div>
             </div>
         </div>
 
         <!-- HARDWARE DRIVERS TAB -->
         <div id="tab-hardware" class="tab-content">
-            <!-- SolaX Wifi -->
-            <div class="glass-card">
-                <div class="card-title">
-                    SolaX Wi-Fi HTTP API
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="wifi-enable" onchange="toggleFormSection('wifi-section', this.checked)">
-                        <label for="wifi-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="wifi-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="wifi-poll">Poll Period (seconds)</label>
-                            <input type="number" id="wifi-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="wifi-timeout">Request Timeout (seconds)</label>
-                            <input type="number" id="wifi-timeout">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="wifi-inverters">WiFi Inverters (IPs or Hostnames, comma separated)</label>
-                        <input type="text" id="wifi-inverters" placeholder="e.g. 192.168.1.15, 192.168.1.16">
-                    </div>
-                </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0; font-size: 1.2rem; font-weight: 600; color: var(--text);">Configured Hardware Drivers</h2>
+                <button class="sub-btn" onclick="showAddDriverModal()">+ Add Driver</button>
             </div>
-
-            <!-- SolaX Modbus -->
-            <div class="glass-card">
-                <div class="card-title">
-                    SolaX Modbus TCP (Standard)
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="modbus-enable" onchange="toggleFormSection('modbus-section', this.checked)">
-                        <label for="modbus-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="modbus-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="modbus-poll">Poll Period (seconds)</label>
-                            <input type="number" id="modbus-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="modbus-timeout">Timeout (seconds)</label>
-                            <input type="number" id="modbus-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="modbus-pwd">Installer Password</label>
-                            <input type="number" id="modbus-pwd">
-                        </div>
-                        <div class="form-group">
-                            <label for="modbus-avg">Power Budget Avg Samples</label>
-                            <input type="number" id="modbus-avg">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="modbus-inverters">Inverters List (Comma separated names)</label>
-                            <input type="text" id="modbus-inverters" placeholder="e.g. solax1, solax2">
-                        </div>
-                        <div class="form-group">
-                            <label for="modbus-hostnames">Hostnames/Endpoints (Comma separated host:port)</label>
-                            <input type="text" id="modbus-hostnames" placeholder="e.g. 192.168.1.20:502, 192.168.1.21:502">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- SolaX XHybrid Modbus -->
-            <div class="glass-card">
-                <div class="card-title">
-                    SolaX XHybrid Modbus TCP
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="hybrid-enable" onchange="toggleFormSection('hybrid-section', this.checked)">
-                        <label for="hybrid-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="hybrid-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="hybrid-poll">Poll Period (seconds)</label>
-                            <input type="number" id="hybrid-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="hybrid-timeout">Timeout (seconds)</label>
-                            <input type="number" id="hybrid-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="hybrid-pwd">Installer Password</label>
-                            <input type="number" id="hybrid-pwd">
-                        </div>
-                        <div class="form-group">
-                            <label for="hybrid-avg">Power Budget Avg Samples</label>
-                            <input type="number" id="hybrid-avg">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="hybrid-inverters">Inverters List (Comma separated names)</label>
-                            <input type="text" id="hybrid-inverters" placeholder="e.g. solax-x1">
-                        </div>
-                        <div class="form-group">
-                            <label for="hybrid-hostnames">Hostnames/Endpoints (Comma separated host:port)</label>
-                            <input type="text" id="hybrid-hostnames" placeholder="e.g. 192.168.1.25:502">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- SDM630 Meter -->
-            <div class="glass-card">
-                <div class="card-title">
-                    Eastron SDM630 Serial Meter
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="sdm-enable" onchange="toggleFormSection('sdm-section', this.checked)">
-                        <label for="sdm-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="sdm-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="sdm-poll">Poll Period (seconds)</label>
-                            <input type="number" id="sdm-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="sdm-timeout">Timeout (seconds)</label>
-                            <input type="number" id="sdm-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="sdm-baud">Baud Rate</label>
-                            <input type="number" id="sdm-baud" placeholder="38400">
-                        </div>
-                        <div class="form-group">
-                            <label for="sdm-parity">Parity</label>
-                            <select id="sdm-parity">
-                                <option value="N">None (N)</option>
-                                <option value="E">Even (E)</option>
-                                <option value="O">Odd (O)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="sdm-stop">Stop Bits</label>
-                            <input type="number" id="sdm-stop" placeholder="1">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="sdm-ports">Serial Port TTY Paths (Comma separated)</label>
-                        <input type="text" id="sdm-ports" placeholder="e.g. /dev/ttyUSB0">
-                    </div>
-                </div>
-            </div>
-
-            <!-- DTSU666 Meter -->
-            <div class="glass-card">
-                <div class="card-title">
-                    Chint DTSU666 Serial Meter
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="dtsu-enable" onchange="toggleFormSection('dtsu-section', this.checked)">
-                        <label for="dtsu-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="dtsu-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="dtsu-poll">Poll Period (seconds)</label>
-                            <input type="number" id="dtsu-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="dtsu-timeout">Timeout (seconds)</label>
-                            <input type="number" id="dtsu-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="dtsu-baud">Baud Rate</label>
-                            <input type="number" id="dtsu-baud" placeholder="9600">
-                        </div>
-                        <div class="form-group">
-                            <label for="dtsu-parity">Parity</label>
-                            <select id="dtsu-parity">
-                                <option value="N">None (N)</option>
-                                <option value="E">Even (E)</option>
-                                <option value="O">Odd (O)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="dtsu-stop">Stop Bits</label>
-                            <input type="number" id="dtsu-stop" placeholder="1">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="dtsu-ports">Serial Port TTY Paths (Comma separated)</label>
-                        <input type="text" id="dtsu-ports" placeholder="e.g. /dev/ttyUSB1">
-                    </div>
-                </div>
-            </div>
-
-            <!-- MQTT Custom Power Meter -->
-            <div class="glass-card">
-                <div class="card-title">
-                    MQTT Custom Power Meter Bridge
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="mqtt-meter-enable" onchange="toggleFormSection('mqtt-meter-section', this.checked)">
-                        <label for="mqtt-meter-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="mqtt-meter-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-poll">Poll Period (seconds)</label>
-                            <input type="number" id="mqtt-meter-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-name">Meter Name</label>
-                            <input type="text" id="mqtt-meter-name" placeholder="MainsMeter">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-broker">Broker IP/Hostname</label>
-                            <input type="text" id="mqtt-meter-broker">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-port">Broker Port</label>
-                            <input type="number" id="mqtt-meter-port" placeholder="1883">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-user">Username</label>
-                            <input type="text" id="mqtt-meter-user" placeholder="Optional">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-pass">Password</label>
-                            <input type="password" id="mqtt-meter-pass" placeholder="Optional">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-total">Total Power Topic</label>
-                            <input type="text" id="mqtt-meter-topic-total">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-p1">Phase 1 Topic</label>
-                            <input type="text" id="mqtt-meter-topic-p1">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-p2">Phase 2 Topic</label>
-                            <input type="text" id="mqtt-meter-topic-p2">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-p3">Phase 3 Topic</label>
-                            <input type="text" id="mqtt-meter-topic-p3">
-                        </div>
-                    </div>
-                </div>
+            
+            <div id="drivers-list-container" style="display: flex; flex-direction: column; gap: 20px;">
+                <!-- Dynamic driver cards will be rendered here -->
             </div>
         </div>
 
@@ -448,6 +228,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                                 <option value="Auto">Auto</option>
                                 <option value="ChargeBatteries">Charge Batteries</option>
                                 <option value="MaximumFeedin">Maximum Feedin</option>
+                                <option value="OptimiseTariff">Optimise Tariff</option>
                             </select>
                         </div>
                     </div>
@@ -554,7 +335,126 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 </div>
             </div>
         </div>
+
+        <!-- ELECTRICITY TARIFF TAB -->
+        <div id="tab-tariff" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">Electricity Tariff Settings</div>
+                <div class="form-group">
+                    <label for="tariff-type">Tariff Structure / API Mode</label>
+                    <select id="tariff-type" onchange="toggleTariffType(this.value)">
+                        <option value="none">Disabled (No pricing optimization)</option>
+                        <option value="flat">Flat Rate (Fixed import/export pricing)</option>
+                        <option value="tou">Time of Use (TOU) Periods</option>
+                        <option value="amber">Amber Electric API (Real-time wholesale pricing)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Flat Rate Configuration -->
+            <div class="glass-card tariff-section" id="tariff-section-flat" style="display: none;">
+                <div class="card-title">Flat Rate Pricing</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="flat-import-rate">Grid Import Rate (cents/kWh)</label>
+                        <input type="number" step="0.01" id="flat-import-rate" placeholder="e.g. 30.5">
+                    </div>
+                    <div class="form-group">
+                        <label for="flat-export-rate">Feed-in Export Rate (cents/kWh)</label>
+                        <input type="number" step="0.01" id="flat-export-rate" placeholder="e.g. 8.5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- TOU Configuration -->
+            <div class="glass-card tariff-section" id="tariff-section-tou" style="display: none;">
+                <div class="card-title">
+                    Time of Use (TOU) Periods
+                    <button class="sub-btn" onclick="addTariffTOUPeriod()">Add Period</button>
+                </div>
+                <div id="tariff-tou-periods-list">
+                    <!-- Dynamic TOU Periods List -->
+                </div>
+            </div>
+
+            <!-- Amber Electric Configuration -->
+            <div class="glass-card tariff-section" id="tariff-section-amber" style="display: none;">
+                <div class="card-title">Amber Electric API Integration</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="amber-api-key">Amber API Key / Token</label>
+                        <input type="password" id="amber-api-key" placeholder="e.g. psk_...">
+                    </div>
+                    <div class="form-group">
+                        <label for="amber-site-id">Site ID</label>
+                        <input type="text" id="amber-site-id" placeholder="e.g. 01H...">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="amber-api-url">API Base URL Override</label>
+                        <input type="text" id="amber-api-url" placeholder="https://api.amber.com.au (Optional)">
+                    </div>
+                </div>
+
+                <div class="card-title" style="margin-top: 30px;">Amber Cost Optimization Rules</div>
+                
+                <div class="checkbox-group">
+                    <input type="checkbox" id="amber-neg-export-prevent">
+                    <label for="amber-neg-export-prevent">Enable Negative Export Prevention (stop exporting or charge when feed-in rate is negative)</label>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="amber-low-price-charge" onchange="toggleFormSection('amber-low-price-group', this.checked)">
+                        <label for="amber-low-price-charge">Enable Low-Price Forced Charging (charge battery from grid when import rate is low)</label>
+                    </div>
+                    <div id="amber-low-price-group" style="margin-top: 10px; margin-left: 25px;">
+                        <div class="form-group" style="max-width: 300px;">
+                            <label for="amber-low-price-threshold">Low-Price Threshold (cents/kWh)</label>
+                            <input type="number" step="0.01" id="amber-low-price-threshold" placeholder="e.g. 10.0">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="amber-high-price-discharge" onchange="toggleFormSection('amber-high-price-group', this.checked)">
+                        <label for="amber-high-price-discharge">Enable High-Price Forced Discharging (force feed-in when export rate is premium)</label>
+                    </div>
+                    <div id="amber-high-price-group" style="margin-top: 10px; margin-left: 25px;">
+                        <div class="form-group" style="max-width: 300px;">
+                            <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)</label>
+                            <input type="number" step="0.01" id="amber-high-price-threshold" placeholder="e.g. 60.0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
+
+    <!-- Add Driver Modal -->
+    <div id="add-driver-modal" class="modal" style="display: none;">
+        <div class="modal-content glass-card">
+            <div class="card-title" style="margin-bottom: 15px;">Add New Driver</div>
+            <div class="form-group">
+                <label for="new-driver-type">Driver Type</label>
+                <select id="new-driver-type" style="width: 100%; margin-top: 5px;">
+                    <option value="Solax-Wifi">SolaX Wi-Fi HTTP API</option>
+                    <option value="Solax-Modbus">SolaX Modbus TCP (Standard)</option>
+                    <option value="Solax-XHybrid-Modbus">SolaX XHybrid Modbus TCP</option>
+                    <option value="SDM630Modbusv2">Eastron SDM630 Serial Meter</option>
+                    <option value="DTSU666">Chint DTSU666 Serial Meter</option>
+                    <option value="MQTTPowerMeter">MQTT Custom Power Meter Bridge</option>
+                    <option value="MQTTInverter">MQTT Custom Inverter Bridge</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                <button class="sub-btn" style="background: rgba(255,255,255,0.05); color: var(--text);" onclick="closeAddDriverModal()">Cancel</button>
+                <button class="sub-btn" onclick="addDriverFromModal()">Add</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/app.js"></script>
 </body>
@@ -688,6 +588,29 @@ h1 {
 }
 
 .btn-apply:active {
+    transform: translateY(0);
+}
+
+.btn-import {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+.btn-import:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.btn-import:active {
     transform: translateY(0);
 }
 
@@ -914,8 +837,102 @@ h1 {
     font-weight: 600;
     color: #fff;
 }
+
+/* Modal styles */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: modalFadeIn 0.2s ease-out;
+}
+
+.modal-content {
+    width: 90%;
+    max-width: 450px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    animation: modalContentSlide 0.2s ease-out;
+}
+
+@keyframes modalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes modalContentSlide {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+/* Delete / Remove driver button styles */
+.delete-btn {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.delete-btn:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+
+.stat-updated {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+    font-weight: 500;
+}
+
+/* Custom Grid Target Range Slider styling */
+input[type="range"]#instant-target-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    background: linear-gradient(to right, var(--accent) 0%, var(--danger) 100%);
+    height: 8px;
+    border-radius: 4px;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+input[type="range"]#instant-target-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+    transition: transform 0.1s ease, background-color 0.2s ease;
+    border: 2px solid var(--card-bg);
+}
+
+input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+/* Color transitions for target value input box (scrollbox) */
+#instant-target-val {
+    transition: color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
 "###;
 pub const APP_JS: &str = r###"let currentConfig = {};
+let lastStatusData = null;
 
 // Tab Switching
 function switchTab(tabId, el) {
@@ -943,10 +960,47 @@ async function fetchStatus() {
         const r = await fetch('/api/status');
         if (!r.ok) return;
         const status = await r.json();
+        lastStatusData = status;
 
-        document.getElementById('stat-mains').innerText = `${status.meter_power.toFixed(0)} W`;
+        // Style and update Current Grid Power
+        const mainsEl = document.getElementById('stat-mains');
+        const mainsPower = status.meter_power || 0.0;
+        const absMainsPower = Math.abs(mainsPower);
+        if (mainsPower > 0) {
+            mainsEl.innerText = `${absMainsPower.toFixed(0)} W Draw`;
+            mainsEl.style.color = 'var(--danger)';
+            mainsEl.style.textShadow = '0 0 10px rgba(239, 68, 68, 0.2)';
+        } else {
+            mainsEl.innerText = `${absMainsPower.toFixed(0)} W Feedin`;
+            mainsEl.style.color = 'var(--accent)';
+            mainsEl.style.textShadow = '0 0 10px var(--accent-glow)';
+        }
+
+        const mainsUpdatedEl = document.getElementById('stat-mains-updated');
+        if (mainsUpdatedEl) {
+            if (status.meter_last_updated) {
+                mainsUpdatedEl.setAttribute('data-timestamp', status.meter_last_updated);
+            } else {
+                mainsUpdatedEl.removeAttribute('data-timestamp');
+                mainsUpdatedEl.innerText = '';
+            }
+        }
+
         document.getElementById('stat-mode').innerText = status.active_mode || "Auto";
-        document.getElementById('stat-target').innerText = `${status.grid_target.toFixed(0)} W`;
+
+        // Style and update Grid Target card
+        const targetEl = document.getElementById('stat-target');
+        const targetPower = status.grid_target || 0.0;
+        const absTargetPower = Math.abs(targetPower);
+        if (targetPower > 0) {
+            targetEl.innerText = `${absTargetPower.toFixed(0)} W Draw`;
+            targetEl.style.color = 'var(--danger)';
+            targetEl.style.textShadow = '0 0 10px rgba(239, 68, 68, 0.2)';
+        } else {
+            targetEl.innerText = `${absTargetPower.toFixed(0)} W Feedin`;
+            targetEl.style.color = 'var(--accent)';
+            targetEl.style.textShadow = '0 0 10px var(--accent-glow)';
+        }
 
         // Update instantaneous control UI active states
         document.querySelectorAll('.mode-card').forEach(c => c.classList.remove('active'));
@@ -954,19 +1008,42 @@ async function fetchStatus() {
         if (status.active_mode === "ChargeBatteries") document.getElementById('mode-charge').classList.add('active');
         if (status.active_mode === "MaximumFeedin") document.getElementById('mode-feedin').classList.add('active');
 
-        // Render inverter lists
+        // Render inverter lists and calculate total inverter interaction and total solar power
         const list = document.getElementById('dash-inverters-list');
-        const keys = Object.keys(status.inverters);
+        const keys = Object.keys(status.inverters).sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+        
+        let totalInvBatteryPower = 0.0;
+        let totalSolarPower = 0.0;
+        
         if (keys.length === 0) {
             list.innerHTML = `<div class="inverter-item" style="color: var(--text-muted); text-align: center; grid-template-columns: 1fr;">No inverters connected.</div>`;
         } else {
             list.innerHTML = keys.map(k => {
                 const inv = status.inverters[k];
+                totalInvBatteryPower += (inv.battery_power || 0.0);
+                totalSolarPower += (inv.pv_power || 0.0);
+
+                let batPowerStr = "";
+                let batPowerStyle = "";
+                const val = inv.battery_power || 0.0;
+                const absVal = Math.abs(val);
+                if (val < 0) {
+                    batPowerStr = `${absVal.toFixed(0)} W Charge`;
+                    batPowerStyle = `color: var(--accent); text-shadow: 0 0 8px var(--accent-glow);`;
+                } else if (val > 0) {
+                    batPowerStr = `${absVal.toFixed(0)} W Discharge`;
+                    batPowerStyle = `color: var(--danger); text-shadow: 0 0 8px rgba(239, 68, 68, 0.25);`;
+                } else {
+                    batPowerStr = `0 W Idle`;
+                    batPowerStyle = `color: var(--text-muted);`;
+                }
+
                 return `
                     <div class="inverter-item">
                         <div>
                             <div class="inverter-field-title">Inverter ID</div>
                             <div class="inverter-field-val">${k}</div>
+                            <div class="stat-updated inverter-age" data-timestamp="${inv.last_updated || ''}"></div>
                         </div>
                         <div>
                             <div class="inverter-field-title">Battery Capacity (SOC)</div>
@@ -974,7 +1051,7 @@ async function fetchStatus() {
                         </div>
                         <div>
                             <div class="inverter-field-title">Charge/Discharge Power</div>
-                            <div class="inverter-field-val">${inv.battery_power} W</div>
+                            <div class="inverter-field-val" style="${batPowerStyle}">${batPowerStr}</div>
                         </div>
                         <div>
                             <div class="inverter-field-title">PV Output Power</div>
@@ -984,8 +1061,138 @@ async function fetchStatus() {
                 `;
             }).join('');
         }
+
+        // Style and update Total Inverter Grid Interaction card
+        const totalInvEl = document.getElementById('stat-total-inverter');
+        const absTotalInv = Math.abs(totalInvBatteryPower);
+        if (totalInvBatteryPower > 0) {
+            // Battery is discharging -> feeding power to the home/grid
+            totalInvEl.innerText = `${absTotalInv.toFixed(0)} W Feedin`;
+            totalInvEl.style.color = 'var(--accent)';
+            totalInvEl.style.textShadow = '0 0 10px var(--accent-glow)';
+        } else if (totalInvBatteryPower < 0) {
+            // Battery is charging -> drawing power from the home/grid
+            totalInvEl.innerText = `${absTotalInv.toFixed(0)} W Draw`;
+            totalInvEl.style.color = 'var(--danger)';
+            totalInvEl.style.textShadow = '0 0 10px rgba(239, 68, 68, 0.2)';
+        } else {
+            totalInvEl.innerText = `0 W Idle`;
+            totalInvEl.style.color = 'var(--text-muted)';
+            totalInvEl.style.textShadow = 'none';
+        }
+
+        // Update Total Solar Power card
+        const totalSolarEl = document.getElementById('stat-total-solar');
+        if (totalSolarEl) {
+            totalSolarEl.innerText = `${totalSolarPower.toFixed(0)} W`;
+        }
+
+        const mqttStatusEl = document.getElementById('stat-mqtt-status');
+        if (mqttStatusEl) {
+            if (status.mqtt_connected) {
+                mqttStatusEl.innerText = "Connected";
+                mqttStatusEl.style.color = "var(--accent)";
+                mqttStatusEl.style.textShadow = "0 0 10px var(--accent-glow)";
+            } else {
+                mqttStatusEl.innerText = "Disconnected";
+                mqttStatusEl.style.color = "var(--danger)";
+                mqttStatusEl.style.textShadow = "0 0 10px rgba(239, 68, 68, 0.2)";
+            }
+        }
+
+        const importPriceEl = document.getElementById('stat-import-price');
+        if (importPriceEl) {
+            if (status.import_price !== undefined && status.import_price !== null) {
+                importPriceEl.innerText = `${status.import_price.toFixed(1)} c/kWh`;
+                if (status.price_thresholds) {
+                    const t = status.price_thresholds;
+                    if (status.import_price >= t.import_70) {
+                        importPriceEl.style.color = 'var(--danger)';
+                        importPriceEl.style.textShadow = '0 0 10px hsla(350, 80%, 55%, 0.35)';
+                    } else if (status.import_price <= t.import_30) {
+                        importPriceEl.style.color = 'var(--accent)';
+                        importPriceEl.style.textShadow = '0 0 10px var(--accent-glow)';
+                    } else {
+                        importPriceEl.style.color = 'var(--warning)';
+                        importPriceEl.style.textShadow = '0 0 10px hsla(35, 90%, 55%, 0.25)';
+                    }
+                } else {
+                    importPriceEl.style.color = 'var(--primary)';
+                    importPriceEl.style.textShadow = '0 0 10px var(--primary-glow)';
+                }
+            } else {
+                importPriceEl.innerText = `-- c/kWh`;
+                importPriceEl.style.color = 'var(--primary)';
+                importPriceEl.style.textShadow = '0 0 10px var(--primary-glow)';
+            }
+        }
+
+        const exportPriceEl = document.getElementById('stat-export-price');
+        if (exportPriceEl) {
+            if (status.export_price !== undefined && status.export_price !== null) {
+                const dispPrice = status.export_price * -1;
+                exportPriceEl.innerText = `${dispPrice.toFixed(1)} c/kWh`;
+                if (status.price_thresholds) {
+                    const t = status.price_thresholds;
+                    if (status.export_price >= t.export_70) {
+                        exportPriceEl.style.color = 'var(--accent)';
+                        exportPriceEl.style.textShadow = '0 0 10px var(--accent-glow)';
+                    } else if (status.export_price <= t.export_30) {
+                        exportPriceEl.style.color = 'var(--danger)';
+                        exportPriceEl.style.textShadow = '0 0 10px hsla(350, 80%, 55%, 0.35)';
+                    } else {
+                        exportPriceEl.style.color = 'var(--warning)';
+                        exportPriceEl.style.textShadow = '0 0 10px hsla(35, 90%, 55%, 0.25)';
+                    }
+                } else {
+                    exportPriceEl.style.color = 'var(--primary)';
+                    exportPriceEl.style.textShadow = '0 0 10px var(--primary-glow)';
+                }
+            } else {
+                exportPriceEl.innerText = `-- c/kWh`;
+                exportPriceEl.style.color = 'var(--primary)';
+                exportPriceEl.style.textShadow = '0 0 10px var(--primary-glow)';
+            }
+        }
+
+        // Update calculated battery capacity fields in constraint cards
+        document.querySelectorAll('.inverter-constraint-card').forEach(card => {
+            const nameEl = card.querySelector('.inv-name');
+            if (nameEl) {
+                const name = nameEl.value.trim();
+                const invStatus = status.inverters && status.inverters[name];
+                if (invStatus && invStatus.calculated_battery_capacity !== undefined && invStatus.calculated_battery_capacity !== null) {
+                    const calcEl = card.querySelector('.inv-calc-capacity');
+                    if (calcEl) {
+                        calcEl.value = `${invStatus.calculated_battery_capacity.toFixed(2)} kWh`;
+                    }
+                }
+            }
+        });
+
+        // Run the counters update immediately to prevent content layout shift / blank age counters
+        updateAgeCounters();
     } catch (e) {
         console.error("Failed to fetch live stats", e);
+    }
+}
+
+function colorScrollbox(val) {
+    const num = parseFloat(val) || 0;
+    const el = document.getElementById('instant-target-val');
+    if (!el) return;
+    if (num > 0) {
+        el.style.color = 'var(--danger)';
+        el.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+        el.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.15)';
+    } else if (num < 0) {
+        el.style.color = 'var(--accent)';
+        el.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+        el.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.15)';
+    } else {
+        el.style.color = 'var(--text-main)';
+        el.style.borderColor = 'var(--border-color)';
+        el.style.boxShadow = 'none';
     }
 }
 
@@ -993,14 +1200,15 @@ async function fetchStatus() {
 function updateTargetText(val) {
     document.getElementById('instant-target-slider').value = val;
     document.getElementById('instant-target-val').value = val;
+    colorScrollbox(val);
 }
 
 async function setInstantMode(mode) {
     try {
         // To apply instant mode, we modify the active config's initial-mode and save
         const newCfg = JSON.parse(JSON.stringify(currentConfig));
-        if (!newCfg.BatteryControl) newCfg.BatteryControl = {};
-        newCfg.BatteryControl["initial-mode"] = mode;
+        if (!newCfg["Solax-BatteryControl"]) newCfg["Solax-BatteryControl"] = {};
+        newCfg["Solax-BatteryControl"]["initial-mode"] = mode;
         
         const resp = await fetch('/api/config', {
             method: 'POST',
@@ -1021,8 +1229,8 @@ async function applyInstantTarget() {
     if (isNaN(targetVal)) return;
     try {
         const newCfg = JSON.parse(JSON.stringify(currentConfig));
-        if (!newCfg.BatteryControl) newCfg.BatteryControl = {};
-        newCfg.BatteryControl["grid-target"] = targetVal;
+        if (!newCfg["Solax-BatteryControl"]) newCfg["Solax-BatteryControl"] = {};
+        newCfg["Solax-BatteryControl"]["grid-target"] = targetVal;
         
         const resp = await fetch('/api/config', {
             method: 'POST',
@@ -1038,12 +1246,419 @@ async function applyInstantTarget() {
     }
 }
 
+// Modal & Dynamic Driver Card Helpers
+function showAddDriverModal() {
+    document.getElementById('add-driver-modal').style.display = 'flex';
+}
+
+function closeAddDriverModal() {
+    document.getElementById('add-driver-modal').style.display = 'none';
+}
+
+function addDriverFromModal() {
+    const type = document.getElementById('new-driver-type').value;
+    renderDriverCard(type);
+    closeAddDriverModal();
+}
+
+function renderDriverCard(type, data = {}) {
+    const container = document.getElementById('drivers-list-container');
+    const card = document.createElement('div');
+    card.className = 'glass-card driver-card';
+    card.setAttribute('data-driver-type', type);
+
+    let content = '';
+    if (type === 'Solax-Wifi') {
+        const host = data.inverter || '';
+        const poll = data.poll_period !== undefined ? data.poll_period : 10;
+        const timeout = data.timeout !== undefined ? data.timeout : 5;
+        content = `
+            <div class="card-title">
+                <span>SolaX Wi-Fi HTTP API</span>
+                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Inverter IP / Hostname</label>
+                    <input type="text" class="driver-wifi-host" value="${host}" placeholder="e.g. 192.168.1.10">
+                </div>
+                <div class="form-group">
+                    <label>Poll Period (s)</label>
+                    <input type="number" class="driver-wifi-poll" value="${poll}">
+                </div>
+                <div class="form-group">
+                    <label>Timeout (s)</label>
+                    <input type="number" step="0.1" class="driver-wifi-timeout" value="${timeout}">
+                </div>
+            </div>
+        `;
+    } else if (type === 'Solax-Modbus') {
+        const name = data.inverter || 'solax-modbus';
+        const host = data.hostname || '';
+        const poll = data.poll_period !== undefined ? data.poll_period : 10;
+        const timeout = data.timeout !== undefined ? data.timeout : 5;
+        const pwd = data.password !== undefined ? data.password : '';
+        const avg = data.power_budget_avg_samples !== undefined ? data.power_budget_avg_samples : 30;
+        content = `
+            <div class="card-title">
+                <span>SolaX Modbus TCP (Standard)</span>
+                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Inverter Name (Identifier)</label>
+                    <input type="text" class="driver-modbus-name" value="${name}" placeholder="e.g. solax-modbus">
+                </div>
+                <div class="form-group">
+                    <label>Inverter Host / IP (with optional port)</label>
+                    <input type="text" class="driver-modbus-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
+                </div>
+                <div class="form-group">
+                    <label>Poll Period (s)</label>
+                    <input type="number" class="driver-modbus-poll" value="${poll}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Timeout (s)</label>
+                    <input type="number" step="0.1" class="driver-modbus-timeout" value="${timeout}">
+                </div>
+                <div class="form-group">
+                    <label>Installer Password</label>
+                    <input type="number" class="driver-modbus-password" value="${pwd}" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>Power Budget Avg Samples</label>
+                    <input type="number" class="driver-modbus-avg" value="${avg}">
+                </div>
+            </div>
+        `;
+    } else if (type === 'Solax-XHybrid-Modbus') {
+        const name = data.inverter || 'solax-xhybrid';
+        const host = data.hostname || '';
+        const poll = data.poll_period !== undefined ? data.poll_period : 10;
+        const timeout = data.timeout !== undefined ? data.timeout : 5;
+        const pwd = data.password !== undefined ? data.password : '';
+        const avg = data.power_budget_avg_samples !== undefined ? data.power_budget_avg_samples : 30;
+        content = `
+            <div class="card-title">
+                <span>SolaX XHybrid Modbus TCP</span>
+                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Inverter Name (Identifier)</label>
+                    <input type="text" class="driver-hybrid-name" value="${name}" placeholder="e.g. solax-xhybrid">
+                </div>
+                <div class="form-group">
+                    <label>Inverter Host / IP (with optional port)</label>
+                    <input type="text" class="driver-hybrid-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
+                </div>
+                <div class="form-group">
+                    <label>Poll Period (s)</label>
+                    <input type="number" class="driver-hybrid-poll" value="${poll}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Timeout (s)</label>
+                    <input type="number" step="0.1" class="driver-hybrid-timeout" value="${timeout}">
+                </div>
+                <div class="form-group">
+                    <label>Installer Password</label>
+                    <input type="number" class="driver-hybrid-password" value="${pwd}" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>Power Budget Avg Samples</label>
+                    <input type="number" class="driver-hybrid-avg" value="${avg}">
+                </div>
+            </div>
+        `;
+    } else if (type === 'SDM630Modbusv2') {
+        const port = data.port || '';
+        const poll = data.poll_period !== undefined ? data.poll_period : 1;
+        const timeout = data.timeout !== undefined ? data.timeout : 1;
+        const baud = data.baud !== undefined ? data.baud : 38400;
+        const parity = data.parity || 'E';
+        const stop = data.stopbits !== undefined ? data.stopbits : 1;
+        content = `
+            <div class="card-title">
+                <span>Eastron SDM630 Serial Meter</span>
+                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Serial Port Path</label>
+                    <input type="text" class="driver-sdm-port" value="${port}" placeholder="e.g. /dev/ttyUSB0">
+                </div>
+                <div class="form-group">
+                    <label>Poll Period (s)</label>
+                    <input type="number" class="driver-sdm-poll" value="${poll}">
+                </div>
+                <div class="form-group">
+                    <label>Timeout (s)</label>
+                    <input type="number" step="0.1" class="driver-sdm-timeout" value="${timeout}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Baud Rate</label>
+                    <input type="number" class="driver-sdm-baud" value="${baud}">
+                </div>
+                <div class="form-group">
+                    <label>Parity</label>
+                    <select class="driver-sdm-parity">
+                        <option value="N" ${parity === 'N' ? 'selected' : ''}>None</option>
+                        <option value="E" ${parity === 'E' ? 'selected' : ''}>Even</option>
+                        <option value="O" ${parity === 'O' ? 'selected' : ''}>Odd</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Stop Bits</label>
+                    <input type="number" class="driver-sdm-stop" value="${stop}">
+                </div>
+            </div>
+        `;
+    } else if (type === 'DTSU666') {
+        const port = data.port || '';
+        const poll = data.poll_period !== undefined ? data.poll_period : 1;
+        const timeout = data.timeout !== undefined ? data.timeout : 1;
+        const baud = data.baud !== undefined ? data.baud : 9600;
+        const parity = data.parity || 'N';
+        const stop = data.stopbits !== undefined ? data.stopbits : 1;
+        content = `
+            <div class="card-title">
+                <span>Chint DTSU666 Serial Meter</span>
+                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Serial Port Path</label>
+                    <input type="text" class="driver-dtsu-port" value="${port}" placeholder="e.g. /dev/ttyUSB0">
+                </div>
+                <div class="form-group">
+                    <label>Poll Period (s)</label>
+                    <input type="number" class="driver-dtsu-poll" value="${poll}">
+                </div>
+                <div class="form-group">
+                    <label>Timeout (s)</label>
+                    <input type="number" step="0.1" class="driver-dtsu-timeout" value="${timeout}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Baud Rate</label>
+                    <input type="number" class="driver-dtsu-baud" value="${baud}">
+                </div>
+                <div class="form-group">
+                    <label>Parity</label>
+                    <select class="driver-dtsu-parity">
+                        <option value="N" ${parity === 'N' ? 'selected' : ''}>None</option>
+                        <option value="E" ${parity === 'E' ? 'selected' : ''}>Even</option>
+                        <option value="O" ${parity === 'O' ? 'selected' : ''}>Odd</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Stop Bits</label>
+                    <input type="number" class="driver-dtsu-stop" value="${stop}">
+                </div>
+            </div>
+        `;
+    } else if (type === 'MQTTPowerMeter') {
+        const name = data.meter_name || 'MainsMeter';
+        const poll = data.poll_period !== undefined ? data.poll_period : 10;
+        const broker = data.broker || '';
+        const port = data.port !== undefined ? data.port : 1883;
+        const user = data.username || '';
+        const pass = data.password || '';
+        const topicTotal = data.topic_total || '';
+        const topicP1 = data.topic_phase1 || '';
+        const topicP2 = data.topic_phase2 || '';
+        const topicP3 = data.topic_phase3 || '';
+        content = `
+            <div class="card-title">
+                <span>MQTT Custom Power Meter Bridge</span>
+                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Meter Name (Identifier)</label>
+                    <input type="text" class="driver-mqtt-meter-name" value="${name}" placeholder="e.g. MainsMeter">
+                </div>
+                <div class="form-group">
+                    <label>Poll Period (s)</label>
+                    <input type="number" class="driver-mqtt-meter-poll" value="${poll}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Broker Host / IP</label>
+                    <input type="text" class="driver-mqtt-meter-broker" value="${broker}" placeholder="e.g. 192.168.1.5">
+                </div>
+                <div class="form-group">
+                    <label>Broker Port</label>
+                    <input type="number" class="driver-mqtt-meter-port" value="${port}">
+                </div>
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" class="driver-mqtt-meter-user" value="${user}" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" class="driver-mqtt-meter-pass" value="${pass}" placeholder="Optional">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>MQTT Topic: Total Power (W)</label>
+                    <input type="text" class="driver-mqtt-meter-topic-total" value="${topicTotal}" placeholder="e.g. sensors/total_power">
+                </div>
+                <div class="form-group">
+                    <label>MQTT Topic: Phase 1 Power (W)</label>
+                    <input type="text" class="driver-mqtt-meter-topic-p1" value="${topicP1}" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>MQTT Topic: Phase 2 Power (W)</label>
+                    <input type="text" class="driver-mqtt-meter-topic-p2" value="${topicP2}" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>MQTT Topic: Phase 3 Power (W)</label>
+                    <input type="text" class="driver-mqtt-meter-topic-p3" value="${topicP3}" placeholder="Optional">
+                </div>
+            </div>
+        `;
+    } else if (type === 'MQTTInverter') {
+        const name = data.inverter_name || 'aurora';
+        const broker = data.broker || '';
+        const port = data.port !== undefined ? data.port : 1883;
+        const user = data.username || '';
+        const pass = data.password || '';
+        const topicPV1Power = data.topic_pv1_power || '';
+        const topicPV2Power = data.topic_pv2_power || '';
+        const topicPV1Volt = data.topic_pv1_voltage || '';
+        const topicPV2Volt = data.topic_pv2_voltage || '';
+        const topicPV1Curr = data.topic_pv1_current || '';
+        const topicPV2Curr = data.topic_pv2_current || '';
+        const topicGridVolt = data.topic_grid_voltage || '';
+        const topicGridCurr = data.topic_grid_current || '';
+        const topicGridPow = data.topic_grid_power || '';
+        const topicFreq = data.topic_frequency || '';
+        const topicTemp = data.topic_temperature || '';
+        const topicEnergyToday = data.topic_energy_today || '';
+        const topicEnergyTotal = data.topic_energy_total || '';
+        const topicBatCap = data.topic_battery_capacity || '';
+        const topicBatPow = data.topic_battery_power || '';
+
+        content = `
+            <div class="card-title">
+                <span>MQTT Custom Inverter Bridge</span>
+                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Inverter Name (Identifier)</label>
+                    <input type="text" class="driver-mqtt-inv-name" value="${name}" placeholder="e.g. aurora">
+                </div>
+                <div class="form-group">
+                    <label>Broker Host / IP (Optional)</label>
+                    <input type="text" class="driver-mqtt-inv-broker" value="${broker}" placeholder="e.g. 192.168.1.5">
+                </div>
+                <div class="form-group">
+                    <label>Broker Port</label>
+                    <input type="number" class="driver-mqtt-inv-port" value="${port}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Username</label>
+                    <input type="text" class="driver-mqtt-inv-user" value="${user}" placeholder="Optional">
+                </div>
+                <div class="form-group">
+                    <label>Password</label>
+                    <input type="password" class="driver-mqtt-inv-pass" value="${pass}" placeholder="Optional">
+                </div>
+            </div>
+            <h4 style="margin-top: 15px; margin-bottom: 5px; color: var(--primary);">Configurable MQTT Topics (Inputs)</h4>
+            <div class="form-row" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                <div class="form-group">
+                    <label>PV1 Power Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-pv1-power" value="${topicPV1Power}" placeholder="e.g. emon/aurora/power_in_1">
+                </div>
+                <div class="form-group">
+                    <label>PV2 Power Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-pv2-power" value="${topicPV2Power}" placeholder="e.g. emon/aurora/power_in_2">
+                </div>
+                <div class="form-group">
+                    <label>PV1 Voltage Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-pv1-voltage" value="${topicPV1Volt}">
+                </div>
+                <div class="form-group">
+                    <label>PV2 Voltage Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-pv2-voltage" value="${topicPV2Volt}">
+                </div>
+                <div class="form-group">
+                    <label>PV1 Current Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-pv1-current" value="${topicPV1Curr}">
+                </div>
+                <div class="form-group">
+                    <label>PV2 Current Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-pv2-current" value="${topicPV2Curr}">
+                </div>
+                <div class="form-group">
+                    <label>Grid Voltage Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-grid-voltage" value="${topicGridVolt}">
+                </div>
+                <div class="form-group">
+                    <label>Grid Current Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-grid-current" value="${topicGridCurr}">
+                </div>
+                <div class="form-group">
+                    <label>Grid Power Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-grid-power" value="${topicGridPow}">
+                </div>
+                <div class="form-group">
+                    <label>Frequency Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-frequency" value="${topicFreq}">
+                </div>
+                <div class="form-group">
+                    <label>Temperature Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-temperature" value="${topicTemp}">
+                </div>
+                <div class="form-group">
+                    <label>Energy Today Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-energy-today" value="${topicEnergyToday}">
+                </div>
+                <div class="form-group">
+                    <label>Energy Total Topic</label>
+                    <input type="text" class="driver-mqtt-inv-topic-energy-total" value="${topicEnergyTotal}">
+                </div>
+                <div class="form-group" style="grid-column: span 2; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                    <div>
+                        <label>Battery Capacity Topic</label>
+                        <input type="text" class="driver-mqtt-inv-topic-battery-capacity" value="${topicBatCap}">
+                    </div>
+                    <div>
+                        <label>Battery Power Topic</label>
+                        <input type="text" class="driver-mqtt-inv-topic-battery-power" value="${topicBatPow}">
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    card.innerHTML = content;
+    container.appendChild(card);
+}
+
 // Loading configuration to Forms
-async function loadConfig() {
+async function loadConfig(configData = null) {
     try {
-        const r = await fetch('/api/config');
-        if (!r.ok) return;
-        const config = await r.json();
+        let config = configData;
+        if (!config) {
+            const r = await fetch('/api/config');
+            if (!r.ok) return;
+            config = await r.json();
+        }
         currentConfig = config;
 
         // Load MQTT
@@ -1056,85 +1671,132 @@ async function loadConfig() {
         document.getElementById('mqtt-ha-discovery').checked = mqtt["home-assistant-discovery"] !== false;
         document.getElementById('mqtt-ha-prefix').value = mqtt["home-assistant-prefix"] || '';
 
-        // Load WiFi
+        // Clear dynamic drivers container
+        const driversContainer = document.getElementById('drivers-list-container');
+        driversContainer.innerHTML = '';
+
+        // 1. Load Solax Wifi
         const wifi = config["Solax-Wifi"];
-        document.getElementById('wifi-enable').checked = !!wifi;
-        toggleFormSection('wifi-section', !!wifi);
-        if (wifi) {
-            document.getElementById('wifi-poll').value = wifi["poll-period"] || 10;
-            document.getElementById('wifi-timeout').value = wifi.timeout || 5;
-            document.getElementById('wifi-inverters').value = (wifi.inverters || []).join(', ');
+        if (wifi && wifi.inverters) {
+            wifi.inverters.forEach(ip => {
+                renderDriverCard('Solax-Wifi', {
+                    inverter: ip,
+                    poll_period: wifi["poll-period"] || wifi.poll_period || 10,
+                    timeout: wifi.timeout || 5
+                });
+            });
         }
 
-        // Load Modbus Standard
+        // 2. Load Solax Modbus Standard
         const modbus = config["Solax-Modbus"];
-        document.getElementById('modbus-enable').checked = !!modbus;
-        toggleFormSection('modbus-section', !!modbus);
-        if (modbus) {
-            document.getElementById('modbus-poll').value = modbus["poll-period"] || 10;
-            document.getElementById('modbus-timeout').value = modbus.timeout || 5;
-            document.getElementById('modbus-pwd').value = modbus["installer-password"] || '';
-            document.getElementById('modbus-avg').value = modbus["power-budget-avg-samples"] || 30;
-            document.getElementById('modbus-inverters').value = (modbus.inverters || []).join(', ');
-            document.getElementById('modbus-hostnames').value = (modbus.hostnames || []).join(', ');
+        if (modbus && modbus.inverters) {
+            modbus.inverters.forEach((name, idx) => {
+                const host = (modbus.hostnames && modbus.hostnames[idx]) ? modbus.hostnames[idx] : '';
+                renderDriverCard('Solax-Modbus', {
+                    inverter: name,
+                    hostname: host,
+                    poll_period: modbus["poll-period"] || modbus.poll_period || 10,
+                    timeout: modbus.timeout || 5,
+                    password: modbus["installer-password"] || modbus.installer_password || '',
+                    power_budget_avg_samples: modbus["power-budget-avg-samples"] || modbus.power_budget_avg_samples || 30
+                });
+            });
         }
 
-        // Load XHybrid Modbus
+        // 3. Load Solax XHybrid Modbus
         const hybrid = config["Solax-XHybrid-Modbus"];
-        document.getElementById('hybrid-enable').checked = !!hybrid;
-        toggleFormSection('hybrid-section', !!hybrid);
-        if (hybrid) {
-            document.getElementById('hybrid-poll').value = hybrid["poll-period"] || 10;
-            document.getElementById('hybrid-timeout').value = hybrid.timeout || 5;
-            document.getElementById('hybrid-pwd').value = hybrid["installer-password"] || '';
-            document.getElementById('hybrid-avg').value = hybrid["power-budget-avg-samples"] || 30;
-            document.getElementById('hybrid-inverters').value = (hybrid.inverters || []).join(', ');
-            document.getElementById('hybrid-hostnames').value = (hybrid.hostnames || []).join(', ');
+        if (hybrid && hybrid.inverters) {
+            hybrid.inverters.forEach((name, idx) => {
+                const host = (hybrid.hostnames && hybrid.hostnames[idx]) ? hybrid.hostnames[idx] : '';
+                renderDriverCard('Solax-XHybrid-Modbus', {
+                    inverter: name,
+                    hostname: host,
+                    poll_period: hybrid["poll-period"] || hybrid.poll_period || 10,
+                    timeout: hybrid.timeout || 5,
+                    password: hybrid["installer-password"] || hybrid.installer_password || '',
+                    power_budget_avg_samples: hybrid["power-budget-avg-samples"] || hybrid.power_budget_avg_samples || 30
+                });
+            });
         }
 
-        // Load SDM630
+        // 4. Load SDM630
         const sdm = config.SDM630Modbusv2;
-        document.getElementById('sdm-enable').checked = !!sdm;
-        toggleFormSection('sdm-section', !!sdm);
-        if (sdm) {
-            document.getElementById('sdm-poll').value = sdm["poll-period"] || 1;
-            document.getElementById('sdm-timeout').value = sdm.timeout || 1;
-            document.getElementById('sdm-baud').value = sdm.baud || 38400;
-            document.getElementById('sdm-parity').value = sdm.parity || 'E';
-            document.getElementById('sdm-stop').value = sdm.stopbits || 1;
-            document.getElementById('sdm-ports').value = (sdm.ports || []).join(', ');
+        if (sdm && sdm.ports) {
+            sdm.ports.forEach(port => {
+                renderDriverCard('SDM630Modbusv2', {
+                    port: port,
+                    poll_period: sdm["poll-period"] || sdm.poll_period || 1,
+                    timeout: sdm.timeout || 1,
+                    baud: sdm.baud || 38400,
+                    parity: sdm.parity || 'E',
+                    stopbits: sdm.stopbits || 1
+                });
+            });
         }
 
-        // Load DTSU666
+        // 5. Load DTSU666
         const dtsu = config.DTSU666;
-        document.getElementById('dtsu-enable').checked = !!dtsu;
-        toggleFormSection('dtsu-section', !!dtsu);
-        if (dtsu) {
-            document.getElementById('dtsu-poll').value = dtsu["poll-period"] || 1;
-            document.getElementById('dtsu-timeout').value = dtsu.timeout || 1;
-            document.getElementById('dtsu-baud').value = dtsu.baud || 9600;
-            document.getElementById('dtsu-parity').value = dtsu.parity || 'N';
-            document.getElementById('dtsu-stop').value = dtsu.stopbits || 1;
-            document.getElementById('dtsu-ports').value = (dtsu.ports || []).join(', ');
+        if (dtsu && dtsu.ports) {
+            dtsu.ports.forEach(port => {
+                renderDriverCard('DTSU666', {
+                    port: port,
+                    poll_period: dtsu["poll-period"] || dtsu.poll_period || 1,
+                    timeout: dtsu.timeout || 1,
+                    baud: dtsu.baud || 9600,
+                    parity: dtsu.parity || 'N',
+                    stopbits: dtsu.stopbits || 1
+                });
+            });
         }
 
-        // Load MQTT Power Meter
+        // 6. Load MQTT Custom Power Meter
         const mqMeter = config.MQTTPowerMeter;
-        document.getElementById('mqtt-meter-enable').checked = !!mqMeter;
-        toggleFormSection('mqtt-meter-section', !!mqMeter);
-        if (mqMeter && mqMeter.meters && mqMeter.meters.length > 0) {
-            const meterName = mqMeter.meters[0];
-            const mDev = mqMeter.meter_devices[meterName] || {};
-            document.getElementById('mqtt-meter-poll').value = mqMeter["poll-period"] || 10;
-            document.getElementById('mqtt-meter-name').value = meterName || '';
-            document.getElementById('mqtt-meter-broker').value = mDev.broker || '';
-            document.getElementById('mqtt-meter-port').value = mDev.port || '';
-            document.getElementById('mqtt-meter-user').value = mDev.username || '';
-            document.getElementById('mqtt-meter-pass').value = mDev.password || '';
-            document.getElementById('mqtt-meter-topic-total').value = mDev.topic_total || '';
-            document.getElementById('mqtt-meter-topic-p1').value = mDev.topic_phase1 || '';
-            document.getElementById('mqtt-meter-topic-p2').value = mDev.topic_phase2 || '';
-            document.getElementById('mqtt-meter-topic-p3').value = mDev.topic_phase3 || '';
+        if (mqMeter && mqMeter.meters) {
+            mqMeter.meters.forEach(meterName => {
+                const mDev = mqMeter[meterName] || mqMeter.meter_devices?.[meterName] || {};
+                renderDriverCard('MQTTPowerMeter', {
+                    meter_name: meterName,
+                    poll_period: mqMeter["poll-period"] || mqMeter.poll_period || 10,
+                    broker: mDev.broker || '',
+                    port: mDev.port || 1883,
+                    username: mDev.username || '',
+                    password: mDev.password || '',
+                    topic_total: mDev.topic_total || mDev["topic-total"] || '',
+                    topic_phase1: mDev.topic_phase1 || mDev["topic-phase1"] || '',
+                    topic_phase2: mDev.topic_phase2 || mDev["topic-phase2"] || '',
+                    topic_phase3: mDev.topic_phase3 || mDev["topic-phase3"] || ''
+                });
+            });
+        }
+
+        // 7. Load MQTT Custom Inverters
+        const mqInverters = config.MQTTInverter;
+        if (mqInverters && mqInverters.inverters) {
+            mqInverters.inverters.forEach(invName => {
+                const iDev = mqInverters[invName] || mqInverters.inverter_devices?.[invName] || {};
+                renderDriverCard('MQTTInverter', {
+                    inverter_name: invName,
+                    broker: iDev.broker || '',
+                    port: iDev.port || 1883,
+                    username: iDev.username || '',
+                    password: iDev.password || '',
+                    topic_pv1_power: iDev.topic_pv1_power || '',
+                    topic_pv2_power: iDev.topic_pv2_power || '',
+                    topic_pv1_voltage: iDev.topic_pv1_voltage || '',
+                    topic_pv2_voltage: iDev.topic_pv2_voltage || '',
+                    topic_pv1_current: iDev.topic_pv1_current || '',
+                    topic_pv2_current: iDev.topic_pv2_current || '',
+                    topic_grid_voltage: iDev.topic_grid_voltage || '',
+                    topic_grid_current: iDev.topic_grid_current || '',
+                    topic_grid_power: iDev.topic_grid_power || '',
+                    topic_frequency: iDev.topic_frequency || '',
+                    topic_temperature: iDev.topic_temperature || '',
+                    topic_energy_today: iDev.topic_energy_today || '',
+                    topic_energy_total: iDev.topic_energy_total || '',
+                    topic_battery_capacity: iDev.topic_battery_capacity || '',
+                    topic_battery_power: iDev.topic_battery_power || ''
+                });
+            });
         }
 
         // Load Battery Control Config
@@ -1149,8 +1811,10 @@ async function loadConfig() {
             document.getElementById('battery-linked').checked = bat["linked-batteries"] === true;
 
             // Load Instant controls defaults
-            document.getElementById('instant-target-val').value = bat["grid-target"] || 0.0;
-            document.getElementById('instant-target-slider').value = bat["grid-target"] || 0.0;
+            const gridTarget = bat["grid-target"] || 0.0;
+            document.getElementById('instant-target-val').value = gridTarget;
+            document.getElementById('instant-target-slider').value = gridTarget;
+            colorScrollbox(gridTarget);
 
             // Render inverter constraints list
             const listDiv = document.getElementById('inverters-constraints-list');
@@ -1171,6 +1835,50 @@ async function loadConfig() {
                 const per = bat.period[pName];
                 renderPeriodCard(pName, per);
             });
+        }
+
+        // Load Tariff Settings
+        const tariff = (bat && bat.tariff) ? bat.tariff : null;
+        if (tariff) {
+            const tType = tariff.type;
+            document.getElementById('tariff-type').value = tType;
+            toggleTariffType(tType);
+
+            if (tType === 'flat') {
+                document.getElementById('flat-import-rate').value = tariff["import-rate"] || '';
+                document.getElementById('flat-export-rate').value = tariff["export-rate"] || '';
+            } else if (tType === 'tou') {
+                const tariffList = document.getElementById('tariff-tou-periods-list');
+                tariffList.innerHTML = '';
+                if (tariff.periods) {
+                    tariff.periods.forEach(p => {
+                        renderTariffTOUPeriodCard(p.name, {
+                            start: p.start,
+                            end: p.end,
+                            import_rate: p["import-rate"],
+                            export_rate: p["export-rate"]
+                        });
+                    });
+                }
+            } else if (tType === 'amber') {
+                document.getElementById('amber-api-key').value = tariff["api-key"] || '';
+                document.getElementById('amber-site-id').value = tariff["site-id"] || '';
+                document.getElementById('amber-api-url').value = tariff["api-url"] || '';
+                document.getElementById('amber-neg-export-prevent').checked = tariff["negative-export-prevent"] === true;
+                
+                const lpc = tariff["low-price-charge"] === true;
+                document.getElementById('amber-low-price-charge').checked = lpc;
+                toggleFormSection('amber-low-price-group', lpc);
+                document.getElementById('amber-low-price-threshold').value = tariff["low-price-threshold"] || '';
+
+                const hpd = tariff["high-price-discharge"] === true;
+                document.getElementById('amber-high-price-discharge').checked = hpd;
+                toggleFormSection('amber-high-price-group', hpd);
+                document.getElementById('amber-high-price-threshold').value = tariff["high-price-threshold"] || '';
+            }
+        } else {
+            document.getElementById('tariff-type').value = 'none';
+            toggleTariffType('none');
         }
 
         // Load EmonCMS
@@ -1205,6 +1913,15 @@ function renderInverterConstraintCard(name, inv) {
     const listDiv = document.getElementById('inverters-constraints-list');
     const card = document.createElement('div');
     card.className = 'list-item-card inverter-constraint-card';
+    
+    let calcCapText = "N/A";
+    if (typeof lastStatusData !== 'undefined' && lastStatusData && lastStatusData.inverters && lastStatusData.inverters[name]) {
+        const invStatus = lastStatusData.inverters[name];
+        if (invStatus.calculated_battery_capacity !== undefined && invStatus.calculated_battery_capacity !== null) {
+            calcCapText = `${invStatus.calculated_battery_capacity.toFixed(2)} kWh`;
+        }
+    }
+
     card.innerHTML = `
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
@@ -1223,6 +1940,24 @@ function renderInverterConstraintCard(name, inv) {
                 <div class="form-group">
                     <label>Max Discharge Rate (W)</label>
                     <input type="number" class="inv-max-discharge" value="${inv["max-discharge"] || 2000}">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Battery Capacity (kWh)</label>
+                    <input type="number" step="0.1" class="inv-battery-capacity" value="${inv["battery-capacity"] || inv.battery_capacity || 0.0}">
+                </div>
+                <div class="form-group">
+                    <label>Calculated Battery Capacity</label>
+                    <input type="text" class="inv-calc-capacity" value="${calcCapText}" readonly style="background: rgba(255,255,255,0.05); color: #ccc;">
+                </div>
+                <div class="form-group">
+                    <label>Max Charge (%)</label>
+                    <input type="number" min="0" max="100" class="inv-max-charge-pct" value="${inv["max-charge-pct"] || inv.max_charge_pct || 100}">
+                </div>
+                <div class="form-group">
+                    <label>Min Charge (%)</label>
+                    <input type="number" min="0" max="100" class="inv-min-charge-pct" value="${inv["min-charge-pct"] || inv.min_charge_pct || 10}">
                 </div>
             </div>
             <div class="form-row">
@@ -1247,7 +1982,10 @@ function addInverterConstraint() {
         "max-charge": 2000,
         "max-discharge": 2000,
         "use-total-power": false,
-        "control-grid-power": false
+        "control-grid-power": false,
+        "battery-capacity": 0.0,
+        "max-charge-pct": 100,
+        "min-charge-pct": 10
     });
 }
 
@@ -1310,6 +2048,60 @@ function addTOUPeriod() {
     });
 }
 
+function toggleTariffType(type) {
+    document.querySelectorAll('.tariff-section').forEach(s => s.style.display = 'none');
+    if (type === 'flat') {
+        document.getElementById('tariff-section-flat').style.display = 'block';
+    } else if (type === 'tou') {
+        document.getElementById('tariff-section-tou').style.display = 'block';
+    } else if (type === 'amber') {
+        document.getElementById('tariff-section-amber').style.display = 'block';
+    }
+}
+
+function renderTariffTOUPeriodCard(pName, per) {
+    const container = document.getElementById('tariff-tou-periods-list');
+    const card = document.createElement('div');
+    card.className = 'list-item-card tariff-tou-period-card';
+    card.innerHTML = `
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Period Name</label>
+                    <input type="text" class="tariff-period-name" value="${pName}">
+                </div>
+                <div class="form-group">
+                    <label>Start Time</label>
+                    <input type="text" class="tariff-period-start" value="${per.start || '00:00:00'}">
+                </div>
+                <div class="form-group">
+                    <label>End Time</label>
+                    <input type="text" class="tariff-period-end" value="${per.end || '23:59:59'}">
+                </div>
+                <div class="form-group">
+                    <label>Import Rate (c/kWh)</label>
+                    <input type="number" step="0.01" class="tariff-period-import" value="${per.import_rate || 0.0}">
+                </div>
+                <div class="form-group">
+                    <label>Export Rate (c/kWh)</label>
+                    <input type="number" step="0.01" class="tariff-period-export" value="${per.export_rate || 0.0}">
+                </div>
+            </div>
+        </div>
+        <button class="sub-btn danger" style="margin-left: 20px;" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    container.appendChild(card);
+}
+
+function addTariffTOUPeriod() {
+    renderTariffTOUPeriodCard('Peak', {
+        start: '00:00:00',
+        end: '23:59:59',
+        import_rate: 30.0,
+        export_rate: 10.0
+    });
+}
+
 // Parsing comma lists
 function parseCommaList(val) {
     if (!val.trim()) return [];
@@ -1330,94 +2122,205 @@ async function saveConfiguration() {
         }
     };
 
-    // Wifi Inverter
-    if (document.getElementById('wifi-enable').checked) {
-        cfg["Solax-Wifi"] = {
-            "poll-period": parseInt(document.getElementById('wifi-poll').value) || 10,
-            timeout: parseInt(document.getElementById('wifi-timeout').value) || 5,
-            inverters: parseCommaList(document.getElementById('wifi-inverters').value)
-        };
-    } else {
-        cfg["Solax-Wifi"] = null;
-    }
+    let wifiConfig = null;
+    let modbusConfig = null;
+    let hybridConfig = null;
+    let sdmConfig = null;
+    let dtsuConfig = null;
+    let mqttMeterConfig = null;
+    let mqttInverterConfig = null;
 
-    // Modbus Inverter
-    if (document.getElementById('modbus-enable').checked) {
-        cfg["Solax-Modbus"] = {
-            "poll-period": parseInt(document.getElementById('modbus-poll').value) || 10,
-            timeout: parseInt(document.getElementById('modbus-timeout').value) || 5,
-            "installer-password": parseInt(document.getElementById('modbus-pwd').value) || null,
-            "power-budget-avg-samples": parseInt(document.getElementById('modbus-avg').value) || 30,
-            inverters: parseCommaList(document.getElementById('modbus-inverters').value),
-            hostnames: parseCommaList(document.getElementById('modbus-hostnames').value)
-        };
-    } else {
-        cfg["Solax-Modbus"] = null;
-    }
+    document.querySelectorAll('.driver-card').forEach(card => {
+        const type = card.getAttribute('data-driver-type');
+        if (type === 'Solax-Wifi') {
+            const host = card.querySelector('.driver-wifi-host').value.trim();
+            const poll = parseInt(card.querySelector('.driver-wifi-poll').value) || 10;
+            const timeout = parseFloat(card.querySelector('.driver-wifi-timeout').value) || 5;
+            if (host) {
+                if (!wifiConfig) {
+                    wifiConfig = {
+                        "poll-period": poll,
+                        timeout: timeout,
+                        inverters: []
+                    };
+                }
+                wifiConfig.inverters.push(host);
+            }
+        } else if (type === 'Solax-Modbus') {
+            const name = card.querySelector('.driver-modbus-name').value.trim();
+            const host = card.querySelector('.driver-modbus-host').value.trim();
+            const poll = parseInt(card.querySelector('.driver-modbus-poll').value) || 10;
+            const timeout = parseFloat(card.querySelector('.driver-modbus-timeout').value) || 5;
+            const pwdVal = card.querySelector('.driver-modbus-password').value.trim();
+            const pwd = pwdVal ? parseInt(pwdVal) : null;
+            const avg = parseInt(card.querySelector('.driver-modbus-avg').value) || 30;
+            if (name && host) {
+                if (!modbusConfig) {
+                    modbusConfig = {
+                        "poll-period": poll,
+                        timeout: timeout,
+                        "installer-password": pwd,
+                        "power-budget-avg-samples": avg,
+                        inverters: [],
+                        hostnames: []
+                    };
+                }
+                modbusConfig.inverters.push(name);
+                modbusConfig.hostnames.push(host);
+            }
+        } else if (type === 'Solax-XHybrid-Modbus') {
+            const name = card.querySelector('.driver-hybrid-name').value.trim();
+            const host = card.querySelector('.driver-hybrid-host').value.trim();
+            const poll = parseInt(card.querySelector('.driver-hybrid-poll').value) || 10;
+            const timeout = parseFloat(card.querySelector('.driver-hybrid-timeout').value) || 5;
+            const pwdVal = card.querySelector('.driver-hybrid-password').value.trim();
+            const pwd = pwdVal ? parseInt(pwdVal) : null;
+            const avg = parseInt(card.querySelector('.driver-hybrid-avg').value) || 30;
+            if (name && host) {
+                if (!hybridConfig) {
+                    hybridConfig = {
+                        "poll-period": poll,
+                        timeout: timeout,
+                        "installer-password": pwd,
+                        "power-budget-avg-samples": avg,
+                        inverters: [],
+                        hostnames: []
+                    };
+                }
+                hybridConfig.inverters.push(name);
+                hybridConfig.hostnames.push(host);
+            }
+        } else if (type === 'SDM630Modbusv2') {
+            const port = card.querySelector('.driver-sdm-port').value.trim();
+            const poll = parseInt(card.querySelector('.driver-sdm-poll').value) || 1;
+            const timeout = parseFloat(card.querySelector('.driver-sdm-timeout').value) || 1;
+            const baud = parseInt(card.querySelector('.driver-sdm-baud').value) || 38400;
+            const parity = card.querySelector('.driver-sdm-parity').value;
+            const stop = parseInt(card.querySelector('.driver-sdm-stop').value) || 1;
+            if (port) {
+                if (!sdmConfig) {
+                    sdmConfig = {
+                        "poll-period": poll,
+                        timeout: timeout,
+                        baud: baud,
+                        parity: parity,
+                        stopbits: stop,
+                        ports: []
+                    };
+                }
+                sdmConfig.ports.push(port);
+            }
+        } else if (type === 'DTSU666') {
+            const port = card.querySelector('.driver-dtsu-port').value.trim();
+            const poll = parseInt(card.querySelector('.driver-dtsu-poll').value) || 1;
+            const timeout = parseFloat(card.querySelector('.driver-dtsu-timeout').value) || 1;
+            const baud = parseInt(card.querySelector('.driver-dtsu-baud').value) || 9600;
+            const parity = card.querySelector('.driver-dtsu-parity').value;
+            const stop = parseInt(card.querySelector('.driver-dtsu-stop').value) || 1;
+            if (port) {
+                if (!dtsuConfig) {
+                    dtsuConfig = {
+                        "poll-period": poll,
+                        timeout: timeout,
+                        baud: baud,
+                        parity: parity,
+                        stopbits: stop,
+                        ports: []
+                    };
+                }
+                dtsuConfig.ports.push(port);
+            }
+        } else if (type === 'MQTTPowerMeter') {
+            const name = card.querySelector('.driver-mqtt-meter-name').value.trim();
+            const poll = parseInt(card.querySelector('.driver-mqtt-meter-poll').value) || 10;
+            const broker = card.querySelector('.driver-mqtt-meter-broker').value.trim();
+            const port = parseInt(card.querySelector('.driver-mqtt-meter-port').value) || 1883;
+            const user = card.querySelector('.driver-mqtt-meter-user').value.trim() || null;
+            const pass = card.querySelector('.driver-mqtt-meter-pass').value.trim() || null;
+            const topicTotal = card.querySelector('.driver-mqtt-meter-topic-total').value.trim() || null;
+            const topicP1 = card.querySelector('.driver-mqtt-meter-topic-p1').value.trim() || null;
+            const topicP2 = card.querySelector('.driver-mqtt-meter-topic-p2').value.trim() || null;
+            const topicP3 = card.querySelector('.driver-mqtt-meter-topic-p3').value.trim() || null;
+            if (name && broker) {
+                if (!mqttMeterConfig) {
+                    mqttMeterConfig = {
+                        "poll-period": poll,
+                        meters: []
+                    };
+                }
+                mqttMeterConfig.meters.push(name);
+                mqttMeterConfig[name] = {
+                    broker: broker,
+                    port: port,
+                    username: user,
+                    password: pass,
+                    topic_total: topicTotal,
+                    topic_phase1: topicP1,
+                    topic_phase2: topicP2,
+                    topic_phase3: topicP3
+                };
+            }
+        } else if (type === 'MQTTInverter') {
+            const name = card.querySelector('.driver-mqtt-inv-name').value.trim();
+            const broker = card.querySelector('.driver-mqtt-inv-broker').value.trim() || null;
+            const port = parseInt(card.querySelector('.driver-mqtt-inv-port').value) || 1883;
+            const user = card.querySelector('.driver-mqtt-inv-user').value.trim() || null;
+            const pass = card.querySelector('.driver-mqtt-inv-pass').value.trim() || null;
+            const topicPV1Power = card.querySelector('.driver-mqtt-inv-topic-pv1-power').value.trim() || null;
+            const topicPV2Power = card.querySelector('.driver-mqtt-inv-topic-pv2-power').value.trim() || null;
+            const topicPV1Volt = card.querySelector('.driver-mqtt-inv-topic-pv1-voltage').value.trim() || null;
+            const topicPV2Volt = card.querySelector('.driver-mqtt-inv-topic-pv2-voltage').value.trim() || null;
+            const topicPV1Curr = card.querySelector('.driver-mqtt-inv-topic-pv1-current').value.trim() || null;
+            const topicPV2Curr = card.querySelector('.driver-mqtt-inv-topic-pv2-current').value.trim() || null;
+            const topicGridVolt = card.querySelector('.driver-mqtt-inv-topic-grid-voltage').value.trim() || null;
+            const topicGridCurr = card.querySelector('.driver-mqtt-inv-topic-grid-current').value.trim() || null;
+            const topicGridPow = card.querySelector('.driver-mqtt-inv-topic-grid-power').value.trim() || null;
+            const topicFreq = card.querySelector('.driver-mqtt-inv-topic-frequency').value.trim() || null;
+            const topicTemp = card.querySelector('.driver-mqtt-inv-topic-temperature').value.trim() || null;
+            const topicEnergyToday = card.querySelector('.driver-mqtt-inv-topic-energy-today').value.trim() || null;
+            const topicEnergyTotal = card.querySelector('.driver-mqtt-inv-topic-energy-total').value.trim() || null;
+            const topicBatCap = card.querySelector('.driver-mqtt-inv-topic-battery-capacity').value.trim() || null;
+            const topicBatPow = card.querySelector('.driver-mqtt-inv-topic-battery-power').value.trim() || null;
 
-    // XHybrid Inverter
-    if (document.getElementById('hybrid-enable').checked) {
-        cfg["Solax-XHybrid-Modbus"] = {
-            "poll-period": parseInt(document.getElementById('hybrid-poll').value) || 10,
-            timeout: parseInt(document.getElementById('hybrid-timeout').value) || 5,
-            "installer-password": parseInt(document.getElementById('hybrid-pwd').value) || null,
-            "power-budget-avg-samples": parseInt(document.getElementById('hybrid-avg').value) || 30,
-            inverters: parseCommaList(document.getElementById('hybrid-inverters').value),
-            hostnames: parseCommaList(document.getElementById('hybrid-hostnames').value)
-        };
-    } else {
-        cfg["Solax-XHybrid-Modbus"] = null;
-    }
+            if (name) {
+                if (!mqttInverterConfig) {
+                    mqttInverterConfig = {
+                        inverters: []
+                    };
+                }
+                mqttInverterConfig.inverters.push(name);
+                mqttInverterConfig[name] = {
+                    broker: broker,
+                    port: port,
+                    username: user,
+                    password: pass,
+                    topic_pv1_power: topicPV1Power,
+                    topic_pv2_power: topicPV2Power,
+                    topic_pv1_voltage: topicPV1Volt,
+                    topic_pv2_voltage: topicPV2Volt,
+                    topic_pv1_current: topicPV1Curr,
+                    topic_pv2_current: topicPV2Curr,
+                    topic_grid_voltage: topicGridVolt,
+                    topic_grid_current: topicGridCurr,
+                    topic_grid_power: topicGridPow,
+                    topic_frequency: topicFreq,
+                    topic_temperature: topicTemp,
+                    topic_energy_today: topicEnergyToday,
+                    topic_energy_total: topicEnergyTotal,
+                    topic_battery_capacity: topicBatCap,
+                    topic_battery_power: topicBatPow
+                };
+            }
+        }
+    });
 
-    // SDM630 Meter
-    if (document.getElementById('sdm-enable').checked) {
-        cfg.SDM630Modbusv2 = {
-            "poll-period": parseInt(document.getElementById('sdm-poll').value) || 1,
-            timeout: parseInt(document.getElementById('sdm-timeout').value) || 1,
-            baud: parseInt(document.getElementById('sdm-baud').value) || 38400,
-            parity: document.getElementById('sdm-parity').value || 'E',
-            stopbits: parseInt(document.getElementById('sdm-stop').value) || 1,
-            ports: parseCommaList(document.getElementById('sdm-ports').value)
-        };
-    } else {
-        cfg.SDM630Modbusv2 = null;
-    }
-
-    // DTSU666 Meter
-    if (document.getElementById('dtsu-enable').checked) {
-        cfg.DTSU666 = {
-            "poll-period": parseInt(document.getElementById('dtsu-poll').value) || 1,
-            timeout: parseInt(document.getElementById('dtsu-timeout').value) || 1,
-            baud: parseInt(document.getElementById('dtsu-baud').value) || 9600,
-            parity: document.getElementById('dtsu-parity').value || 'N',
-            stopbits: parseInt(document.getElementById('dtsu-stop').value) || 1,
-            ports: parseCommaList(document.getElementById('dtsu-ports').value)
-        };
-    } else {
-        cfg.DTSU666 = null;
-    }
-
-    // MQTT Custom Meter
-    if (document.getElementById('mqtt-meter-enable').checked) {
-        const mName = document.getElementById('mqtt-meter-name').value || "MainsMeter";
-        cfg.MQTTPowerMeter = {
-            "poll-period": parseInt(document.getElementById('mqtt-meter-poll').value) || 10,
-            meters: [mName],
-            meter_devices: {}
-        };
-        cfg.MQTTPowerMeter.meter_devices[mName] = {
-            broker: document.getElementById('mqtt-meter-broker').value,
-            port: parseInt(document.getElementById('mqtt-meter-port').value) || 1883,
-            username: document.getElementById('mqtt-meter-user').value || null,
-            password: document.getElementById('mqtt-meter-pass').value || null,
-            topic_total: document.getElementById('mqtt-meter-topic-total').value || null,
-            topic_phase1: document.getElementById('mqtt-meter-topic-p1').value || null,
-            topic_phase2: document.getElementById('mqtt-meter-topic-p2').value || null,
-            topic_phase3: document.getElementById('mqtt-meter-topic-p3').value || null
-        };
-    } else {
-        cfg.MQTTPowerMeter = null;
-    }
+    cfg["Solax-Wifi"] = wifiConfig;
+    cfg["Solax-Modbus"] = modbusConfig;
+    cfg["Solax-XHybrid-Modbus"] = hybridConfig;
+    cfg.SDM630Modbusv2 = sdmConfig;
+    cfg.DTSU666 = dtsuConfig;
+    cfg.MQTTPowerMeter = mqttMeterConfig;
+    cfg.MQTTInverter = mqttInverterConfig;
 
     // Battery Control
     if (document.getElementById('battery-enable').checked) {
@@ -1439,6 +2342,9 @@ async function saveConfiguration() {
                     phase: parseInt(card.querySelector('.inv-phase').value) || 1,
                     "max-charge": parseFloat(card.querySelector('.inv-max-charge').value) || 2000.0,
                     "max-discharge": parseFloat(card.querySelector('.inv-max-discharge').value) || 2000.0,
+                    "battery-capacity": parseFloat(card.querySelector('.inv-battery-capacity').value) || 0.0,
+                    "max-charge-pct": parseInt(card.querySelector('.inv-max-charge-pct').value) || 100,
+                    "min-charge-pct": parseInt(card.querySelector('.inv-min-charge-pct').value) || 10,
                     "use-total-power": card.querySelector('.inv-use-total').checked,
                     "control-grid-power": card.querySelector('.inv-grid-control').checked
                 };
@@ -1461,6 +2367,49 @@ async function saveConfiguration() {
                 };
             }
         });
+
+        // Compile Tariff
+        const tType = document.getElementById('tariff-type').value;
+        if (tType === 'flat') {
+            cfg["Solax-BatteryControl"].tariff = {
+                type: 'flat',
+                "import-rate": parseFloat(document.getElementById('flat-import-rate').value) || 0.0,
+                "export-rate": parseFloat(document.getElementById('flat-export-rate').value) || 0.0
+            };
+        } else if (tType === 'tou') {
+            const periods = [];
+            document.querySelectorAll('.tariff-tou-period-card').forEach(card => {
+                const name = card.querySelector('.tariff-period-name').value.trim();
+                if (name) {
+                    periods.push({
+                        name: name,
+                        start: card.querySelector('.tariff-period-start').value.trim() || "00:00:00",
+                        end: card.querySelector('.tariff-period-end').value.trim() || "23:59:59",
+                        "import-rate": parseFloat(card.querySelector('.tariff-period-import').value) || 0.0,
+                        "export-rate": parseFloat(card.querySelector('.tariff-period-export').value) || 0.0
+                    });
+                }
+            });
+            cfg["Solax-BatteryControl"].tariff = {
+                type: 'tou',
+                periods: periods
+            };
+        } else if (tType === 'amber') {
+            const apiUrlVal = document.getElementById('amber-api-url').value.trim();
+            cfg["Solax-BatteryControl"].tariff = {
+                type: 'amber',
+                "api-key": document.getElementById('amber-api-key').value.trim(),
+                "site-id": document.getElementById('amber-site-id').value.trim(),
+                "api-url": apiUrlVal || null,
+                "negative-export-prevent": document.getElementById('amber-neg-export-prevent').checked,
+                "low-price-charge": document.getElementById('amber-low-price-charge').checked,
+                "low-price-threshold": parseFloat(document.getElementById('amber-low-price-threshold').value) || 0.0,
+                "high-price-discharge": document.getElementById('amber-high-price-discharge').checked,
+                "high-price-threshold": parseFloat(document.getElementById('amber-high-price-threshold').value) || 0.0
+            };
+        } else {
+            cfg["Solax-BatteryControl"].tariff = null;
+        }
     } else {
         cfg["Solax-BatteryControl"] = null;
     }
@@ -1469,7 +2418,7 @@ async function saveConfiguration() {
     if (document.getElementById('emon-enable').checked) {
         cfg.emoncms = {
             server: document.getElementById('emon-server').value,
-            timeout: parseInt(document.getElementById('emon-timeout').value) || 5,
+            timeout: parseFloat(document.getElementById('emon-timeout').value) || 5,
             api_key: document.getElementById('emon-api').value
         };
     } else {
@@ -1509,10 +2458,154 @@ async function saveConfiguration() {
     }
 }
 
+function triggerImportConfig() {
+    document.getElementById('import-config-file').click();
+}
+
+async function handleImportConfig(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    // Reset input so upload can be re-triggered for the same file
+    event.target.value = '';
+
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        const tomlText = e.target.result;
+        try {
+            const resp = await fetch('/api/config/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: tomlText
+            });
+            if (resp.ok) {
+                const parsedConfig = await resp.json();
+                loadConfig(parsedConfig);
+                alert("Configuration imported successfully! Review the imported settings and click 'Apply Changes' to save them permanently.");
+            } else {
+                const err = await resp.text();
+                alert(`Failed to parse configuration: ${err}`);
+            }
+        } catch (err) {
+            alert(`Error importing configuration: ${err}`);
+        }
+    };
+    reader.onerror = function() {
+        alert("Error reading file.");
+    };
+    reader.readAsText(file);
+}
+
+async function testMqttConnection() {
+    const btn = document.getElementById('btn-mqtt-test');
+    const resultEl = document.getElementById('mqtt-test-result');
+    
+    const broker = document.getElementById('mqtt-broker').value.trim();
+    if (!broker) {
+        resultEl.innerText = "Error: Broker Hostname / IP is required.";
+        resultEl.style.color = "var(--danger)";
+        return;
+    }
+    
+    const port = parseInt(document.getElementById('mqtt-port').value, 10) || 1883;
+    const username = document.getElementById('mqtt-username').value.trim() || null;
+    const password = document.getElementById('mqtt-password').value.trim() || null;
+    const baseTopic = document.getElementById('mqtt-base').value.trim() || "sensors";
+    const haDiscovery = document.getElementById('mqtt-ha-discovery').checked;
+    const haPrefix = document.getElementById('mqtt-ha-prefix').value.trim() || "homeassistant";
+    
+    // Disable button & show loading status
+    btn.disabled = true;
+    const originalText = btn.innerText;
+    btn.innerText = "Testing...";
+    
+    resultEl.innerText = "Connecting & testing permissions...";
+    resultEl.style.color = "var(--text-muted)";
+    
+    try {
+        const payload = {
+            "broker": broker,
+            "port": port,
+            "base-topic": baseTopic,
+            "username": username,
+            "password": password,
+            "home-assistant-discovery": haDiscovery,
+            "home-assistant-prefix": haPrefix
+        };
+        
+        const response = await fetch('/api/mqtt/test', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(payload)
+        });
+        
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(errText || `Server returned status ${response.status}`);
+        }
+        
+        const data = await response.json();
+        if (data.connected && !data.error) {
+            resultEl.innerText = "Success: MQTT connection and all permissions verified!";
+            resultEl.style.color = "var(--accent)";
+        } else {
+            resultEl.innerText = `Failed: ${data.error || "Unknown error"}`;
+            resultEl.style.color = "var(--danger)";
+        }
+    } catch (e) {
+        resultEl.innerText = `Connection test failed: ${e.message}`;
+        resultEl.style.color = "var(--danger)";
+    } finally {
+        btn.disabled = false;
+        btn.innerText = originalText;
+    }
+}
+
+// Update age counters for mains and inverters
+function updateAgeCounters() {
+    const now = Math.floor(Date.now() / 1000);
+    
+    // Update mains/grid age
+    const mainsUpdatedEl = document.getElementById('stat-mains-updated');
+    if (mainsUpdatedEl) {
+        const tsAttr = mainsUpdatedEl.getAttribute('data-timestamp');
+        if (tsAttr) {
+            const ts = parseInt(tsAttr, 10);
+            const diff = now - ts;
+            if (diff >= 0) {
+                mainsUpdatedEl.innerText = `last updated: ${diff} second${diff === 1 ? '' : 's'} ago`;
+            } else {
+                mainsUpdatedEl.innerText = `last updated: just now`;
+            }
+        } else {
+            mainsUpdatedEl.innerText = '';
+        }
+    }
+    
+    // Update inverter ages
+    document.querySelectorAll('.inverter-age').forEach(el => {
+        const tsAttr = el.getAttribute('data-timestamp');
+        if (tsAttr) {
+            const ts = parseInt(tsAttr, 10);
+            const diff = now - ts;
+            if (diff >= 0) {
+                el.innerText = `last updated: ${diff} second${diff === 1 ? '' : 's'} ago`;
+            } else {
+                el.innerText = `last updated: just now`;
+            }
+        } else {
+            el.innerText = '';
+        }
+    });
+}
+
 // Initialize UI
 window.addEventListener('load', () => {
     loadConfig();
     fetchStatus();
     setInterval(fetchStatus, 3000); // Poll status every 3s
+    setInterval(updateAgeCounters, 1000); // Update elapsed age counters every 1s
 });
 "###;
