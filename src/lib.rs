@@ -7,8 +7,10 @@
 )]
 
 pub mod config;
+pub mod csv_importer;
 pub mod mqtt_helper;
 pub mod drivers {
+    pub mod mqtt_inverter;
     pub mod mqtt_meter;
     pub mod serial_meters;
     pub mod solax_modbus;
@@ -16,5 +18,6 @@ pub mod drivers {
 }
 pub mod forwarders;
 pub mod power_manager;
+pub mod tariff_manager;
 pub mod web_assets;
 pub mod web_server;

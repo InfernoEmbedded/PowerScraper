@@ -4,8 +4,19 @@ use serde_json::json;
 use std::time::Duration;
 
 pub fn create_mqtt_client(client_id: &str, config: &MqttBrokerConfig) -> (AsyncClient, EventLoop) {
+    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .or_else(|_| std::fs::read_to_string("/etc/hostname"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unknown-host".to_string());
+    let pid = std::process::id();
+    let unique_client_id = if client_id.is_empty() {
+        format!("PowerScraper-{}-{}", hostname, pid)
+    } else {
+        format!("PowerScraper-{}-{}-{}", hostname, pid, client_id)
+    };
+
     let port = config.port.unwrap_or(1883);
-    let mut options = MqttOptions::new(client_id, &config.broker, port);
+    let mut options = MqttOptions::new(unique_client_id, &config.broker, port);
     options.set_keep_alive(Duration::from_secs(60));
     if let (Some(username), Some(password)) = (&config.username, &config.password) {
         if !username.is_empty() {
@@ -56,6 +67,13 @@ pub fn build_discovery_payload(
             "identifiers": ["powerscraper_power_manager"],
             "name": "PowerScraper Power Manager",
             "model": "PowerScraper Power Manager",
+            "manufacturer": "PowerScraper"
+        })
+    } else if device_name == "aggregate" {
+        json!({
+            "identifiers": ["powerscraper_aggregate"],
+            "name": "PowerScraper Aggregate Sensors",
+            "model": "PowerScraper Aggregate Sensors",
             "manufacturer": "PowerScraper"
         })
     } else {
@@ -145,7 +163,18 @@ pub fn build_discovery_payload(
 
         // Deduce device class, unit, and state class
         let m_lower = metric_name.to_lowercase();
-        if m_lower.contains("voltage") || m_lower.contains("v_phase") {
+        let is_aggregate = device_name == "aggregate"
+            && (m_lower == "total solar production"
+                || m_lower == "total grid power used for charging"
+                || m_lower == "total consumption"
+                || m_lower == "total charging"
+                || m_lower == "total discharging");
+
+        if is_aggregate {
+            val_payload["unit_of_measurement"] = json!("W");
+            val_payload["device_class"] = json!("power");
+            val_payload["state_class"] = json!("measurement");
+        } else if m_lower.contains("voltage") || m_lower.contains("v_phase") {
             val_payload["unit_of_measurement"] = json!("V");
             val_payload["device_class"] = json!("voltage");
             val_payload["state_class"] = json!("measurement");
@@ -288,6 +317,16 @@ mod tests {
             build_discovery_payload(&mqtt_config, "inverter1", "EPS VA", false).unwrap();
         assert_eq!(payload["unit_of_measurement"], "VA");
         assert_eq!(payload["device_class"], "apparent_power");
+
+        // Aggregate metric (Total Solar Production)
+        let (_, topic, payload) =
+            build_discovery_payload(&mqtt_config, "aggregate", "Total Solar Production", false)
+                .unwrap();
+        assert_eq!(topic, "ha/sensor/aggregate/total_solar_production/config");
+        assert_eq!(payload["unit_of_measurement"], "W");
+        assert_eq!(payload["device_class"], "power");
+        assert_eq!(payload["state_class"], "measurement");
+        assert_eq!(payload["device"]["name"], "PowerScraper Aggregate Sensors");
     }
 
     #[test]

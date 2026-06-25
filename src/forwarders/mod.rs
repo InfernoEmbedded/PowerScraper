@@ -100,7 +100,7 @@ pub async fn run_forwarders_task(
                                 res = client
                                     .get(&emon_url)
                                     .query(&query_params)
-                                    .timeout(Duration::from_secs(timeout_sec))
+                                    .timeout(Duration::from_secs_f64(timeout_sec))
                                     .send() => {
                                         match res {
                                             Ok(resp) => {
