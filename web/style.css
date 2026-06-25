@@ -129,6 +129,29 @@ h1 {
     transform: translateY(0);
 }
 
+.btn-import {
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-main);
+    border: 1px solid var(--border-color);
+    padding: 12px 24px;
+    border-radius: 10px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+}
+
+.btn-import:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.btn-import:active {
+    transform: translateY(0);
+}
+
 /* Tabs container */
 .tab-content {
     display: none;
@@ -351,4 +374,97 @@ h1 {
     font-size: 15px;
     font-weight: 600;
     color: #fff;
+}
+
+/* Modal styles */
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: modalFadeIn 0.2s ease-out;
+}
+
+.modal-content {
+    width: 90%;
+    max-width: 450px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+    animation: modalContentSlide 0.2s ease-out;
+}
+
+@keyframes modalFadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes modalContentSlide {
+    from { transform: scale(0.95); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+/* Delete / Remove driver button styles */
+.delete-btn {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.delete-btn:hover {
+    background: rgba(239, 68, 68, 0.3);
+    border-color: #ef4444;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+
+.stat-updated {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 4px;
+    font-weight: 500;
+}
+
+/* Custom Grid Target Range Slider styling */
+input[type="range"]#instant-target-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    background: linear-gradient(to right, var(--accent) 0%, var(--danger) 100%);
+    height: 8px;
+    border-radius: 4px;
+    outline: none;
+    transition: all 0.3s ease;
+}
+
+input[type="range"]#instant-target-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #fff;
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(0, 0, 0, 0.4);
+    transition: transform 0.1s ease, background-color 0.2s ease;
+    border: 2px solid var(--card-bg);
+}
+
+input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+}
+
+/* Color transitions for target value input box (scrollbox) */
+#instant-target-val {
+    transition: color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }

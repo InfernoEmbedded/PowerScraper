@@ -41,29 +41,58 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
                 Forwarders
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-tariff', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
+                Electricity Tariff
+            </button>
         </nav>
     </aside>
 
     <main>
         <header>
             <h1 id="page-title">System Dashboard</h1>
-            <button class="btn-apply" onclick="saveConfiguration()">Apply Changes</button>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-import" onclick="triggerImportConfig()">Import Config</button>
+                <input type="file" id="import-config-file" accept=".toml" style="display: none;" onchange="handleImportConfig(event)">
+                <button class="btn-apply" onclick="saveConfiguration()">Apply Changes</button>
+            </div>
         </header>
 
         <!-- DASHBOARD TAB -->
         <div id="tab-dashboard" class="tab-content active">
             <div class="grid-3">
                 <div class="glass-card">
-                    <div class="card-title">Mains Grid Power</div>
+                    <div class="card-title">Current Grid Power</div>
                     <div class="stat-val" id="stat-mains">0 W</div>
+                    <div class="stat-updated" id="stat-mains-updated"></div>
                 </div>
                 <div class="glass-card">
                     <div class="card-title">Power Manager Mode</div>
                     <div class="stat-val" id="stat-mode" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">Auto</div>
                 </div>
                 <div class="glass-card">
-                    <div class="card-title">Grid Regulate Target</div>
-                    <div class="stat-val" id="stat-target" style="color: var(--warning); text-shadow: 0 0 10px rgba(245,158,11,0.2);">0 W</div>
+                    <div class="card-title">Grid Target</div>
+                    <div class="stat-val" id="stat-target">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Total Inverter Grid Interaction</div>
+                    <div class="stat-val" id="stat-total-inverter">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Total Solar Power</div>
+                    <div class="stat-val" id="stat-total-solar" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Import Price</div>
+                    <div class="stat-val" id="stat-import-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Export Price</div>
+                    <div class="stat-val" id="stat-export-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">MQTT Status</div>
+                    <div class="stat-val" id="stat-mqtt-status" style="color: var(--danger); text-shadow: 0 0 10px rgba(239, 68, 68, 0.2);">Disconnected</div>
                 </div>
             </div>
 
@@ -81,6 +110,10 @@
                     <div class="mode-card" id="mode-feedin" onclick="setInstantMode('MaximumFeedin')">
                         <h3>Maximum Feedin</h3>
                         <p>Force maximum battery discharge rate</p>
+                    </div>
+                    <div class="mode-card" id="mode-optimise" onclick="setInstantMode('OptimiseTariff')">
+                        <h3>Optimise Tariff</h3>
+                        <p>Optimize battery schedules based on pricing</p>
                     </div>
                 </div>
                 <div class="form-group" style="margin-top: 10px;">
@@ -141,275 +174,22 @@
                         <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
                     </div>
                 </div>
+                <div style="margin-top: 25px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                    <button class="sub-btn" id="btn-mqtt-test" onclick="testMqttConnection()">Test MQTT Connection</button>
+                    <span id="mqtt-test-result" style="font-weight: 500; font-size: 0.9rem; transition: all 0.3s ease;"></span>
+                </div>
             </div>
         </div>
 
         <!-- HARDWARE DRIVERS TAB -->
         <div id="tab-hardware" class="tab-content">
-            <!-- SolaX Wifi -->
-            <div class="glass-card">
-                <div class="card-title">
-                    SolaX Wi-Fi HTTP API
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="wifi-enable" onchange="toggleFormSection('wifi-section', this.checked)">
-                        <label for="wifi-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="wifi-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="wifi-poll">Poll Period (seconds)</label>
-                            <input type="number" id="wifi-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="wifi-timeout">Request Timeout (seconds)</label>
-                            <input type="number" id="wifi-timeout">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="wifi-inverters">WiFi Inverters (IPs or Hostnames, comma separated)</label>
-                        <input type="text" id="wifi-inverters" placeholder="e.g. 192.168.1.15, 192.168.1.16">
-                    </div>
-                </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="margin: 0; font-size: 1.2rem; font-weight: 600; color: var(--text);">Configured Hardware Drivers</h2>
+                <button class="sub-btn" onclick="showAddDriverModal()">+ Add Driver</button>
             </div>
-
-            <!-- SolaX Modbus -->
-            <div class="glass-card">
-                <div class="card-title">
-                    SolaX Modbus TCP (Standard)
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="modbus-enable" onchange="toggleFormSection('modbus-section', this.checked)">
-                        <label for="modbus-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="modbus-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="modbus-poll">Poll Period (seconds)</label>
-                            <input type="number" id="modbus-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="modbus-timeout">Timeout (seconds)</label>
-                            <input type="number" id="modbus-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="modbus-pwd">Installer Password</label>
-                            <input type="number" id="modbus-pwd">
-                        </div>
-                        <div class="form-group">
-                            <label for="modbus-avg">Power Budget Avg Samples</label>
-                            <input type="number" id="modbus-avg">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="modbus-inverters">Inverters List (Comma separated names)</label>
-                            <input type="text" id="modbus-inverters" placeholder="e.g. solax1, solax2">
-                        </div>
-                        <div class="form-group">
-                            <label for="modbus-hostnames">Hostnames/Endpoints (Comma separated host:port)</label>
-                            <input type="text" id="modbus-hostnames" placeholder="e.g. 192.168.1.20:502, 192.168.1.21:502">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- SolaX XHybrid Modbus -->
-            <div class="glass-card">
-                <div class="card-title">
-                    SolaX XHybrid Modbus TCP
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="hybrid-enable" onchange="toggleFormSection('hybrid-section', this.checked)">
-                        <label for="hybrid-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="hybrid-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="hybrid-poll">Poll Period (seconds)</label>
-                            <input type="number" id="hybrid-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="hybrid-timeout">Timeout (seconds)</label>
-                            <input type="number" id="hybrid-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="hybrid-pwd">Installer Password</label>
-                            <input type="number" id="hybrid-pwd">
-                        </div>
-                        <div class="form-group">
-                            <label for="hybrid-avg">Power Budget Avg Samples</label>
-                            <input type="number" id="hybrid-avg">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="hybrid-inverters">Inverters List (Comma separated names)</label>
-                            <input type="text" id="hybrid-inverters" placeholder="e.g. solax-x1">
-                        </div>
-                        <div class="form-group">
-                            <label for="hybrid-hostnames">Hostnames/Endpoints (Comma separated host:port)</label>
-                            <input type="text" id="hybrid-hostnames" placeholder="e.g. 192.168.1.25:502">
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- SDM630 Meter -->
-            <div class="glass-card">
-                <div class="card-title">
-                    Eastron SDM630 Serial Meter
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="sdm-enable" onchange="toggleFormSection('sdm-section', this.checked)">
-                        <label for="sdm-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="sdm-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="sdm-poll">Poll Period (seconds)</label>
-                            <input type="number" id="sdm-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="sdm-timeout">Timeout (seconds)</label>
-                            <input type="number" id="sdm-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="sdm-baud">Baud Rate</label>
-                            <input type="number" id="sdm-baud" placeholder="38400">
-                        </div>
-                        <div class="form-group">
-                            <label for="sdm-parity">Parity</label>
-                            <select id="sdm-parity">
-                                <option value="N">None (N)</option>
-                                <option value="E">Even (E)</option>
-                                <option value="O">Odd (O)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="sdm-stop">Stop Bits</label>
-                            <input type="number" id="sdm-stop" placeholder="1">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="sdm-ports">Serial Port TTY Paths (Comma separated)</label>
-                        <input type="text" id="sdm-ports" placeholder="e.g. /dev/ttyUSB0">
-                    </div>
-                </div>
-            </div>
-
-            <!-- DTSU666 Meter -->
-            <div class="glass-card">
-                <div class="card-title">
-                    Chint DTSU666 Serial Meter
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="dtsu-enable" onchange="toggleFormSection('dtsu-section', this.checked)">
-                        <label for="dtsu-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="dtsu-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="dtsu-poll">Poll Period (seconds)</label>
-                            <input type="number" id="dtsu-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="dtsu-timeout">Timeout (seconds)</label>
-                            <input type="number" id="dtsu-timeout">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="dtsu-baud">Baud Rate</label>
-                            <input type="number" id="dtsu-baud" placeholder="9600">
-                        </div>
-                        <div class="form-group">
-                            <label for="dtsu-parity">Parity</label>
-                            <select id="dtsu-parity">
-                                <option value="N">None (N)</option>
-                                <option value="E">Even (E)</option>
-                                <option value="O">Odd (O)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label for="dtsu-stop">Stop Bits</label>
-                            <input type="number" id="dtsu-stop" placeholder="1">
-                        </div>
-                    </div>
-                    <div class="form-group">
-                        <label for="dtsu-ports">Serial Port TTY Paths (Comma separated)</label>
-                        <input type="text" id="dtsu-ports" placeholder="e.g. /dev/ttyUSB1">
-                    </div>
-                </div>
-            </div>
-
-            <!-- MQTT Custom Power Meter -->
-            <div class="glass-card">
-                <div class="card-title">
-                    MQTT Custom Power Meter Bridge
-                    <div class="checkbox-group" style="margin: 0;">
-                        <input type="checkbox" id="mqtt-meter-enable" onchange="toggleFormSection('mqtt-meter-section', this.checked)">
-                        <label for="mqtt-meter-enable">Enable</label>
-                    </div>
-                </div>
-                <div id="mqtt-meter-section">
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-poll">Poll Period (seconds)</label>
-                            <input type="number" id="mqtt-meter-poll">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-name">Meter Name</label>
-                            <input type="text" id="mqtt-meter-name" placeholder="MainsMeter">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-broker">Broker IP/Hostname</label>
-                            <input type="text" id="mqtt-meter-broker">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-port">Broker Port</label>
-                            <input type="number" id="mqtt-meter-port" placeholder="1883">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-user">Username</label>
-                            <input type="text" id="mqtt-meter-user" placeholder="Optional">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-pass">Password</label>
-                            <input type="password" id="mqtt-meter-pass" placeholder="Optional">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-total">Total Power Topic</label>
-                            <input type="text" id="mqtt-meter-topic-total">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-p1">Phase 1 Topic</label>
-                            <input type="text" id="mqtt-meter-topic-p1">
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-p2">Phase 2 Topic</label>
-                            <input type="text" id="mqtt-meter-topic-p2">
-                        </div>
-                        <div class="form-group">
-                            <label for="mqtt-meter-topic-p3">Phase 3 Topic</label>
-                            <input type="text" id="mqtt-meter-topic-p3">
-                        </div>
-                    </div>
-                </div>
+            
+            <div id="drivers-list-container" style="display: flex; flex-direction: column; gap: 20px;">
+                <!-- Dynamic driver cards will be rendered here -->
             </div>
         </div>
 
@@ -445,6 +225,7 @@
                                 <option value="Auto">Auto</option>
                                 <option value="ChargeBatteries">Charge Batteries</option>
                                 <option value="MaximumFeedin">Maximum Feedin</option>
+                                <option value="OptimiseTariff">Optimise Tariff</option>
                             </select>
                         </div>
                     </div>
@@ -551,7 +332,126 @@
                 </div>
             </div>
         </div>
+
+        <!-- ELECTRICITY TARIFF TAB -->
+        <div id="tab-tariff" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">Electricity Tariff Settings</div>
+                <div class="form-group">
+                    <label for="tariff-type">Tariff Structure / API Mode</label>
+                    <select id="tariff-type" onchange="toggleTariffType(this.value)">
+                        <option value="none">Disabled (No pricing optimization)</option>
+                        <option value="flat">Flat Rate (Fixed import/export pricing)</option>
+                        <option value="tou">Time of Use (TOU) Periods</option>
+                        <option value="amber">Amber Electric API (Real-time wholesale pricing)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Flat Rate Configuration -->
+            <div class="glass-card tariff-section" id="tariff-section-flat" style="display: none;">
+                <div class="card-title">Flat Rate Pricing</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="flat-import-rate">Grid Import Rate (cents/kWh)</label>
+                        <input type="number" step="0.01" id="flat-import-rate" placeholder="e.g. 30.5">
+                    </div>
+                    <div class="form-group">
+                        <label for="flat-export-rate">Feed-in Export Rate (cents/kWh)</label>
+                        <input type="number" step="0.01" id="flat-export-rate" placeholder="e.g. 8.5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- TOU Configuration -->
+            <div class="glass-card tariff-section" id="tariff-section-tou" style="display: none;">
+                <div class="card-title">
+                    Time of Use (TOU) Periods
+                    <button class="sub-btn" onclick="addTariffTOUPeriod()">Add Period</button>
+                </div>
+                <div id="tariff-tou-periods-list">
+                    <!-- Dynamic TOU Periods List -->
+                </div>
+            </div>
+
+            <!-- Amber Electric Configuration -->
+            <div class="glass-card tariff-section" id="tariff-section-amber" style="display: none;">
+                <div class="card-title">Amber Electric API Integration</div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="amber-api-key">Amber API Key / Token</label>
+                        <input type="password" id="amber-api-key" placeholder="e.g. psk_...">
+                    </div>
+                    <div class="form-group">
+                        <label for="amber-site-id">Site ID</label>
+                        <input type="text" id="amber-site-id" placeholder="e.g. 01H...">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="amber-api-url">API Base URL Override</label>
+                        <input type="text" id="amber-api-url" placeholder="https://api.amber.com.au (Optional)">
+                    </div>
+                </div>
+
+                <div class="card-title" style="margin-top: 30px;">Amber Cost Optimization Rules</div>
+                
+                <div class="checkbox-group">
+                    <input type="checkbox" id="amber-neg-export-prevent">
+                    <label for="amber-neg-export-prevent">Enable Negative Export Prevention (stop exporting or charge when feed-in rate is negative)</label>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="amber-low-price-charge" onchange="toggleFormSection('amber-low-price-group', this.checked)">
+                        <label for="amber-low-price-charge">Enable Low-Price Forced Charging (charge battery from grid when import rate is low)</label>
+                    </div>
+                    <div id="amber-low-price-group" style="margin-top: 10px; margin-left: 25px;">
+                        <div class="form-group" style="max-width: 300px;">
+                            <label for="amber-low-price-threshold">Low-Price Threshold (cents/kWh)</label>
+                            <input type="number" step="0.01" id="amber-low-price-threshold" placeholder="e.g. 10.0">
+                        </div>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="amber-high-price-discharge" onchange="toggleFormSection('amber-high-price-group', this.checked)">
+                        <label for="amber-high-price-discharge">Enable High-Price Forced Discharging (force feed-in when export rate is premium)</label>
+                    </div>
+                    <div id="amber-high-price-group" style="margin-top: 10px; margin-left: 25px;">
+                        <div class="form-group" style="max-width: 300px;">
+                            <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)</label>
+                            <input type="number" step="0.01" id="amber-high-price-threshold" placeholder="e.g. 60.0">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </main>
+
+    <!-- Add Driver Modal -->
+    <div id="add-driver-modal" class="modal" style="display: none;">
+        <div class="modal-content glass-card">
+            <div class="card-title" style="margin-bottom: 15px;">Add New Driver</div>
+            <div class="form-group">
+                <label for="new-driver-type">Driver Type</label>
+                <select id="new-driver-type" style="width: 100%; margin-top: 5px;">
+                    <option value="Solax-Wifi">SolaX Wi-Fi HTTP API</option>
+                    <option value="Solax-Modbus">SolaX Modbus TCP (Standard)</option>
+                    <option value="Solax-XHybrid-Modbus">SolaX XHybrid Modbus TCP</option>
+                    <option value="SDM630Modbusv2">Eastron SDM630 Serial Meter</option>
+                    <option value="DTSU666">Chint DTSU666 Serial Meter</option>
+                    <option value="MQTTPowerMeter">MQTT Custom Power Meter Bridge</option>
+                    <option value="MQTTInverter">MQTT Custom Inverter Bridge</option>
+                </select>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                <button class="sub-btn" style="background: rgba(255,255,255,0.05); color: var(--text);" onclick="closeAddDriverModal()">Cancel</button>
+                <button class="sub-btn" onclick="addDriverFromModal()">Add</button>
+            </div>
+        </div>
+    </div>
 
     <script src="/app.js"></script>
 </body>
