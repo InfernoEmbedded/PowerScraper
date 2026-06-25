@@ -1909,6 +1909,7 @@ pub fn run_historical_simulation_impl(
     struct SimTempGroup {
         solar: f64,
         load: Option<f64>,
+        battery: f64,
         import_price: Option<f64>,
         export_price: Option<f64>,
     }
@@ -1923,6 +1924,7 @@ pub fn run_historical_simulation_impl(
         let entry = groups.entry(ts).or_insert(SimTempGroup {
             solar: 0.0,
             load: None,
+            battery: 0.0,
             import_price: None,
             export_price: None,
         });
@@ -1931,6 +1933,8 @@ pub fn run_historical_simulation_impl(
             entry.solar += val;
         } else if topic == format!("{}/Total system power", mains_source) {
             entry.load = Some(val);
+        } else if topic.ends_with("/Battery Power") {
+            entry.battery += val;
         } else if topic == "tariff/import_price" {
             entry.import_price = Some(val);
         } else if topic == "tariff/export_price" {
@@ -1973,11 +1977,14 @@ pub fn run_historical_simulation_impl(
             .map(|utc| utc.with_timezone(&chrono::Local))
             .unwrap_or_else(|| chrono::Local::now());
 
+        let grid_w = g.load.unwrap();
+        let gross_load_w = (grid_w + g.solar + g.battery).max(0.0);
+
         records.push(SimCleanRecord {
             timestamp: ts,
             dt_local,
             solar_power_w: g.solar,
-            load_power_w: g.load.unwrap(),
+            load_power_w: gross_load_w,
             import_price_cents: g.import_price.unwrap_or(0.0),
             export_price_cents: g.export_price.unwrap_or(0.0),
             duration_hours,
