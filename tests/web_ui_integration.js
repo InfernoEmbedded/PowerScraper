@@ -177,6 +177,7 @@ async function main() {
             { btnText: 'TOU Periods', expectedTitle: 'TOU Periods', tabId: 'tab-periods' },
             { btnText: 'Forwarders', expectedTitle: 'Forwarders', tabId: 'tab-forwarders' },
             { btnText: 'Electricity Tariff', expectedTitle: 'Electricity Tariff', tabId: 'tab-tariff' },
+            { btnText: 'Simulation', expectedTitle: 'Simulation', tabId: 'tab-simulation' },
             { btnText: 'Dashboard', expectedTitle: 'System Dashboard', tabId: 'tab-dashboard' }
         ];
 
