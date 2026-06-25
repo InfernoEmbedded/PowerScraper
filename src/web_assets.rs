@@ -490,6 +490,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                             <thead>
                                 <tr style="border-bottom: 2px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 0.9rem;">
                                     <th style="padding: 12px 15px; font-weight: 600;">Control Model</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Usage (kWh)</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Solar Gen (kWh)</th>
                                     <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Import (kWh)</th>
                                     <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Export (kWh)</th>
                                     <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Cycles</th>
@@ -2802,6 +2804,8 @@ async function runHistoricalSimulation() {
             return `
                 <tr style="border-bottom: 1px solid var(--border-color);">
                     <td style="padding: 12px 15px; font-weight: 500; color: #fff;">${m.name}</td>
+                    <td style="padding: 12px 15px; text-align: right;">${data.total_usage_kwh.toFixed(1)}</td>
+                    <td style="padding: 12px 15px; text-align: right;">${data.total_solar_kwh.toFixed(1)}</td>
                     <td style="padding: 12px 15px; text-align: right;">${mData.import_kwh.toFixed(1)}</td>
                     <td style="padding: 12px 15px; text-align: right;">${mData.export_kwh.toFixed(1)}</td>
                     <td style="padding: 12px 15px; text-align: right;">${m.isBaseline ? '-' : mData.cycles.toFixed(1)}</td>

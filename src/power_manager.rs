@@ -1847,6 +1847,8 @@ pub struct SimulationResponse {
     pub start_date: String,
     pub end_date: String,
     pub records_simulated: usize,
+    pub total_solar_kwh: f64,
+    pub total_usage_kwh: f64,
     pub no_battery: SimulationResultModel,
     pub baseline: SimulationResultModel,
     pub smart_heuristic: SimulationResultModel,
@@ -2420,10 +2422,19 @@ pub fn run_historical_simulation(db_path: &str, range: &str) -> Result<Simulatio
         net_bill: adapt_energy_cost + adapt_demand,
     };
 
+    let mut total_solar_kwh = 0.0;
+    let mut total_usage_kwh = 0.0;
+    for r in &records {
+        total_solar_kwh += (r.solar_power_w / 1000.0) * r.duration_hours;
+        total_usage_kwh += (r.load_power_w / 1000.0) * r.duration_hours;
+    }
+
     Ok(SimulationResponse {
         start_date,
         end_date,
         records_simulated,
+        total_solar_kwh,
+        total_usage_kwh,
         no_battery: no_battery_res,
         baseline: baseline_res,
         smart_heuristic: smart_heuristic_res,

@@ -1721,6 +1721,8 @@ async function runHistoricalSimulation() {
             return `
                 <tr style="border-bottom: 1px solid var(--border-color);">
                     <td style="padding: 12px 15px; font-weight: 500; color: #fff;">${m.name}</td>
+                    <td style="padding: 12px 15px; text-align: right;">${data.total_usage_kwh.toFixed(1)}</td>
+                    <td style="padding: 12px 15px; text-align: right;">${data.total_solar_kwh.toFixed(1)}</td>
                     <td style="padding: 12px 15px; text-align: right;">${mData.import_kwh.toFixed(1)}</td>
                     <td style="padding: 12px 15px; text-align: right;">${mData.export_kwh.toFixed(1)}</td>
                     <td style="padding: 12px 15px; text-align: right;">${m.isBaseline ? '-' : mData.cycles.toFixed(1)}</td>
