@@ -18,3 +18,5 @@ axum = "0.7"
 tower-http = { version = "0.5", features = ["cors"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio-util = "0.7"
+csv = "1.3"
+
