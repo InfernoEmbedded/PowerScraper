@@ -45,6 +45,10 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                 Electricity Tariff
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-simulation', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="18" y="3" width="4" height="18" rx="1"></rect><rect x="10" y="8" width="4" height="13" rx="1"></rect><rect x="2" y="13" width="4" height="8" rx="1"></rect></svg>
+                Simulation
+            </button>
         </nav>
     </aside>
 
@@ -111,9 +115,17 @@
                         <h3>Maximum Feedin</h3>
                         <p>Force maximum battery discharge rate</p>
                     </div>
-                    <div class="mode-card" id="mode-optimise" onclick="setInstantMode('OptimiseTariff')">
-                        <h3>Optimise Tariff</h3>
-                        <p>Optimize battery schedules based on pricing</p>
+                    <div class="mode-card" id="mode-smart" onclick="setInstantMode('SmartHeuristic')">
+                        <h3>Smart Heuristic</h3>
+                        <p>Amber-aware & demand peak protection</p>
+                    </div>
+                    <div class="mode-card" id="mode-adaptive" onclick="setInstantMode('AdaptivePeakShaving')">
+                        <h3>Adaptive Peak Shaving</h3>
+                        <p>Monthly-budgeted demand peak shaving</p>
+                    </div>
+                    <div class="mode-card" id="mode-mpc" onclick="setInstantMode('MpcOptimizer')">
+                        <h3>Look-Ahead MPC</h3>
+                        <p>Predictive model predictive control</p>
                     </div>
                 </div>
                 <div class="form-group" style="margin-top: 10px;">
@@ -225,7 +237,9 @@
                                 <option value="Auto">Auto</option>
                                 <option value="ChargeBatteries">Charge Batteries</option>
                                 <option value="MaximumFeedin">Maximum Feedin</option>
-                                <option value="OptimiseTariff">Optimise Tariff</option>
+                                <option value="SmartHeuristic">Smart Heuristic</option>
+                                <option value="AdaptivePeakShaving">Adaptive Peak Shaving</option>
+                                <option value="MpcOptimizer">Look-Ahead MPC</option>
                             </select>
                         </div>
                     </div>
@@ -423,6 +437,100 @@
                         <div class="form-group" style="max-width: 300px;">
                             <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)</label>
                             <input type="number" step="0.01" id="amber-high-price-threshold" placeholder="e.g. 60.0">
+                        </div>
+                    </div>
+                </div>
+        </div>
+
+        <!-- SIMULATION TAB -->
+        <div id="tab-simulation" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">Historical Simulation & Optimization Model Comparison</div>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Run chronological simulations of different battery management strategies using your real historical telemetry logged in the local SQLite database.
+                </p>
+                <div class="form-row" style="align-items: flex-end;">
+                    <div class="form-group" style="max-width: 250px;">
+                        <label for="sim-range">Telemetry Historical Range</label>
+                        <select id="sim-range" style="width: 100%;">
+                            <option value="1d">Past 24 Hours</option>
+                            <option value="1w">Past 7 Days</option>
+                            <option value="1m" selected>Past 30 Days</option>
+                            <option value="1y">Past 1 Year</option>
+                            <option value="all">All Historic Telemetry</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn active" id="btn-run-simulation" onclick="runHistoricalSimulation()" style="height: 42px; padding: 0 25px;">
+                        Run Simulation
+                    </button>
+                </div>
+            </div>
+
+            <!-- LOADING SPINNER -->
+            <div id="sim-loading" style="display: none; text-align: center; padding: 40px;">
+                <div class="spinner" style="margin: 0 auto 15px auto;"></div>
+                <div style="font-weight: 500; font-size: 1.1rem; color: var(--primary);">Simulating battery control models...</div>
+                <div class="text-muted" style="font-size: 0.9rem; margin-top: 5px;">This may take a few seconds depending on the data size.</div>
+            </div>
+
+            <!-- SIMULATION RESULTS -->
+            <div id="sim-results" style="display: none;" class="fade-in">
+                <div class="glass-card">
+                    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <span>Simulation Metrics Summary</span>
+                        <span id="sim-period-badge" class="badge" style="background: rgba(81, 71, 229, 0.15); color: var(--primary); font-size: 0.85rem; padding: 5px 12px; border-radius: 20px;"></span>
+                    </div>
+                    
+                    <div style="overflow-x: auto; margin-top: 15px;">
+                        <table class="sim-table" style="width: 100%; border-collapse: collapse; text-align: left;">
+                            <thead>
+                                <tr style="border-bottom: 2px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 0.9rem;">
+                                    <th style="padding: 12px 15px; font-weight: 600;">Control Model</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Import (kWh)</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Export (kWh)</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Cycles</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Energy Cost</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right;">Demand Charges</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right; color: var(--primary);">Net Bill</th>
+                                    <th style="padding: 12px 15px; font-weight: 600; text-align: right; color: var(--accent);">Net Savings</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sim-table-body">
+                                <!-- Rendered dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="glass-card">
+                        <div class="card-title">Model Comparison Insights</div>
+                        <div style="display: flex; flex-direction: column; gap: 15px; font-size: 0.95rem; line-height: 1.5; margin-top: 10px;">
+                            <div>
+                                <strong style="color: #fff;">Scenario A: No Battery</strong><br>
+                                <span class="text-muted">Serves as the control baseline. All household loads are supplied directly from grid imports, and solar generation is fully exported.</span>
+                            </div>
+                            <div>
+                                <strong style="color: #fff;">Scenario B: Baseline (Solar Self-Consumption)</strong><br>
+                                <span class="text-muted">Simple logic charging battery from excess solar and discharging to cover home load. It is price-blind and has no demand-tariff peak shaving.</span>
+                            </div>
+                            <div>
+                                <strong style="color: #fff;">Scenario C: Smart Heuristic</strong><br>
+                                <span class="text-muted">Charges battery during negative wholesale price intervals or cheap windows before the demand period. Shaves demand imports to 0.</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="glass-card">
+                        <div class="card-title">Advanced Strategies</div>
+                        <div style="display: flex; flex-direction: column; gap: 15px; font-size: 0.95rem; line-height: 1.5; margin-top: 10px;">
+                            <div>
+                                <strong style="color: #fff;">Scenario D: Look-Ahead MPC</strong><br>
+                                <span class="text-muted">An optimal predictive controller utilizing look-ahead foresight. Schedules charging/discharging to minimize total monthly energy cost and peak demand charges.</span>
+                            </div>
+                            <div>
+                                <strong style="color: #fff;">Scenario E: Adaptive Peak Shaving</strong><br>
+                                <span class="text-muted">Tracks monthly-to-date peak draw and shaves imports dynamically. Reduces unnecessary shallow cycles, maintaining excellent savings with vastly reduced battery wear.</span>
+                            </div>
                         </div>
                     </div>
                 </div>
