@@ -444,8 +444,9 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     </div>
                 </div>
         </div>
+    </div>
 
-        <!-- SIMULATION TAB -->
+    <!-- SIMULATION TAB -->
         <div id="tab-simulation" class="tab-content">
             <div class="glass-card">
                 <div class="card-title">Historical Simulation & Optimization Model Comparison</div>
