@@ -133,7 +133,7 @@ pub async fn run_solax_modbus_driver(
     // Main poll loop
     let mut power_budgets = VecDeque::new();
     let avg_samples = config.power_budget_avg_samples.unwrap_or(30);
-    let poll_interval = Duration::from_secs(config.poll_period);
+    let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
@@ -208,6 +208,10 @@ pub async fn run_solax_modbus_driver(
                         inv.battery_power = bat_pow;
                         inv.pv_power = pv1 + pv2;
                         inv.run_mode = run_mode;
+                        inv.last_updated = Some(std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs());
                     }
 
                     // Add power budget average calculation
@@ -385,7 +389,7 @@ pub async fn run_solax_xhybrid_driver(
     // Main poll loop for XHybrid
     let mut power_budgets = VecDeque::new();
     let avg_samples = config.power_budget_avg_samples.unwrap_or(30);
-    let poll_interval = Duration::from_secs(config.poll_period);
+    let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut discovered_metrics = std::collections::HashSet::new();
 
     loop {
@@ -474,6 +478,10 @@ pub async fn run_solax_xhybrid_driver(
                         inv.battery_power = bat_pow;
                         inv.pv_power = pv1 + pv2;
                         inv.run_mode = run_mode;
+                        inv.last_updated = Some(std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap()
+                            .as_secs());
                     }
 
                     // Add power budget average calculation
@@ -586,7 +594,7 @@ fn parse_solax_registers(
         "Battery Current".to_string(),
         format!("{:.2}", signed16(0x15) as f64 / 100.0),
     );
-    vals.insert("Battery Power".to_string(), signed16(0x16).to_string());
+    vals.insert("Battery Power".to_string(), (-signed16(0x16)).to_string());
     vals.insert(
         "Charger Board Temperature".to_string(),
         signed16(0x17).to_string(),
@@ -746,7 +754,7 @@ fn parse_hybrid_registers(
         "Battery Current".to_string(),
         format!("{:.2}", i16_a(0x15) as f64 / 100.0),
     );
-    vals.insert("Battery Power".to_string(), i16_a(0x16).to_string());
+    vals.insert("Battery Power".to_string(), (-i16_a(0x16)).to_string());
     vals.insert("BMS Connect State".to_string(), u16_a(0x17).to_string());
     vals.insert("Battery Temperature".to_string(), i16_a(0x18).to_string());
     vals.insert(
@@ -1036,17 +1044,17 @@ fn parse_hybrid_registers(
     vals.insert("Run Mode 2".to_string(), u16_c(0xBF).to_string());
     vals.insert("Feedin Power".to_string(), i32_c(0xC0).to_string());
     vals.insert(
-        "Battery Voltage".to_string(),
+        "BMS Battery Voltage".to_string(),
         format!("{:.1}", i16_c(0xC2) as f64 / 10.0),
     );
     vals.insert(
-        "Battery Current".to_string(),
+        "BMS Battery Current".to_string(),
         format!("{:.1}", i16_c(0xC3) as f64 / 10.0),
     );
-    vals.insert("Battery Power".to_string(), i16_c(0xC4).to_string());
+    vals.insert("BMS Battery Power".to_string(), i16_c(0xC4).to_string());
     vals.insert("BMS Connected".to_string(), u16_c(0xC5).to_string());
-    vals.insert("Battery Temperature".to_string(), i16_c(0xC6).to_string());
-    vals.insert("Battery Capacity".to_string(), i16_c(0xC7).to_string());
+    vals.insert("BMS Battery Temperature".to_string(), i16_c(0xC6).to_string());
+    vals.insert("BMS Battery Capacity".to_string(), i16_c(0xC7).to_string());
     vals.insert("BMS Warning 2".to_string(), u16_c(0xC8).to_string());
     vals.insert(
         "BMS Charge Max Current".to_string(),

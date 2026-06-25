@@ -16,6 +16,16 @@ pub struct InverterStatus {
     pub battery_power: i32,
     pub pv_power: u32,
     pub run_mode: u32,
+    pub last_updated: Option<u64>,
+    pub calculated_battery_capacity: Option<f64>,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)]
+pub struct PriceThresholds {
+    pub import_30: f64,
+    pub import_70: f64,
+    pub export_30: f64,
+    pub export_70: f64,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
@@ -24,6 +34,11 @@ pub struct SystemStatus {
     pub grid_target: f64,
     pub inverters: HashMap<String, InverterStatus>,
     pub meter_power: f64,
+    pub meter_last_updated: Option<u64>,
+    pub mqtt_connected: bool,
+    pub import_price: Option<f64>,
+    pub export_price: Option<f64>,
+    pub price_thresholds: Option<PriceThresholds>,
 }
 
 pub static SYSTEM_STATUS: OnceLock<Mutex<SystemStatus>> = OnceLock::new();
@@ -32,7 +47,7 @@ pub fn get_system_status() -> &'static Mutex<SystemStatus> {
     SYSTEM_STATUS.get_or_init(|| Mutex::new(SystemStatus::default()))
 }
 
-pub async fn run_web_server(reload_tx: Sender<()>, db_path: String) {
+pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String, listener: tokio::net::TcpListener) {
     let state = Arc::new(reload_tx);
     let db_path_clone = db_path.clone();
 
@@ -40,6 +55,19 @@ pub async fn run_web_server(reload_tx: Sender<()>, db_path: String) {
         .route("/", get(serve_dashboard))
         .route("/style.css", get(serve_style))
         .route("/app.js", get(serve_js))
+        .route(
+            "/api/mqtt/test",
+            post(handle_mqtt_test),
+        )
+        .route(
+            "/api/config/import",
+            post(|body: String| async move {
+                match toml::from_str::<Config>(&body) {
+                    Ok(cfg) => Ok(Json(cfg)),
+                    Err(e) => Err((axum::http::StatusCode::BAD_REQUEST, e.to_string())),
+                }
+            }),
+        )
         .route(
             "/api/config",
             get(move || {
@@ -78,9 +106,13 @@ pub async fn run_web_server(reload_tx: Sender<()>, db_path: String) {
         )
         .layer(CorsLayer::permissive());
 
+    axum::serve(listener, app).await.unwrap();
+}
+
+pub async fn run_web_server(reload_tx: Sender<()>, db_path: String) {
     let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
     println!("Web UI and REST API running at http://localhost:3000");
-    axum::serve(listener, app).await.unwrap();
+    run_web_server_with_listener(reload_tx, db_path, listener).await;
 }
 
 async fn serve_dashboard() -> Html<&'static str> {
@@ -99,4 +131,190 @@ async fn serve_js() -> impl IntoResponse {
         [(header::CONTENT_TYPE, "application/javascript")],
         crate::web_assets::APP_JS,
     )
+}
+
+#[derive(serde::Serialize)]
+struct MqttTestResponse {
+    connected: bool,
+    error: Option<String>,
+    wildcard_subscription: bool,
+    base_pub_sub: bool,
+    ha_discovery: Option<bool>,
+}
+
+async fn handle_mqtt_test(
+    Json(config): Json<crate::config::MqttBrokerConfig>,
+) -> impl IntoResponse {
+    let client_id = format!(
+        "powerscraper-test-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+
+    let (client, mut eventloop) = crate::mqtt_helper::create_mqtt_client(&client_id, &config);
+
+    let base_topic = config.base_topic.clone().unwrap_or_else(|| "sensors".to_string());
+    let wildcard_topic = format!("{}/#", base_topic);
+    let pubsub_topic = format!("{}/test/pubsub", base_topic);
+    let wildcard_test_topic = format!("{}/test/wildcard-only", base_topic);
+    
+    let ha_enabled = config.is_ha_discovery_enabled();
+    let ha_prefix = config.ha_discovery_prefix();
+    let ha_test_topic = format!("{}/sensor/test/config", ha_prefix);
+
+    let wildcard_token = format!("token-wildcard-{}", client_id);
+    let pubsub_token = format!("token-pubsub-{}", client_id);
+    let ha_token = format!("token-ha-{}", client_id);
+
+    // Attempt subscriptions
+    if let Err(e) = client.subscribe(&wildcard_topic, rumqttc::QoS::AtLeastOnce).await {
+        return Json(MqttTestResponse {
+            connected: false,
+            error: Some(format!("Failed to initiate wildcard subscription: {}", e)),
+            wildcard_subscription: false,
+            base_pub_sub: false,
+            ha_discovery: if ha_enabled { Some(false) } else { None },
+        });
+    }
+
+    if let Err(e) = client.subscribe(&pubsub_topic, rumqttc::QoS::AtLeastOnce).await {
+        return Json(MqttTestResponse {
+            connected: false,
+            error: Some(format!("Failed to initiate pubsub subscription: {}", e)),
+            wildcard_subscription: false,
+            base_pub_sub: false,
+            ha_discovery: if ha_enabled { Some(false) } else { None },
+        });
+    }
+
+    if ha_enabled {
+        if let Err(e) = client.subscribe(&ha_test_topic, rumqttc::QoS::AtLeastOnce).await {
+            return Json(MqttTestResponse {
+                connected: false,
+                error: Some(format!("Failed to initiate HA discovery subscription: {}", e)),
+                wildcard_subscription: false,
+                base_pub_sub: false,
+                ha_discovery: Some(false),
+            });
+        }
+    }
+
+    // Attempt publications
+    if let Err(e) = client.publish(&wildcard_test_topic, rumqttc::QoS::AtLeastOnce, false, wildcard_token.clone()).await {
+        return Json(MqttTestResponse {
+            connected: false,
+            error: Some(format!("Failed to publish to wildcard test topic: {}", e)),
+            wildcard_subscription: false,
+            base_pub_sub: false,
+            ha_discovery: if ha_enabled { Some(false) } else { None },
+        });
+    }
+
+    if let Err(e) = client.publish(&pubsub_topic, rumqttc::QoS::AtLeastOnce, false, pubsub_token.clone()).await {
+        return Json(MqttTestResponse {
+            connected: false,
+            error: Some(format!("Failed to publish to pubsub topic: {}", e)),
+            wildcard_subscription: false,
+            base_pub_sub: false,
+            ha_discovery: if ha_enabled { Some(false) } else { None },
+        });
+    }
+
+    if ha_enabled {
+        if let Err(e) = client.publish(&ha_test_topic, rumqttc::QoS::AtLeastOnce, false, ha_token.clone()).await {
+            return Json(MqttTestResponse {
+                connected: false,
+                error: Some(format!("Failed to publish to HA discovery topic: {}", e)),
+                wildcard_subscription: false,
+                base_pub_sub: false,
+                ha_discovery: Some(false),
+            });
+        }
+    }
+
+    let mut connected = false;
+    let mut wildcard_subscription = false;
+    let mut base_pub_sub = false;
+    let mut ha_discovery = if ha_enabled { Some(false) } else { None };
+    let mut error = None;
+
+    let start_time = std::time::Instant::now();
+    let timeout_duration = std::time::Duration::from_secs(3);
+
+    while start_time.elapsed() < timeout_duration {
+        let done = wildcard_subscription && base_pub_sub && (!ha_enabled || ha_discovery == Some(true));
+        if done {
+            break;
+        }
+
+        let remaining = timeout_duration.saturating_sub(start_time.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+
+        match tokio::time::timeout(remaining, eventloop.poll()).await {
+            Ok(Ok(notification)) => {
+                connected = true;
+                match notification {
+                    rumqttc::Event::Incoming(rumqttc::Packet::Publish(p)) => {
+                        let payload = String::from_utf8_lossy(&p.payload);
+                        if p.topic == wildcard_test_topic && payload == wildcard_token {
+                            wildcard_subscription = true;
+                        } else if p.topic == pubsub_topic && payload == pubsub_token {
+                            base_pub_sub = true;
+                        } else if p.topic == ha_test_topic && payload == ha_token {
+                            ha_discovery = Some(true);
+                        }
+                    }
+                    rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(connack)) => {
+                        if connack.code != rumqttc::ConnectReturnCode::Success {
+                            error = Some(format!("Connection refused: {:?}", connack.code));
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Ok(Err(e)) => {
+                error = Some(format!("Connection/Protocol error: {}", e));
+                break;
+            }
+            Err(_) => {
+                // Timeout
+                break;
+            }
+        }
+    }
+
+    let _ = client.disconnect().await;
+
+    // If we didn't receive packets but did not get a specific connection/protocol error,
+    // we can formulate an informative message.
+    if connected && error.is_none() {
+        let mut missing = Vec::new();
+        if !wildcard_subscription {
+            missing.push(format!("wildcard sub ({})", wildcard_topic));
+        }
+        if !base_pub_sub {
+            missing.push(format!("base pub/sub ({})", pubsub_topic));
+        }
+        if ha_enabled && ha_discovery != Some(true) {
+            missing.push(format!("HA discovery pub/sub ({})", ha_test_topic));
+        }
+        if !missing.is_empty() {
+            error = Some(format!("Permission denied or message delivery failed for: {}", missing.join(", ")));
+        }
+    } else if !connected && error.is_none() {
+        error = Some("Connection timed out".to_string());
+    }
+
+    Json(MqttTestResponse {
+        connected,
+        error,
+        wildcard_subscription,
+        base_pub_sub,
+        ha_discovery,
+    })
 }

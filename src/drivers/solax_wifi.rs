@@ -49,12 +49,12 @@ pub async fn run_solax_wifi_driver(
     });
 
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(config.timeout))
+        .timeout(Duration::from_secs_f64(config.timeout))
         .build()
         .unwrap();
 
     let url = format!("http://{}/api/realTimeData.htm", inverter_host);
-    let poll_interval = Duration::from_secs(config.poll_period);
+    let poll_interval = Duration::from_secs_f64(config.poll_period);
 
     let mut discovered_metrics = std::collections::HashSet::new();
 
@@ -106,6 +106,10 @@ pub async fn run_solax_wifi_driver(
                                         inv.battery_power = bat_pow;
                                         inv.pv_power = pv1 + pv2;
                                         inv.run_mode = run_mode;
+                                        inv.last_updated = Some(std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_secs());
                                     }
 
                                     for (metric, val) in vals {
@@ -194,7 +198,13 @@ fn parse_wifi_data(resp: &WifiResponse, host: &str) -> HashMap<String, String> {
     vals.insert("PV2 Power".to_string(), get_val(12));
     vals.insert("Battery Voltage".to_string(), get_val(13));
     vals.insert("Battery Current".to_string(), get_val(14));
-    vals.insert("Battery Power".to_string(), get_val(15));
+    let bat_pow_str = get_val(15);
+    let bat_pow_negated = if let Ok(val) = bat_pow_str.parse::<f64>() {
+        (-val).to_string()
+    } else {
+        bat_pow_str
+    };
+    vals.insert("Battery Power".to_string(), bat_pow_negated);
     vals.insert("Battery Temp".to_string(), get_val(16));
     vals.insert("Battery Capacity".to_string(), get_val(17));
     vals.insert("Solar Total 2".to_string(), get_val(19));

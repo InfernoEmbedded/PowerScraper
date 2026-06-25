@@ -15,7 +15,27 @@ use tokio::signal;
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting PowerScraper (Rust Next Branch)...");
 
+    #[cfg(unix)]
+    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
     let db_path = "config.db".to_string();
+
+    // Check for CSV import CLI subcommand
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && (args[1] == "import-csv" || args[1] == "import") {
+        if args.len() < 3 {
+            eprintln!("Usage: {} import-csv <csv_file_path>", args[0]);
+            std::process::exit(1);
+        }
+        let csv_path = &args[2];
+        if let Err(e) = PowerScraper::csv_importer::run_csv_import(&db_path, csv_path) {
+            eprintln!("Error during CSV import: {}", e);
+            std::process::exit(1);
+        }
+        println!("Import completed successfully.");
+        std::process::exit(0);
+    }
+
 
     // Create channel for reload trigger
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(1);
@@ -24,6 +44,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db_path_clone = db_path.clone();
     tokio::spawn(async move {
         PowerScraper::web_server::run_web_server(reload_tx, db_path_clone).await;
+    });
+
+    // Spawn watchdog task to detect MainsMeter freezes and restart process
+    let db_path_wd = db_path.clone();
+    tokio::spawn(async move {
+        println!("Spawning watchdog task...");
+        let start_time = std::time::Instant::now();
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            
+            // Load config to check if a source is configured
+            let has_source = if let Ok(cfg) = Config::load_from_db(&db_path_wd) {
+                cfg.battery_control.as_ref().and_then(|bc| bc.source.as_ref()).is_some()
+            } else {
+                false
+            };
+            
+            if has_source {
+                let last_update = {
+                    if let Ok(status) = PowerScraper::web_server::get_system_status().lock() {
+                        status.meter_last_updated
+                    } else {
+                        None
+                    }
+                };
+                
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                    
+                match last_update {
+                    Some(ts) => {
+                        if now_secs > ts && now_secs - ts > 180 {
+                            eprintln!("WATCHDOG: MainsMeter has not updated for {} seconds. Exiting for systemd restart...", now_secs - ts);
+                            std::process::exit(1);
+                        }
+                    }
+                    None => {
+                        // Allow 5 minutes from startup for initial update
+                        if start_time.elapsed() > tokio::time::Duration::from_secs(300) {
+                            eprintln!("WATCHDOG: MainsMeter has failed to update since startup (5 minutes ago). Exiting for systemd restart...");
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            }
+        }
     });
 
     loop {
@@ -38,22 +106,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         };
 
-        // Validate MQTT broker config (mandatory)
         let mqtt_config = match config.mqtt {
             Some(ref cfg) => cfg.clone(),
             None => {
                 println!(
-                    "Error: [MQTT] section is mandatory in database for drivers and power management to communicate!"
+                    "Warning: [MQTT] section not found in configuration. Defaulting to local broker at homeautemation.lan."
                 );
-                tokio::select! {
-                    _ = reload_rx.recv() => {
-                        println!("Reload requested. Reloading settings...");
-                        continue;
-                    }
-                    _ = signal::ctrl_c() => {
-                        println!("Shutdown signal received. Exiting...");
-                        break;
-                    }
+                config::MqttBrokerConfig {
+                    broker: "homeautemation.lan".to_string(),
+                    port: Some(1883),
+                    base_topic: Some("sensors".to_string()),
+                    username: Some("power".to_string()),
+                    password: Some("d=5Pqjkh{9".to_string()),
+                    home_assistant_discovery: Some(true),
+                    home_assistant_prefix: Some("homeassistant".to_string()),
                 }
             }
         };
@@ -199,14 +265,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        // Spawn MQTT Inverters
+        if let Some(ref mqtt_inv_cfg) = config.mqtt_inverter {
+            println!("Spawning MQTT Inverter Drivers...");
+            for name in &mqtt_inv_cfg.inverters {
+                if let Some(dev_cfg) = mqtt_inv_cfg.inverter_devices.get(name) {
+                    let name_clone = name.clone();
+                    let dev_cfg_clone = dev_cfg.clone();
+                    let mqtt_clone = mqtt_config.clone();
+                    let cancel_clone = cancel_token.clone();
+                    tokio::spawn(async move {
+                        drivers::mqtt_inverter::run_mqtt_inverter_driver(
+                            name_clone,
+                            dev_cfg_clone,
+                            mqtt_clone,
+                            cancel_clone,
+                        )
+                        .await;
+                    });
+                }
+            }
+        }
+
         // 9. Spawn Power Manager (Solax-BatteryControl)
         if let Some(ref battery_cfg) = config.battery_control {
             println!("Spawning Power Manager (Battery Control)...");
             let cfg_clone = battery_cfg.clone();
             let mqtt_clone = mqtt_config.clone();
             let cancel_clone = cancel_token.clone();
+            let db_path_pm = db_path.clone();
             tokio::spawn(async move {
-                power_manager::run_power_manager_task(cfg_clone, mqtt_clone, cancel_clone).await;
+                power_manager::run_power_manager_task(cfg_clone, mqtt_clone, cancel_clone, db_path_pm).await;
             });
         }
 
@@ -225,15 +314,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Wait until reload signal or Ctrl-C shutdown
         tokio::select! {
-            _ = reload_rx.recv() => {
-                println!("Reload signal received. Canceling old drivers and reloading config...");
-                cancel_token.cancel();
-                // Sleep briefly to let drivers clean up connections
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            res = reload_rx.recv() => {
+                if let Some(_) = res {
+                    println!("Reload signal received. Canceling old drivers and reloading config...");
+                    cancel_token.cancel();
+                    // Sleep briefly to let drivers clean up connections
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                } else {
+                    println!("Reload channel closed! Web server has stopped. Waiting for shutdown signal to exit...");
+                    tokio::select! {
+                        _ = signal::ctrl_c() => {}
+                        _ = async {
+                            #[cfg(unix)]
+                            {
+                                if let Some(mut sig) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok() {
+                                    sig.recv().await;
+                                }
+                            }
+                            #[cfg(not(unix))]
+                            {
+                                tokio::time::sleep(std::time::Duration::from_secs(999999)).await;
+                            }
+                        } => {}
+                    }
+                    println!("Shutdown signal received. Canceling tasks...");
+                    cancel_token.cancel();
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    break;
+                }
             }
             _ = signal::ctrl_c() => {
-                println!("Shutdown signal received. Exiting...");
+                println!("Shutdown signal (Ctrl-C) received. Canceling tasks...");
                 cancel_token.cancel();
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                break;
+            }
+            _ = async {
+                #[cfg(unix)]
+                {
+                    sigterm.recv().await;
+                }
+                #[cfg(not(unix))]
+                {
+                    tokio::time::sleep(std::time::Duration::from_secs(999999)).await;
+                }
+            } => {
+                println!("Shutdown signal (SIGTERM) received. Canceling tasks...");
+                cancel_token.cancel();
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 break;
             }
         }

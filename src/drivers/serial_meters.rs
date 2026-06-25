@@ -39,7 +39,7 @@ async fn connect_serial_meter(
     let builder = tokio_serial::new(port_path, config.baud)
         .parity(serial_parity)
         .stop_bits(serial_stopbits)
-        .timeout(Duration::from_secs(config.timeout));
+        .timeout(Duration::from_secs_f64(config.timeout));
 
     let port = SerialStream::open(&builder)?;
     let ctx = rtu::attach_slave(port, Slave(1));
@@ -80,7 +80,7 @@ pub async fn run_sdm630_driver(
         }
     });
 
-    let poll_interval = Duration::from_secs(config.poll_period);
+    let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut ctx_opt = None;
     let mut discovered_metrics = std::collections::HashSet::new();
 
@@ -106,18 +106,19 @@ pub async fn run_sdm630_driver(
         }
 
         let ctx = ctx_opt.as_mut().unwrap();
-        let read_res = async {
+        let timeout_dur = Duration::from_secs_f64(config.timeout);
+        let read_res = tokio::time::timeout(timeout_dur, async {
             let reg1 = ctx.read_input_registers(0x0000, 60).await?;
             let reg2 = ctx.read_input_registers(0x003C, 48).await?;
             let reg3 = ctx.read_input_registers(0x00C8, 8).await?;
             let reg4 = ctx.read_input_registers(0x00E0, 46).await?;
             let reg5 = ctx.read_input_registers(0x014E, 48).await?;
             Ok::<_, std::io::Error>((reg1, reg2, reg3, reg4, reg5))
-        }
+        })
         .await;
 
         match read_res {
-            Ok((reg1, reg2, reg3, reg4, reg5)) => {
+            Ok(Ok((reg1, reg2, reg3, reg4, reg5))) => {
                 let mut vals = HashMap::new();
                 vals.insert("name".to_string(), device_name.clone());
 
@@ -500,10 +501,17 @@ pub async fn run_sdm630_driver(
                         .await;
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 println!(
                     "SDM630 [{}] read error: {}, resetting connection",
                     device_name, e
+                );
+                ctx_opt = None;
+            }
+            Err(_) => {
+                println!(
+                    "SDM630 [{}] read timeout, resetting connection",
+                    device_name
                 );
                 ctx_opt = None;
             }
@@ -550,7 +558,7 @@ pub async fn run_dtsu666_driver(
         }
     });
 
-    let poll_interval = Duration::from_secs(config.poll_period);
+    let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut ctx_opt = None;
     let mut discovered_metrics = std::collections::HashSet::new();
 
@@ -576,15 +584,16 @@ pub async fn run_dtsu666_driver(
         }
 
         let ctx = ctx_opt.as_mut().unwrap();
-        let read_res = async {
+        let timeout_dur = Duration::from_secs_f64(config.timeout);
+        let read_res = tokio::time::timeout(timeout_dur, async {
             let reg1 = ctx.read_input_registers(0x2000, 0x52).await?;
             let reg2 = ctx.read_input_registers(0x401E, 52).await?;
             Ok::<_, std::io::Error>((reg1, reg2))
-        }
+        })
         .await;
 
         match read_res {
-            Ok((reg1, reg2)) => {
+            Ok(Ok((reg1, reg2))) => {
                 let mut vals = HashMap::new();
                 vals.insert("name".to_string(), device_name.clone());
 
@@ -731,10 +740,17 @@ pub async fn run_dtsu666_driver(
                         .await;
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 println!(
                     "DTSU666 [{}] read error: {}, resetting connection",
                     device_name, e
+                );
+                ctx_opt = None;
+            }
+            Err(_) => {
+                println!(
+                    "DTSU666 [{}] read timeout, resetting connection",
+                    device_name
                 );
                 ctx_opt = None;
             }
