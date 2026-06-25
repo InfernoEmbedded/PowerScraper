@@ -275,6 +275,26 @@ async function main() {
         // Test Case 6: Configuration Import
         console.log("Running Test 6: Configuration Import...");
         dialogText = null;
+
+        // Clear configuration in test to make 'Import Config' button visible
+        console.log("Clearing config to verify 'Import Config' visibility...");
+        await page.evaluate(async () => {
+            await fetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    MQTT: {
+                        broker: "127.0.0.1",
+                        port: 1883,
+                        "base-topic": "sensors",
+                        "home-assistant-discovery": true,
+                        "home-assistant-prefix": "homeassistant"
+                    }
+                })
+            });
+            await loadConfig();
+        });
+        await page.waitForTimeout(500);
         
         // We trigger file input upload
         console.log("Importing 'tests/test_config.toml'...");
@@ -302,6 +322,16 @@ async function main() {
         if (importedBroker !== '127.0.0.1' || importedPort !== '18830') {
             throw new Error(`Imported config values incorrect: broker=${importedBroker}, port=${importedPort}`);
         }
+
+        // Verify that 'Import Config' button is now hidden because config is populated
+        const importBtnVisible = await page.evaluate(() => {
+            const btn = document.querySelector('.btn-import');
+            return btn ? btn.style.display !== 'none' : false;
+        });
+        if (importBtnVisible) {
+            throw new Error("Expected 'Import Config' button to be hidden after successful import");
+        }
+
         console.log("Test 6 Passed successfully!");
 
         // Test Case 7: Hardware Drivers dynamic blocks and modal

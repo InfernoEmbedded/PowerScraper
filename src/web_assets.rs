@@ -61,7 +61,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             <div style="display: flex; gap: 10px;">
                 <button class="btn-import" onclick="triggerImportConfig()">Import Config</button>
                 <input type="file" id="import-config-file" accept=".toml" style="display: none;" onchange="handleImportConfig(event)">
-                <button class="btn-apply" onclick="saveConfiguration()">Apply Changes</button>
+                <button class="btn-apply" onclick="saveConfiguration()" style="display: none;">Apply Changes</button>
             </div>
         </header>
 
@@ -1096,6 +1096,16 @@ function switchTab(tabId, el) {
 
     const pageTitle = el.innerText.trim();
     document.getElementById('page-title').innerText = pageTitle === "Dashboard" ? "System Dashboard" : pageTitle;
+
+    // Show/hide 'Apply Changes' button based on tabId
+    const applyBtn = document.querySelector('.btn-apply');
+    if (applyBtn) {
+        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation') {
+            applyBtn.style.display = 'none';
+        } else {
+            applyBtn.style.display = 'inline-block';
+        }
+    }
 }
 
 function toggleFormSection(sectionId, enabled) {
@@ -2059,8 +2069,58 @@ async function loadConfig(configData = null) {
             document.getElementById('influx-user').value = influx.influx_user || '';
             document.getElementById('influx-pass').value = influx.influx_pass || '';
         }
+        updateHeaderButtons();
     } catch (e) {
         console.error("Failed to load config backend", e);
+    }
+}
+
+function isConfigPopulated(config) {
+    if (!config) return false;
+
+    // Check if any hardware driver has configured items
+    if (config["Solax-Wifi"] && config["Solax-Wifi"].inverters && config["Solax-Wifi"].inverters.length > 0) return true;
+    if (config["Solax-Modbus"] && config["Solax-Modbus"].inverters && config["Solax-Modbus"].inverters.length > 0) return true;
+    if (config["Solax-XHybrid-Modbus"] && config["Solax-XHybrid-Modbus"].inverters && config["Solax-XHybrid-Modbus"].inverters.length > 0) return true;
+    if (config.SDM630Modbusv2 && config.SDM630Modbusv2.ports && config.SDM630Modbusv2.ports.length > 0) return true;
+    if (config.DTSU666 && config.DTSU666.ports && config.DTSU666.ports.length > 0) return true;
+    if (config.MQTTPowerMeter && config.MQTTPowerMeter.meters && config.MQTTPowerMeter.meters.length > 0) return true;
+    if (config.MQTTInverter && config.MQTTInverter.inverters && config.MQTTInverter.inverters.length > 0) return true;
+
+    // Check if emoncms is configured
+    if (config.emoncms && (config.emoncms.server || config.emoncms.api_key)) return true;
+
+    // Check if InfluxDB is configured
+    if (config.influx && (config.influx.influx_url || config.influx.influx_database)) return true;
+
+    // Check if Battery Control / periods / tariff are configured
+    const bat = config["Solax-BatteryControl"];
+    if (bat) {
+        if (bat.inverter && Object.keys(bat.inverter).length > 0) return true;
+        if (bat.period && Object.keys(bat.period).length > 0) return true;
+        if (bat.tariff && bat.tariff.type && bat.tariff.type !== 'none') return true;
+    }
+
+    // Check if MQTT is customized from default empty values
+    const mqtt = config.MQTT;
+    if (mqtt) {
+        if (mqtt.broker && mqtt.broker !== "127.0.0.1") return true;
+        if (mqtt.port && mqtt.port !== 1883) return true;
+        if (mqtt.username || mqtt.password) return true;
+        if (mqtt["base-topic"] && mqtt["base-topic"] !== "sensors") return true;
+    }
+
+    return false;
+}
+
+function updateHeaderButtons() {
+    const importBtn = document.querySelector('.btn-import');
+    if (importBtn) {
+        if (isConfigPopulated(currentConfig)) {
+            importBtn.style.display = 'none';
+        } else {
+            importBtn.style.display = 'inline-block';
+        }
     }
 }
 
