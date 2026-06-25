@@ -473,8 +473,11 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             <!-- LOADING SPINNER -->
             <div id="sim-loading" style="display: none; text-align: center; padding: 40px;">
                 <div class="spinner" style="margin: 0 auto 15px auto;"></div>
-                <div style="font-weight: 500; font-size: 1.1rem; color: var(--primary);">Simulating battery control models...</div>
-                <div class="text-muted" style="font-size: 0.9rem; margin-top: 5px;">This may take a few seconds depending on the data size.</div>
+                <div id="sim-loading-text" style="font-weight: 500; font-size: 1.1rem; color: var(--primary);">Simulating battery control models...</div>
+                <div style="width: 100%; max-width: 400px; background: rgba(255,255,255,0.05); height: 8px; border-radius: 4px; margin: 15px auto; overflow: hidden; border: 1px solid rgba(255,255,255,0.1);">
+                    <div id="sim-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width 0.1s ease;"></div>
+                </div>
+                <div id="sim-eta" class="text-muted" style="font-size: 0.9rem; margin-top: 5px;">ETA: Estimating...</div>
             </div>
 
             <!-- SIMULATION RESULTS -->
@@ -2758,6 +2761,9 @@ async function runHistoricalSimulation() {
     const range = document.getElementById('sim-range').value;
     const btn = document.getElementById('btn-run-simulation');
     const loadingDiv = document.getElementById('sim-loading');
+    const progressBar = document.getElementById('sim-progress-bar');
+    const etaText = document.getElementById('sim-eta');
+    const loadingText = document.getElementById('sim-loading-text');
     const resultsDiv = document.getElementById('sim-results');
     const badge = document.getElementById('sim-period-badge');
     const tableBody = document.getElementById('sim-table-body');
@@ -2765,66 +2771,100 @@ async function runHistoricalSimulation() {
     btn.disabled = true;
     loadingDiv.style.display = 'block';
     resultsDiv.style.display = 'none';
+    progressBar.style.width = '0%';
+    etaText.innerText = 'ETA: Estimating...';
+    loadingText.innerText = 'Initializing simulation...';
 
-    try {
-        const resp = await fetch(`/api/simulation/run?range=${range}`);
-        if (!resp.ok) {
-            throw new Error(await resp.text());
+    const eventSource = new EventSource(`/api/simulation/run?range=${range}`);
+
+    eventSource.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === 'Progress') {
+                const pct = msg.percent;
+                progressBar.style.width = `${pct.toFixed(0)}%`;
+                loadingText.innerText = `Simulating battery control models... (${pct.toFixed(0)}%)`;
+                if (msg.eta_seconds > 0) {
+                    const sec = Math.ceil(msg.eta_seconds);
+                    if (sec >= 60) {
+                        const mins = Math.floor(sec / 60);
+                        const secs = sec % 60;
+                        etaText.innerText = `ETA: ~${mins}m ${secs}s remaining`;
+                    } else {
+                        etaText.innerText = `ETA: ~${sec}s remaining`;
+                    }
+                } else {
+                    etaText.innerText = 'ETA: Estimating...';
+                }
+            } else if (msg.type === 'Result') {
+                eventSource.close();
+                btn.disabled = false;
+                loadingDiv.style.display = 'none';
+
+                const data = msg.response;
+                badge.innerText = `${data.start_date.substring(0, 10)} to ${data.end_date.substring(0, 10)} (${data.records_simulated.toLocaleString()} records)`;
+
+                const fmtVal = (val) => {
+                    const sign = val < 0 ? '-' : '';
+                    return `${sign}$${Math.abs(val).toFixed(2)}`;
+                };
+
+                const fmtSavings = (val, isBaseline = false) => {
+                    if (isBaseline) return '-';
+                    const style = val >= 0 ? 'color: var(--accent); font-weight: 600;' : 'color: var(--danger); font-weight: 600;';
+                    const sign = val < 0 ? '-' : '';
+                    return `<span style="${style}">${sign}$${Math.abs(val).toFixed(2)}</span>`;
+                };
+
+                const models = [
+                    { name: "Scenario A: No Battery", key: "no_battery", isBaseline: true },
+                    { name: "Scenario B: Baseline (Solar Self-Consumption)", key: "baseline" },
+                    { name: "Scenario C: Smart Heuristic", key: "smart_heuristic" },
+                    { name: "Scenario D: Look-Ahead MPC", key: "lookahead_mpc" },
+                    { name: "Scenario E: Adaptive Peak Shaving", key: "adaptive_peak" }
+                ];
+
+                const noBatteryBill = data.no_battery.net_bill;
+
+                tableBody.innerHTML = models.map(m => {
+                    const mData = data[m.key];
+                    const netSavings = noBatteryBill - mData.net_bill;
+                    
+                    return `
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <td style="padding: 12px 15px; font-weight: 500; color: #fff;">${m.name}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${data.total_usage_kwh.toFixed(1)}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${data.total_solar_kwh.toFixed(1)}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${mData.import_kwh.toFixed(1)}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${mData.export_kwh.toFixed(1)}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${m.isBaseline ? '-' : mData.cycles.toFixed(1)}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${fmtVal(mData.energy_cost)}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${fmtVal(mData.demand_charges)}</td>
+                            <td style="padding: 12px 15px; text-align: right; font-weight: 600; color: var(--primary);">${fmtVal(mData.net_bill)}</td>
+                            <td style="padding: 12px 15px; text-align: right;">${fmtSavings(netSavings, m.isBaseline)}</td>
+                        </tr>
+                    `;
+                }).join('');
+
+                resultsDiv.style.display = 'block';
+            } else if (msg.type === 'Error') {
+                eventSource.close();
+                btn.disabled = false;
+                loadingDiv.style.display = 'none';
+                alert("Failed to run historical simulation: " + msg.message);
+            }
+        } catch (e) {
+            console.error("Failed to parse SSE data", e);
         }
-        const data = await resp.json();
+    };
 
-        badge.innerText = `${data.start_date.substring(0, 10)} to ${data.end_date.substring(0, 10)} (${data.records_simulated.toLocaleString()} records)`;
-
-        const fmtVal = (val) => {
-            const sign = val < 0 ? '-' : '';
-            return `${sign}$${Math.abs(val).toFixed(2)}`;
-        };
-
-        const fmtSavings = (val, isBaseline = false) => {
-            if (isBaseline) return '-';
-            const style = val >= 0 ? 'color: var(--accent); font-weight: 600;' : 'color: var(--danger); font-weight: 600;';
-            const sign = val < 0 ? '-' : '';
-            return `<span style="${style}">${sign}$${Math.abs(val).toFixed(2)}</span>`;
-        };
-
-        const models = [
-            { name: "Scenario A: No Battery", key: "no_battery", isBaseline: true },
-            { name: "Scenario B: Baseline (Solar Self-Consumption)", key: "baseline" },
-            { name: "Scenario C: Smart Heuristic", key: "smart_heuristic" },
-            { name: "Scenario D: Look-Ahead MPC", key: "lookahead_mpc" },
-            { name: "Scenario E: Adaptive Peak Shaving", key: "adaptive_peak" }
-        ];
-
-        const noBatteryBill = data.no_battery.net_bill;
-
-        tableBody.innerHTML = models.map(m => {
-            const mData = data[m.key];
-            const netSavings = noBatteryBill - mData.net_bill;
-            
-            return `
-                <tr style="border-bottom: 1px solid var(--border-color);">
-                    <td style="padding: 12px 15px; font-weight: 500; color: #fff;">${m.name}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${data.total_usage_kwh.toFixed(1)}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${data.total_solar_kwh.toFixed(1)}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${mData.import_kwh.toFixed(1)}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${mData.export_kwh.toFixed(1)}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${m.isBaseline ? '-' : mData.cycles.toFixed(1)}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${fmtVal(mData.energy_cost)}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${fmtVal(mData.demand_charges)}</td>
-                    <td style="padding: 12px 15px; text-align: right; font-weight: 600; color: var(--primary);">${fmtVal(mData.net_bill)}</td>
-                    <td style="padding: 12px 15px; text-align: right;">${fmtSavings(netSavings, m.isBaseline)}</td>
-                </tr>
-            `;
-        }).join('');
-
-        resultsDiv.style.display = 'block';
-    } catch (e) {
-        alert("Failed to run historical simulation: " + e.message);
-        console.error("Simulation error", e);
-    } finally {
-        loadingDiv.style.display = 'none';
+    eventSource.onerror = (err) => {
+        eventSource.close();
         btn.disabled = false;
-    }
+        loadingDiv.style.display = 'none';
+        alert("Failed to run historical simulation: Connection closed unexpectedly.");
+        console.error("SSE error", err);
+    };
 }
 
 // Initialize UI

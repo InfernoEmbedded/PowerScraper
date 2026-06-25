@@ -1857,6 +1857,14 @@ pub struct SimulationResponse {
 }
 
 pub fn run_historical_simulation(db_path: &str, range: &str) -> Result<SimulationResponse, String> {
+    run_historical_simulation_impl(db_path, range, None)
+}
+
+pub fn run_historical_simulation_impl(
+    db_path: &str,
+    range: &str,
+    progress_cb: Option<&(dyn Fn(f64, f64) + Send + Sync)>,
+) -> Result<SimulationResponse, String> {
     let config = crate::config::Config::load_from_db(db_path).unwrap_or_else(|_| crate::config::Config::default_empty());
     let mains_source = config.battery_control.as_ref()
         .and_then(|bc| bc.source.as_deref())
@@ -2013,414 +2021,453 @@ pub fn run_historical_simulation(db_path: &str, range: &str) -> Result<Simulatio
         }
     }
 
-    let calculate_demand_charges_total = |monthly_peaks: &HashMap<String, f64>| -> f64 {
+    fn calculate_demand_charges_total(monthly_peaks: &HashMap<String, f64>) -> f64 {
         let mut total = 0.0;
         for peak_w in monthly_peaks.values() {
             let peak_kw = peak_w / 1000.0;
             total += peak_kw * 0.20 * 30.0;
         }
         total
-    };
+    }
 
     let start_date = records.first().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
     let end_date = records.last().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
     let records_simulated = records.len();
 
-    // 1. No Battery
-    let mut no_bat_import_kwh = 0.0;
-    let mut no_bat_export_kwh = 0.0;
-    let mut no_bat_energy_cost = 0.0;
-    let mut no_bat_peaks = HashMap::new();
+    let records_ref = &records;
 
-    for r in &records {
-        let net_w = r.load_power_w - r.solar_power_w;
-        let hour = r.dt_local.hour();
-        let month_key = r.dt_local.format("%Y-%m").to_string();
+    let (no_battery_res, baseline_res, smart_heuristic_res, lookahead_mpc_res, adaptive_peak_res) =
+        std::thread::scope(|s| {
+            let t_no_bat = s.spawn(move || {
+                let mut no_bat_import_kwh = 0.0;
+                let mut no_bat_export_kwh = 0.0;
+                let mut no_bat_energy_cost = 0.0;
+                let mut no_bat_peaks = HashMap::new();
 
-        if net_w > 0.0 {
-            let kwh = (net_w / 1000.0) * r.duration_hours;
-            no_bat_import_kwh += kwh;
-            no_bat_energy_cost += kwh * (r.import_price_cents / 100.0);
+                for r in records_ref {
+                    let net_w = r.load_power_w - r.solar_power_w;
+                    let hour = r.dt_local.hour();
+                    let month_key = r.dt_local.format("%Y-%m").to_string();
 
-            if hour >= 15 && hour < 21 {
-                let peak = no_bat_peaks.entry(month_key).or_insert(0.0);
-                if net_w > *peak {
-                    *peak = net_w;
+                    if net_w > 0.0 {
+                        let kwh = (net_w / 1000.0) * r.duration_hours;
+                        no_bat_import_kwh += kwh;
+                        no_bat_energy_cost += kwh * (r.import_price_cents / 100.0);
+
+                        if hour >= 15 && hour < 21 {
+                            let peak = no_bat_peaks.entry(month_key).or_insert(0.0);
+                            if net_w > *peak {
+                                *peak = net_w;
+                            }
+                        }
+                    } else {
+                        let kwh = (-net_w / 1000.0) * r.duration_hours;
+                        no_bat_export_kwh += kwh;
+                        no_bat_energy_cost -= kwh * (r.export_price_cents / 100.0);
+                    }
                 }
-            }
-        } else {
-            let kwh = (-net_w / 1000.0) * r.duration_hours;
-            no_bat_export_kwh += kwh;
-            no_bat_energy_cost -= kwh * (r.export_price_cents / 100.0);
-        }
-    }
-    let no_bat_demand = calculate_demand_charges_total(&no_bat_peaks);
-    let no_battery_res = SimulationResultModel {
-        import_kwh: no_bat_import_kwh,
-        export_kwh: no_bat_export_kwh,
-        cycles: 0.0,
-        energy_cost: no_bat_energy_cost,
-        demand_charges: no_bat_demand,
-        net_bill: no_bat_energy_cost + no_bat_demand,
-    };
-
-    // 2. Baseline
-    let mut base_import_kwh = 0.0;
-    let mut base_export_kwh = 0.0;
-    let mut base_energy_cost = 0.0;
-    let mut base_peaks = HashMap::new();
-    let mut base_cycles = 0.0;
-    let mut bat_soc = battery_capacity_kwh * 0.5;
-
-    for r in &records {
-        let net_w = r.load_power_w - r.solar_power_w;
-        let hour = r.dt_local.hour();
-        let month_key = r.dt_local.format("%Y-%m").to_string();
-
-        let net_grid_w;
-        if net_w > 0.0 {
-            let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-            let discharge = net_w.min(max_power_w).min(max_avail_discharge);
-
-            bat_soc -= (discharge / 1000.0) * r.duration_hours / 0.95;
-            base_cycles += (discharge / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w - discharge;
-        } else {
-            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-            let charge = (-net_w).min(max_power_w).min(max_avail_charge);
-
-            bat_soc += (charge / 1000.0) * r.duration_hours * 0.95;
-            base_cycles += (charge / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w + charge;
-        }
-
-        if net_grid_w > 0.0 {
-            let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-            base_import_kwh += kwh;
-            base_energy_cost += kwh * (r.import_price_cents / 100.0);
-
-            if hour >= 15 && hour < 21 {
-                let peak = base_peaks.entry(month_key).or_insert(0.0);
-                if net_grid_w > *peak {
-                    *peak = net_grid_w;
+                let no_bat_demand = calculate_demand_charges_total(&no_bat_peaks);
+                SimulationResultModel {
+                    import_kwh: no_bat_import_kwh,
+                    export_kwh: no_bat_export_kwh,
+                    cycles: 0.0,
+                    energy_cost: no_bat_energy_cost,
+                    demand_charges: no_bat_demand,
+                    net_bill: no_bat_energy_cost + no_bat_demand,
                 }
-            }
-        } else {
-            let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-            base_export_kwh += kwh;
-            base_energy_cost -= kwh * (r.export_price_cents / 100.0);
-        }
-    }
-    let base_demand = calculate_demand_charges_total(&base_peaks);
-    let baseline_res = SimulationResultModel {
-        import_kwh: base_import_kwh,
-        export_kwh: base_export_kwh,
-        cycles: base_cycles,
-        energy_cost: base_energy_cost,
-        demand_charges: base_demand,
-        net_bill: base_energy_cost + base_demand,
-    };
+            });
 
-    // 3. Smart Heuristic
-    let mut smart_import_kwh = 0.0;
-    let mut smart_export_kwh = 0.0;
-    let mut smart_energy_cost = 0.0;
-    let mut smart_peaks = HashMap::new();
-    let mut smart_cycles = 0.0;
-    bat_soc = battery_capacity_kwh * 0.5;
+            let t_base = s.spawn(move || {
+                let mut base_import_kwh = 0.0;
+                let mut base_export_kwh = 0.0;
+                let mut base_energy_cost = 0.0;
+                let mut base_peaks = HashMap::new();
+                let mut base_cycles = 0.0;
+                let mut bat_soc = battery_capacity_kwh * 0.5;
 
-    for r in &records {
-        let net_w = r.load_power_w - r.solar_power_w;
-        let hour = r.dt_local.hour();
-        let month_key = r.dt_local.format("%Y-%m").to_string();
-        let import_price = r.import_price_cents;
-        let export_price = r.export_price_cents;
+                for r in records_ref {
+                    let net_w = r.load_power_w - r.solar_power_w;
+                    let hour = r.dt_local.hour();
+                    let month_key = r.dt_local.format("%Y-%m").to_string();
 
-        let is_demand = hour >= 15 && hour < 21;
-        let is_pre_charge = hour >= 10 && hour < 15;
+                    let net_grid_w;
+                    if net_w > 0.0 {
+                        let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
+                        let discharge = net_w.min(max_power_w).min(max_avail_discharge);
 
-        let mut charge_w = 0.0;
-        let mut discharge_w = 0.0;
+                        bat_soc -= (discharge / 1000.0) * r.duration_hours / 0.95;
+                        base_cycles += (discharge / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w - discharge;
+                    } else {
+                        let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                        let charge = (-net_w).min(max_power_w).min(max_avail_charge);
 
-        if import_price < 0.0 {
-            let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-            charge_w = max_power_w.min(max_avail_charge.max(0.0));
-        } else if export_price >= 30.0 {
-            let reserve = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
-            if bat_soc > reserve {
-                let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-            }
-        } else if is_pre_charge && import_price < 15.0 && (bat_soc / battery_capacity_kwh) < 0.85 {
-            let target = battery_capacity_kwh * 0.85;
-            let deficit = target - bat_soc;
-            let max_avail_charge = (deficit / 0.95) / r.duration_hours * 1000.0;
-            charge_w = max_power_w.min(max_avail_charge.max(0.0));
-        } else if is_demand {
-            if net_w > 0.0 {
-                let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
-                let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-            } else {
-                let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-            }
-        } else {
-            if net_w > 0.0 {
-                let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
-                let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-            } else {
-                let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-            }
-        }
+                        bat_soc += (charge / 1000.0) * r.duration_hours * 0.95;
+                        base_cycles += (charge / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w + charge;
+                    }
 
-        let net_grid_w;
-        if charge_w > 0.0 {
-            bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-            smart_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w + charge_w;
-        } else if discharge_w > 0.0 {
-            bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-            smart_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w - discharge_w;
-        } else {
-            net_grid_w = net_w;
-        }
+                    if net_grid_w > 0.0 {
+                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
+                        base_import_kwh += kwh;
+                        base_energy_cost += kwh * (r.import_price_cents / 100.0);
 
-        if net_grid_w > 0.0 {
-            let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-            smart_import_kwh += kwh;
-            smart_energy_cost += kwh * (import_price / 100.0);
-
-            if is_demand {
-                let peak = smart_peaks.entry(month_key).or_insert(0.0);
-                if net_grid_w > *peak {
-                    *peak = net_grid_w;
+                        if hour >= 15 && hour < 21 {
+                            let peak = base_peaks.entry(month_key).or_insert(0.0);
+                            if net_grid_w > *peak {
+                                *peak = net_grid_w;
+                            }
+                        }
+                    } else {
+                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
+                        base_export_kwh += kwh;
+                        base_energy_cost -= kwh * (r.export_price_cents / 100.0);
+                    }
                 }
-            }
-        } else {
-            let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-            smart_export_kwh += kwh;
-            smart_energy_cost -= kwh * (export_price / 100.0);
-        }
-    }
-    let smart_demand = calculate_demand_charges_total(&smart_peaks);
-    let smart_heuristic_res = SimulationResultModel {
-        import_kwh: smart_import_kwh,
-        export_kwh: smart_export_kwh,
-        cycles: smart_cycles,
-        energy_cost: smart_energy_cost,
-        demand_charges: smart_demand,
-        net_bill: smart_energy_cost + smart_demand,
-    };
-
-    // 4. Look-Ahead MPC
-    let mut mpc_import_kwh = 0.0;
-    let mut mpc_export_kwh = 0.0;
-    let mut mpc_energy_cost = 0.0;
-    let mut mpc_peaks = HashMap::new();
-    let mut mpc_cycles = 0.0;
-    bat_soc = battery_capacity_kwh * 0.5;
-
-    for i in 0..records_simulated {
-        let r = &records[i];
-        let net_w = r.load_power_w - r.solar_power_w;
-        let hour = r.dt_local.hour();
-        let month_key = r.dt_local.format("%Y-%m").to_string();
-        let import_price = r.import_price_cents;
-        let export_price = r.export_price_cents;
-
-        let is_demand = hour >= 15 && hour < 21;
-
-        let mut expected_solar = 0.0;
-        let mut demand_needed = 0.0;
-        let mut cheapest_future = Vec::new();
-
-        for j in i..records_simulated {
-            let fr = &records[j];
-            if fr.timestamp - r.timestamp > 86400 {
-                break;
-            }
-            let fhour = fr.dt_local.hour();
-            let fnet = fr.load_power_w - fr.solar_power_w;
-
-            if fhour >= 15 && fhour < 21 && fnet > 0.0 {
-                demand_needed += (fnet / 1000.0) * fr.duration_hours;
-            }
-            if fhour < 15 && fnet < 0.0 {
-                expected_solar += (-fnet / 1000.0) * fr.duration_hours;
-            }
-            cheapest_future.push((j, fr.import_price_cents));
-        }
-
-        cheapest_future.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let threshold_idx = (cheapest_future.len() / 5).max(1);
-        let cheap_threshold = cheapest_future[threshold_idx - 1].1;
-
-        let required_reserve = (demand_needed / 0.95).min(battery_capacity_kwh * 0.95);
-
-        let mut charge_w = 0.0;
-        let mut discharge_w = 0.0;
-
-        if is_demand {
-            if net_w > 0.0 {
-                let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-            } else {
-                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-            }
-        } else {
-            let projected_deficit = required_reserve - (bat_soc + expected_solar * 0.95);
-            let is_cheap = import_price < 12.0 || import_price <= cheap_threshold;
-
-            if projected_deficit > 0.0 && is_cheap {
-                let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;
-                charge_w = max_power_w.min(max_avail_charge.max(0.0));
-            } else if net_w < 0.0 {
-                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-            } else if export_price >= 30.0 && bat_soc > (required_reserve + battery_capacity_kwh * 0.1) {
-                let max_avail_discharge = ((bat_soc - required_reserve) * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-            } else if net_w > 0.0 {
-                let available = (bat_soc - required_reserve).max(0.0);
-                let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-            }
-        }
-
-        let net_grid_w;
-        if charge_w > 0.0 {
-            bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-            mpc_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w + charge_w;
-        } else if discharge_w > 0.0 {
-            bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-            mpc_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w - discharge_w;
-        } else {
-            net_grid_w = net_w;
-        }
-
-        if net_grid_w > 0.0 {
-            let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-            mpc_import_kwh += kwh;
-            mpc_energy_cost += kwh * (import_price / 100.0);
-
-            if is_demand {
-                let peak = mpc_peaks.entry(month_key).or_insert(0.0);
-                if net_grid_w > *peak {
-                    *peak = net_grid_w;
+                let base_demand = calculate_demand_charges_total(&base_peaks);
+                SimulationResultModel {
+                    import_kwh: base_import_kwh,
+                    export_kwh: base_export_kwh,
+                    cycles: base_cycles,
+                    energy_cost: base_energy_cost,
+                    demand_charges: base_demand,
+                    net_bill: base_energy_cost + base_demand,
                 }
-            }
-        } else {
-            let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-            mpc_export_kwh += kwh;
-            mpc_energy_cost -= kwh * (export_price / 100.0);
-        }
-    }
-    let mpc_demand = calculate_demand_charges_total(&mpc_peaks);
-    let lookahead_mpc_res = SimulationResultModel {
-        import_kwh: mpc_import_kwh,
-        export_kwh: mpc_export_kwh,
-        cycles: mpc_cycles,
-        energy_cost: mpc_energy_cost,
-        demand_charges: mpc_demand,
-        net_bill: mpc_energy_cost + mpc_demand,
-    };
+            });
 
-    // 5. Adaptive Peak Shaving
-    let mut adapt_import_kwh = 0.0;
-    let mut adapt_export_kwh = 0.0;
-    let mut adapt_energy_cost = 0.0;
-    let mut adapt_peaks = HashMap::new();
-    let mut adapt_cycles = 0.0;
-    bat_soc = battery_capacity_kwh * 0.5;
+            let t_smart = s.spawn(move || {
+                let mut smart_import_kwh = 0.0;
+                let mut smart_export_kwh = 0.0;
+                let mut smart_energy_cost = 0.0;
+                let mut smart_peaks = HashMap::new();
+                let mut smart_cycles = 0.0;
+                let mut bat_soc = battery_capacity_kwh * 0.5;
 
-    for r in &records {
-        let net_w = r.load_power_w - r.solar_power_w;
-        let hour = r.dt_local.hour();
-        let month_key = r.dt_local.format("%Y-%m").to_string();
-        let import_price = r.import_price_cents;
-        let export_price = r.export_price_cents;
+                for r in records_ref {
+                    let net_w = r.load_power_w - r.solar_power_w;
+                    let hour = r.dt_local.hour();
+                    let month_key = r.dt_local.format("%Y-%m").to_string();
+                    let import_price = r.import_price_cents;
+                    let export_price = r.export_price_cents;
 
-        let is_demand = hour >= 15 && hour < 21;
-        let current_month_peak = *adapt_peaks.get(&month_key).unwrap_or(&0.0);
+                    let is_demand = hour >= 15 && hour < 21;
+                    let is_pre_charge = hour >= 10 && hour < 15;
 
-        let mut charge_w = 0.0;
-        let mut discharge_w = 0.0;
+                    let mut charge_w = 0.0;
+                    let mut discharge_w = 0.0;
 
-        if import_price < 0.0 {
-            let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-            charge_w = max_power_w.min(max_avail_charge.max(0.0));
-        } else if export_price >= 30.0 {
-            let reserve = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
-            if bat_soc > reserve {
-                let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-            }
-        } else if is_demand {
-            if net_w > current_month_peak {
-                let excess = net_w - current_month_peak;
-                let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = excess.min(max_power_w).min(max_avail_discharge);
-            } else if net_w < 0.0 {
-                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-            }
-        } else {
-            if net_w > 0.0 {
-                let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
-                let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-            } else {
-                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-            }
-        }
+                    if import_price < 0.0 {
+                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
+                    } else if export_price >= 30.0 {
+                        let reserve = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
+                        if bat_soc > reserve {
+                            let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
+                        }
+                    } else if is_pre_charge && import_price < 15.0 && (bat_soc / battery_capacity_kwh) < 0.85 {
+                        let target = battery_capacity_kwh * 0.85;
+                        let deficit = target - bat_soc;
+                        let max_avail_charge = (deficit / 0.95) / r.duration_hours * 1000.0;
+                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
+                    } else if is_demand {
+                        if net_w > 0.0 {
+                            let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
+                            let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                        } else {
+                            let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
+                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                        }
+                    } else {
+                        if net_w > 0.0 {
+                            let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
+                            let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                        } else {
+                            let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
+                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                        }
+                    }
 
-        let net_grid_w;
-        if charge_w > 0.0 {
-            bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-            adapt_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w + charge_w;
-        } else if discharge_w > 0.0 {
-            bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-            adapt_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-            net_grid_w = net_w - discharge_w;
-        } else {
-            net_grid_w = net_w;
-        }
+                    let net_grid_w;
+                    if charge_w > 0.0 {
+                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
+                        smart_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w + charge_w;
+                    } else if discharge_w > 0.0 {
+                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
+                        smart_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w - discharge_w;
+                    } else {
+                        net_grid_w = net_w;
+                    }
 
-        if net_grid_w > 0.0 {
-            let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-            adapt_import_kwh += kwh;
-            adapt_energy_cost += kwh * (import_price / 100.0);
+                    if net_grid_w > 0.0 {
+                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
+                        smart_import_kwh += kwh;
+                        smart_energy_cost += kwh * (import_price / 100.0);
 
-            if is_demand {
-                let peak = adapt_peaks.entry(month_key).or_insert(0.0);
-                if net_grid_w > *peak {
-                    *peak = net_grid_w;
+                        if is_demand {
+                            let peak = smart_peaks.entry(month_key).or_insert(0.0);
+                            if net_grid_w > *peak {
+                                *peak = net_grid_w;
+                            }
+                        }
+                    } else {
+                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
+                        smart_export_kwh += kwh;
+                        smart_energy_cost -= kwh * (export_price / 100.0);
+                    }
                 }
-            }
-        } else {
-            let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-            adapt_export_kwh += kwh;
-            adapt_energy_cost -= kwh * (export_price / 100.0);
-        }
-    }
-    let adapt_demand = calculate_demand_charges_total(&adapt_peaks);
-    let adaptive_peak_res = SimulationResultModel {
-        import_kwh: adapt_import_kwh,
-        export_kwh: adapt_export_kwh,
-        cycles: adapt_cycles,
-        energy_cost: adapt_energy_cost,
-        demand_charges: adapt_demand,
-        net_bill: adapt_energy_cost + adapt_demand,
-    };
+                let smart_demand = calculate_demand_charges_total(&smart_peaks);
+                SimulationResultModel {
+                    import_kwh: smart_import_kwh,
+                    export_kwh: smart_export_kwh,
+                    cycles: smart_cycles,
+                    energy_cost: smart_energy_cost,
+                    demand_charges: smart_demand,
+                    net_bill: smart_energy_cost + smart_demand,
+                }
+            });
+
+            let t_mpc = s.spawn(move || {
+                let mut mpc_import_kwh = 0.0;
+                let mut mpc_export_kwh = 0.0;
+                let mut mpc_energy_cost = 0.0;
+                let mut mpc_peaks = HashMap::new();
+                let mut mpc_cycles = 0.0;
+                let mut bat_soc = battery_capacity_kwh * 0.5;
+
+                let progress_step = (records_simulated / 100).max(1);
+                let start_time = std::time::Instant::now();
+
+                for i in 0..records_simulated {
+                    if i % progress_step == 0 {
+                        if let Some(cb) = progress_cb {
+                            let elapsed = start_time.elapsed().as_secs_f64();
+                            let percent = (i as f64 / records_simulated as f64) * 100.0;
+                            let eta_seconds = if i > 0 {
+                                elapsed * (records_simulated as f64 - i as f64) / i as f64
+                            } else {
+                                0.0
+                            };
+                            cb(percent, eta_seconds);
+                        }
+                    }
+
+                    let r = &records_ref[i];
+                    let net_w = r.load_power_w - r.solar_power_w;
+                    let hour = r.dt_local.hour();
+                    let month_key = r.dt_local.format("%Y-%m").to_string();
+                    let import_price = r.import_price_cents;
+                    let export_price = r.export_price_cents;
+
+                    let is_demand = hour >= 15 && hour < 21;
+
+                    let mut expected_solar = 0.0;
+                    let mut demand_needed = 0.0;
+                    let mut cheapest_future = Vec::new();
+
+                    for j in i..records_simulated {
+                        let fr = &records_ref[j];
+                        if fr.timestamp - r.timestamp > 86400 {
+                            break;
+                        }
+                        let fhour = fr.dt_local.hour();
+                        let fnet = fr.load_power_w - fr.solar_power_w;
+
+                        if fhour >= 15 && fhour < 21 && fnet > 0.0 {
+                            demand_needed += (fnet / 1000.0) * fr.duration_hours;
+                        }
+                        if fhour < 15 && fnet < 0.0 {
+                            expected_solar += (-fnet / 1000.0) * fr.duration_hours;
+                        }
+                        cheapest_future.push((j, fr.import_price_cents));
+                    }
+
+                    cheapest_future.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+                    let threshold_idx = (cheapest_future.len() / 5).max(1);
+                    let cheap_threshold = cheapest_future[threshold_idx - 1].1;
+
+                    let required_reserve = (demand_needed / 0.95).min(battery_capacity_kwh * 0.95);
+
+                    let mut charge_w = 0.0;
+                    let mut discharge_w = 0.0;
+
+                    if is_demand {
+                        if net_w > 0.0 {
+                            let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                        } else {
+                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                        }
+                    } else {
+                        let projected_deficit = required_reserve - (bat_soc + expected_solar * 0.95);
+                        let is_cheap = import_price < 12.0 || import_price <= cheap_threshold;
+
+                        if projected_deficit > 0.0 && is_cheap {
+                            let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;
+                            charge_w = max_power_w.min(max_avail_charge.max(0.0));
+                        } else if net_w < 0.0 {
+                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                        } else if export_price >= 30.0 && bat_soc > (required_reserve + battery_capacity_kwh * 0.1) {
+                            let max_avail_discharge = ((bat_soc - required_reserve) * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
+                        } else if net_w > 0.0 {
+                            let available = (bat_soc - required_reserve).max(0.0);
+                            let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                        }
+                    }
+
+                    let net_grid_w;
+                    if charge_w > 0.0 {
+                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
+                        mpc_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w + charge_w;
+                    } else if discharge_w > 0.0 {
+                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
+                        mpc_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w - discharge_w;
+                    } else {
+                        net_grid_w = net_w;
+                    }
+
+                    if net_grid_w > 0.0 {
+                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
+                        mpc_import_kwh += kwh;
+                        mpc_energy_cost += kwh * (import_price / 100.0);
+
+                        if is_demand {
+                            let peak = mpc_peaks.entry(month_key).or_insert(0.0);
+                            if net_grid_w > *peak {
+                                *peak = net_grid_w;
+                            }
+                        }
+                    } else {
+                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
+                        mpc_export_kwh += kwh;
+                        mpc_energy_cost -= kwh * (export_price / 100.0);
+                    }
+                }
+
+                if let Some(cb) = progress_cb {
+                    cb(100.0, 0.0);
+                }
+
+                let mpc_demand = calculate_demand_charges_total(&mpc_peaks);
+                SimulationResultModel {
+                    import_kwh: mpc_import_kwh,
+                    export_kwh: mpc_export_kwh,
+                    cycles: mpc_cycles,
+                    energy_cost: mpc_energy_cost,
+                    demand_charges: mpc_demand,
+                    net_bill: mpc_energy_cost + mpc_demand,
+                }
+            });
+
+            let t_adapt = s.spawn(move || {
+                let mut adapt_import_kwh = 0.0;
+                let mut adapt_export_kwh = 0.0;
+                let mut adapt_energy_cost = 0.0;
+                let mut adapt_peaks = HashMap::new();
+                let mut adapt_cycles = 0.0;
+                let mut bat_soc = battery_capacity_kwh * 0.5;
+
+                for r in records_ref {
+                    let net_w = r.load_power_w - r.solar_power_w;
+                    let hour = r.dt_local.hour();
+                    let month_key = r.dt_local.format("%Y-%m").to_string();
+                    let import_price = r.import_price_cents;
+                    let export_price = r.export_price_cents;
+
+                    let is_demand = hour >= 15 && hour < 21;
+                    let current_month_peak = *adapt_peaks.get(&month_key).unwrap_or(&0.0);
+
+                    let mut charge_w = 0.0;
+                    let mut discharge_w = 0.0;
+
+                    if import_price < 0.0 {
+                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
+                    } else if export_price >= 30.0 {
+                        let reserve = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
+                        if bat_soc > reserve {
+                            let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
+                        }
+                    } else if is_demand {
+                        if net_w > current_month_peak {
+                            let excess = net_w - current_month_peak;
+                            let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = excess.min(max_power_w).min(max_avail_discharge);
+                        } else if net_w < 0.0 {
+                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                        }
+                    } else {
+                        if net_w > 0.0 {
+                            let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
+                            let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                        } else {
+                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                        }
+                    }
+
+                    let net_grid_w;
+                    if charge_w > 0.0 {
+                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
+                        adapt_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w + charge_w;
+                    } else if discharge_w > 0.0 {
+                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
+                        adapt_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
+                        net_grid_w = net_w - discharge_w;
+                    } else {
+                        net_grid_w = net_w;
+                    }
+
+                    if net_grid_w > 0.0 {
+                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
+                        adapt_import_kwh += kwh;
+                        adapt_energy_cost += kwh * (import_price / 100.0);
+
+                        if is_demand {
+                            let peak = adapt_peaks.entry(month_key).or_insert(0.0);
+                            if net_grid_w > *peak {
+                                *peak = net_grid_w;
+                            }
+                        }
+                    } else {
+                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
+                        adapt_export_kwh += kwh;
+                        adapt_energy_cost -= kwh * (export_price / 100.0);
+                    }
+                }
+                let adapt_demand = calculate_demand_charges_total(&adapt_peaks);
+                SimulationResultModel {
+                    import_kwh: adapt_import_kwh,
+                    export_kwh: adapt_export_kwh,
+                    cycles: adapt_cycles,
+                    energy_cost: adapt_energy_cost,
+                    demand_charges: adapt_demand,
+                    net_bill: adapt_energy_cost + adapt_demand,
+                }
+            });
+
+            (
+                t_no_bat.join().unwrap(),
+                t_base.join().unwrap(),
+                t_smart.join().unwrap(),
+                t_mpc.join().unwrap(),
+                t_adapt.join().unwrap(),
+            )
+        });
 
     let mut total_solar_kwh = 0.0;
     let mut total_usage_kwh = 0.0;

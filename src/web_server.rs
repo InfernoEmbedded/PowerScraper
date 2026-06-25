@@ -47,6 +47,14 @@ pub fn get_system_status() -> &'static Mutex<SystemStatus> {
     SYSTEM_STATUS.get_or_init(|| Mutex::new(SystemStatus::default()))
 }
 
+#[derive(serde::Serialize, Clone)]
+#[serde(tag = "type")]
+pub enum SimProgressUpdate {
+    Progress { percent: f64, eta_seconds: f64 },
+    Result { response: crate::power_manager::SimulationResponse },
+    Error { message: String },
+}
+
 #[derive(serde::Deserialize)]
 struct SimQuery {
     range: Option<String>,
@@ -70,11 +78,37 @@ pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String
             get(move |axum::extract::Query(query): axum::extract::Query<SimQuery>| {
                 let path = db_path_sim.clone();
                 async move {
-                    let range_str = query.range.as_deref().unwrap_or("1m");
-                    match crate::power_manager::run_historical_simulation(&path, range_str) {
-                        Ok(res) => Ok(Json(res)),
-                        Err(e) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e)),
-                    }
+                    let range_str = query.range.as_deref().unwrap_or("1m").to_string();
+                    let (tx, rx) = tokio::sync::mpsc::channel(100);
+
+                    tokio::task::spawn_blocking(move || {
+                        let progress_cb = |percent: f64, eta_seconds: f64| {
+                            let _ = tx.blocking_send(SimProgressUpdate::Progress { percent, eta_seconds });
+                        };
+                        match crate::power_manager::run_historical_simulation_impl(&path, &range_str, Some(&progress_cb)) {
+                            Ok(res) => {
+                                let _ = tx.blocking_send(SimProgressUpdate::Result { response: res });
+                            }
+                            Err(e) => {
+                                let _ = tx.blocking_send(SimProgressUpdate::Error { message: e });
+                            }
+                        }
+                    });
+
+                    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+                        match rx.recv().await {
+                            Some(item) => {
+                                match axum::response::sse::Event::default().json_data(item) {
+                                    Ok(ev) => Some((Ok::<axum::response::sse::Event, std::convert::Infallible>(ev), rx)),
+                                    Err(_) => None,
+                                }
+                            }
+                            None => None,
+                        }
+                    });
+
+                    axum::response::Sse::new(stream)
+                        .keep_alive(axum::response::sse::KeepAlive::default())
                 }
             }),
         )
