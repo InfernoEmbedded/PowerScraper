@@ -470,8 +470,11 @@
             <!-- LOADING SPINNER -->
             <div id="sim-loading" style="display: none; text-align: center; padding: 40px;">
                 <div class="spinner" style="margin: 0 auto 15px auto;"></div>
-                <div style="font-weight: 500; font-size: 1.1rem; color: var(--primary);">Simulating battery control models...</div>
-                <div class="text-muted" style="font-size: 0.9rem; margin-top: 5px;">This may take a few seconds depending on the data size.</div>
+                <div id="sim-loading-text" style="font-weight: 500; font-size: 1.1rem; color: var(--primary);">Simulating battery control models...</div>
+                <div style="width: 100%; max-width: 400px; background: rgba(255,255,255,0.05); height: 8px; border-radius: 4px; margin: 15px auto; overflow: hidden; border: 1px solid rgba(255,255,255,0.1);">
+                    <div id="sim-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width 0.1s ease;"></div>
+                </div>
+                <div id="sim-eta" class="text-muted" style="font-size: 0.9rem; margin-top: 5px;">ETA: Estimating...</div>
             </div>
 
             <!-- SIMULATION RESULTS -->
