@@ -468,3 +468,42 @@ input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
 #instant-target-val {
     transition: color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
 }
+
+/* Simulation specific styles */
+.grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+    gap: 20px;
+    margin-bottom: 24px;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid rgba(255, 255, 255, 0.1);
+    border-top: 4px solid var(--primary);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.sim-table th, .sim-table td {
+    padding: 12px 15px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.sim-table tbody tr {
+    transition: background-color 0.2s ease;
+}
+
+.sim-table tbody tr:hover {
+    background-color: rgba(255, 255, 255, 0.02);
+}
+
+.sim-table tbody tr:last-child {
+    background-color: rgba(81, 71, 229, 0.05);
+}
