@@ -37,6 +37,8 @@ pub struct SimTracker {
     pub cycles: f64,
     pub energy_cost: f64,
     pub daily: BTreeMap<String, DailyScenarioResult>,
+    pub soc_history: Vec<f32>,
+    pub grid_history: Vec<f32>,
 }
 
 impl SimTracker {
@@ -47,6 +49,8 @@ impl SimTracker {
             cycles: 0.0,
             energy_cost: 0.0,
             daily: BTreeMap::new(),
+            soc_history: Vec::new(),
+            grid_history: Vec::new(),
         }
     }
 
@@ -58,7 +62,11 @@ impl SimTracker {
         step_cycles: f64,
         import_price: f64,
         export_price: f64,
+        bat_soc: f64,
     ) {
+        self.soc_history.push(bat_soc as f32);
+        self.grid_history.push(net_grid_w as f32);
+
         let day = self.daily.entry(date.to_string()).or_default();
         day.cycles += step_cycles;
         self.cycles += step_cycles;

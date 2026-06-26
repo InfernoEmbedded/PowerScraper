@@ -127,6 +127,7 @@ pub fn run(
             net_grid_w = net_w;
         }
 
+        let bat_pct = (bat_soc / config.battery_capacity_kwh) * 100.0;
         tracker.record_step(
             &date_str,
             net_grid_w,
@@ -134,6 +135,7 @@ pub fn run(
             step_cycles,
             import_price,
             export_price,
+            bat_pct,
         );
 
         if net_grid_w > 0.0 {
@@ -159,6 +161,8 @@ pub fn run(
         demand_charges: mpc_demand,
         net_bill: tracker.energy_cost + mpc_demand,
         daily: tracker.daily,
+        soc_history: tracker.soc_history,
+        grid_history: tracker.grid_history,
     }
 }
 

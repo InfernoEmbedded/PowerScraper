@@ -21,8 +21,9 @@ function switchTab(tabId, el) {
         }
     }
 
-    if (tabId === 'tab-simulation' && simChartInstance) {
-        simChartInstance.resize();
+    if (tabId === 'tab-simulation') {
+        if (simChartInstance) simChartInstance.resize();
+        if (simDetailChartInstance) simDetailChartInstance.resize();
     }
 }
 
@@ -1862,6 +1863,9 @@ function updateAgeCounters() {
 
 let lastSimulationData = null;
 let simChartInstance = null;
+let simDetailChartInstance = null;
+let currentScenarioKey = 'evolved_heuristic';
+let lastHoveredDate = null;
 
 const scenarioNames = {
     no_battery: "Scenario A (No Battery)",
@@ -1941,10 +1945,19 @@ function getDailyDataset(scenarioKey, metric, data) {
 function showSimulationChart(scenarioKey, metric) {
     if (!lastSimulationData) return;
     
+    currentScenarioKey = scenarioKey;
+    
     const chartEl = document.getElementById('sim-chart');
     if (!chartEl) return;
     
     const { dates, values } = getDailyDataset(scenarioKey, metric, lastSimulationData);
+    
+    if (!lastHoveredDate && dates.length > 0) {
+        lastHoveredDate = dates[dates.length - 1];
+    }
+    if (lastHoveredDate) {
+        updateSimDetailChart(lastHoveredDate);
+    }
     
     // Highlight matching cells and remove highlight from others
     document.querySelectorAll('.sim-metric-cell').forEach(cell => {
@@ -2003,6 +2016,16 @@ function showSimulationChart(scenarioKey, metric) {
             }]
         },
         options: {
+            onHover: (event, activeElements) => {
+                if (activeElements && activeElements.length > 0) {
+                    const idx = activeElements[0].index;
+                    const dateStr = dates[idx];
+                    if (dateStr && dateStr !== lastHoveredDate) {
+                        lastHoveredDate = dateStr;
+                        updateSimDetailChart(dateStr);
+                    }
+                }
+            },
             responsive: true,
             maintainAspectRatio: false,
             plugins: {
@@ -2072,6 +2095,208 @@ function showSimulationChart(scenarioKey, metric) {
                         callback: function(value) {
                             return formatMetricValue(metric, value);
                         }
+                    }
+                }
+            }
+        }
+    });
+}
+
+function updateSimDetailChart(dateStr) {
+    if (!lastSimulationData || !dateStr) return;
+
+    const detailCanvas = document.getElementById('sim-detail-chart');
+    if (!detailCanvas) return;
+
+    const indices = [];
+    const allDates = lastSimulationData.dates;
+    for (let i = 0; i < allDates.length; i++) {
+        if (allDates[i] === dateStr) {
+            indices.push(i);
+        }
+    }
+
+    if (indices.length === 0) {
+        console.warn("No high-resolution data found for date: " + dateStr);
+        return;
+    }
+
+    const labels = indices.map(idx => lastSimulationData.time_labels[idx]);
+    const solar = indices.map(idx => lastSimulationData.solar_history[idx]);
+    const load = indices.map(idx => lastSimulationData.load_history[idx]);
+    
+    const scenarioData = lastSimulationData[currentScenarioKey];
+    if (!scenarioData || !scenarioData.grid_history || !scenarioData.soc_history) {
+        console.warn("No scenario data found for: " + currentScenarioKey);
+        return;
+    }
+
+    const grid = indices.map(idx => scenarioData.grid_history[idx]);
+    const soc = indices.map(idx => scenarioData.soc_history[idx]);
+
+    const battery = [];
+    for (let i = 0; i < indices.length; i++) {
+        battery.push(load[i] - solar[i] - grid[i]);
+    }
+
+    const titleEl = document.getElementById('sim-detail-chart-title');
+    if (titleEl) {
+        const scenarioName = scenarioNames[currentScenarioKey] || currentScenarioKey;
+        titleEl.innerText = `${dateStr} (${scenarioName})`;
+    }
+
+    const ctx = detailCanvas.getContext('2d');
+    if (simDetailChartInstance) {
+        simDetailChartInstance.destroy();
+    }
+
+    const textColor = '#8e95bf';
+    const gridColor = 'rgba(255, 255, 255, 0.05)';
+
+    simDetailChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Solar Power (W)',
+                    data: solar,
+                    borderColor: 'hsl(45, 100%, 50%)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: false,
+                    tension: 0.3,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Home Load (W)',
+                    data: load,
+                    borderColor: 'hsl(350, 100%, 60%)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: false,
+                    tension: 0.3,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Net Grid Power (W)',
+                    data: grid,
+                    borderColor: 'hsl(200, 100%, 50%)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: false,
+                    tension: 0.3,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Battery Power (W)',
+                    data: battery,
+                    borderColor: 'hsl(280, 80%, 65%)',
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: false,
+                    tension: 0.3,
+                    yAxisID: 'y'
+                },
+                {
+                    label: 'Battery SoC (%)',
+                    data: soc,
+                    borderColor: 'hsl(145, 100%, 45%)',
+                    borderWidth: 2,
+                    backgroundColor: 'rgba(16, 185, 129, 0.05)',
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: true,
+                    tension: 0.3,
+                    yAxisID: 'y1'
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: textColor,
+                        font: { family: 'Outfit', size: 11 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(22, 26, 49, 0.95)',
+                    titleColor: '#fff',
+                    titleFont: { family: 'Outfit', size: 13, weight: '600' },
+                    bodyColor: '#f0f2fd',
+                    bodyFont: { family: 'Outfit', size: 12 },
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 1,
+                    padding: 10,
+                    cornerRadius: 8,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                if (context.dataset.yAxisID === 'y1') {
+                                    label += context.parsed.y.toFixed(1) + '%';
+                                } else {
+                                    label += context.parsed.y.toFixed(0) + ' W';
+                                }
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: gridColor, borderColor: gridColor },
+                    ticks: {
+                        color: textColor,
+                        font: { family: 'Outfit', size: 10 },
+                        maxTicksLimit: 24
+                    }
+                },
+                y: {
+                    position: 'left',
+                    grid: { color: gridColor, borderColor: gridColor },
+                    title: {
+                        display: true,
+                        text: 'Power (Watts)',
+                        color: textColor,
+                        font: { family: 'Outfit', size: 11 }
+                    },
+                    ticks: {
+                        color: textColor,
+                        font: { family: 'Outfit', size: 10 }
+                    }
+                },
+                y1: {
+                    position: 'right',
+                    grid: { drawOnChartArea: false },
+                    title: {
+                        display: true,
+                        text: 'State of Charge (%)',
+                        color: textColor,
+                        font: { family: 'Outfit', size: 11 }
+                    },
+                    min: 0,
+                    max: 100,
+                    ticks: {
+                        color: textColor,
+                        font: { family: 'Outfit', size: 10 }
                     }
                 }
             }

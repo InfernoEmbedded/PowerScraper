@@ -70,6 +70,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             net_grid_w = net_w;
         }
 
+        let bat_pct = (bat_soc / config.battery_capacity_kwh) * 100.0;
         tracker.record_step(
             &date_str,
             net_grid_w,
@@ -77,6 +78,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             step_cycles,
             r.import_price_cents,
             r.export_price_cents,
+            bat_pct,
         );
 
         if net_grid_w > 0.0 {
@@ -97,6 +99,8 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         demand_charges: adapt_demand,
         net_bill: tracker.energy_cost + adapt_demand,
         daily: tracker.daily,
+        soc_history: tracker.soc_history,
+        grid_history: tracker.grid_history,
     }
 }
 

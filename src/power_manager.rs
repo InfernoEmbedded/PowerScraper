@@ -2291,6 +2291,8 @@ pub struct SimulationResultModel {
     pub demand_charges: f64,
     pub net_bill: f64,
     pub daily: std::collections::BTreeMap<String, DailyScenarioResult>,
+    pub soc_history: Vec<f32>,
+    pub grid_history: Vec<f32>,
 }
 
 #[derive(serde::Serialize, Clone, Debug)]
@@ -2312,6 +2314,11 @@ pub struct SimulationResponse {
     pub suggest_discharge_threshold: Option<f64>,
     pub daily_solar: std::collections::BTreeMap<String, f64>,
     pub daily_usage: std::collections::BTreeMap<String, f64>,
+    pub timestamps: Vec<i64>,
+    pub solar_history: Vec<f32>,
+    pub load_history: Vec<f32>,
+    pub dates: Vec<String>,
+    pub time_labels: Vec<String>,
 }
 
 pub fn run_historical_simulation(db_path: &str, range: &str) -> Result<SimulationResponse, String> {
@@ -2628,6 +2635,12 @@ pub fn run_historical_simulation_impl(
 
     let (no_battery_res, baseline_res, auto_res, smart_heuristic_res, lookahead_mpc_res, adaptive_peak_res, mpc_arbitrage_res, evolved_res) = threads_res;
 
+    let timestamps = records.iter().map(|r| r.timestamp).collect();
+    let solar_history = records.iter().map(|r| r.solar_power_w as f32).collect();
+    let load_history = records.iter().map(|r| r.load_power_w as f32).collect();
+    let dates = records.iter().map(|r| r.dt_local.date_naive().to_string()).collect();
+    let time_labels = records.iter().map(|r| r.dt_local.format("%H:%M").to_string()).collect();
+
     Ok(SimulationResponse {
         start_date,
         end_date,
@@ -2646,6 +2659,11 @@ pub fn run_historical_simulation_impl(
         suggest_discharge_threshold,
         daily_solar,
         daily_usage,
+        timestamps,
+        solar_history,
+        load_history,
+        dates,
+        time_labels,
     })
 }
 

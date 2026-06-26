@@ -19,6 +19,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             0.0,
             r.import_price_cents,
             r.export_price_cents,
+            0.0,
         );
 
         if net_w > 0.0 {
@@ -39,6 +40,8 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         demand_charges: no_bat_demand,
         net_bill: tracker.energy_cost + no_bat_demand,
         daily: tracker.daily,
+        soc_history: tracker.soc_history,
+        grid_history: tracker.grid_history,
     }
 }
 
