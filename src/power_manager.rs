@@ -481,6 +481,8 @@ pub struct PowerManager {
     pub tariff_manager: Arc<crate::tariff_manager::TariffManager>,
     last_regulation_update: std::time::Instant,
     pub db_path: String,
+    cached_metrics: Option<(f64, f64, f64, f64, f64)>,
+    last_metrics_update: Option<std::time::Instant>,
 }
 
 impl PowerManager {
@@ -527,6 +529,8 @@ impl PowerManager {
             tariff_manager,
             last_regulation_update: std::time::Instant::now() - std::time::Duration::from_secs(10),
             db_path: "config.db".to_string(),
+            cached_metrics: None,
+            last_metrics_update: None,
         }
     }
 
@@ -1383,7 +1387,26 @@ impl PowerManager {
         peak
     }
 
-    fn get_persistence_metrics(&self) -> (f64, f64, f64, f64, f64) {
+    pub fn clear_metrics_cache(&mut self) {
+        self.cached_metrics = None;
+        self.last_metrics_update = None;
+    }
+
+    fn get_persistence_metrics(&mut self) -> (f64, f64, f64, f64, f64) {
+        if let Some(last_update) = self.last_metrics_update {
+            if last_update.elapsed() < std::time::Duration::from_secs(300) {
+                if let Some(cached) = self.cached_metrics {
+                    return cached;
+                }
+            }
+        }
+        let metrics = self.compute_persistence_metrics();
+        self.cached_metrics = Some(metrics);
+        self.last_metrics_update = Some(std::time::Instant::now());
+        metrics
+    }
+
+    fn compute_persistence_metrics(&self) -> (f64, f64, f64, f64, f64) {
         let demand_window = get_demand_window(Some(&self.config));
         let mains_source = self.config.source.as_deref().unwrap_or("MainsMeter");
         let conn = match rusqlite::Connection::open(&self.db_path) {
@@ -4785,6 +4808,7 @@ mod tests {
             });
         }
         flush_history_to_db(temp_db, &mut buffer, None);
+        pm.clear_metrics_cache();
 
         pm.tariff_manager.set_current_rates(crate::tariff_manager::CurrentTariffRates {
             import_rate: 8.0,
@@ -4908,6 +4932,7 @@ mod tests {
                 rusqlite::params![ts2, 5000.0],
             ).unwrap();
         }
+        pm.clear_metrics_cache();
         
         let metrics_forecast = pm.get_persistence_metrics();
         // Since forecast_used is true, expected_solar_kwh should match the forecast (5 kW * 0.5 hours = 2.5 kWh)
