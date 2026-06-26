@@ -88,10 +88,7 @@ pub async fn run_solax_modbus_driver(
                                 if publish.topic == command_topic {
                                     let payload = String::from_utf8_lossy(&publish.payload);
                                     if let Ok(power) = payload.trim().parse::<i32>() {
-                                        println!(
-                                            "Driver [{}] received charge_battery command: {}W",
-                                            inverter_name_clone, power
-                                        );
+
                                         *req_power_clone.lock().await = power;
 
                                         let power_u16 = power as u16;
@@ -346,10 +343,7 @@ pub async fn run_solax_xhybrid_driver(
                                 if publish.topic == command_topic {
                                     let payload = String::from_utf8_lossy(&publish.payload);
                                     if let Ok(power) = payload.trim().parse::<i32>() {
-                                        println!(
-                                            "Driver [{}] (XHybrid) received charge_battery command: {}W",
-                                            inverter_name_clone, power
-                                        );
+
                                         *req_power_clone.lock().await = power;
 
                                         let power_u16 = power as u16;
