@@ -371,12 +371,30 @@ pub fn calculate_inferred_battery_capacity(db_path: &str, inverter_name: &str) -
 }
 
 pub fn update_all_inferred_capacities(db_path: &str, inverters: &[String]) {
-    println!("Calculating inferred battery capacities from SQLite history...");
-    for inv_name in inverters {
-        if let Some(cap) = calculate_inferred_battery_capacity(db_path, inv_name) {
+    println!("Calculating inferred battery capacities from SQLite history in parallel...");
+    let mut results = Vec::new();
+    std::thread::scope(|s| {
+        let mut threads = Vec::new();
+        for inv_name in inverters {
+            let inv_name_clone = inv_name.clone();
+            let handle = s.spawn(move || {
+                let cap = calculate_inferred_battery_capacity(db_path, &inv_name_clone);
+                (inv_name_clone, cap)
+            });
+            threads.push(handle);
+        }
+        for handle in threads {
+            if let Ok(res) = handle.join() {
+                results.push(res);
+            }
+        }
+    });
+
+    for (inv_name, cap_opt) in results {
+        if let Some(cap) = cap_opt {
             println!("Inferred battery capacity for inverter [{}]: {:.2} kWh", inv_name, cap);
             if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                let inv_status = status.inverters.entry(inv_name.clone()).or_default();
+                let inv_status = status.inverters.entry(inv_name).or_default();
                 inv_status.calculated_battery_capacity = Some(cap);
             }
         } else {
@@ -1893,19 +1911,42 @@ pub fn run_historical_simulation_impl(
     let mut max_charge_pct = 100;
 
     if let Some(ref bc) = config.battery_control {
-        for (inv_name, inv_cfg) in &bc.inverter {
-            let cap = inv_cfg.battery_capacity.or_else(|| {
-                calculate_inferred_battery_capacity(db_path, inv_name)
-            }).unwrap_or(13.8);
-            battery_capacity_kwh += cap;
-            max_power_w += inv_cfg.max_discharge.max(inv_cfg.max_charge);
-            if let Some(min_pct) = inv_cfg.min_charge_pct {
-                min_charge_pct = min_pct;
+        std::thread::scope(|s| {
+            let mut threads = Vec::new();
+            for (inv_name, inv_cfg) in &bc.inverter {
+                if let Some(cap) = inv_cfg.battery_capacity {
+                    battery_capacity_kwh += cap;
+                    max_power_w += inv_cfg.max_discharge.max(inv_cfg.max_charge);
+                    if let Some(min_pct) = inv_cfg.min_charge_pct {
+                        min_charge_pct = min_pct;
+                    }
+                    if let Some(max_pct) = inv_cfg.max_charge_pct {
+                        max_charge_pct = max_pct;
+                    }
+                } else {
+                    let inv_name_clone = inv_name.clone();
+                    let inv_cfg_clone = inv_cfg.clone();
+                    let handle = s.spawn(move || {
+                        let cap = calculate_inferred_battery_capacity(db_path, &inv_name_clone).unwrap_or(13.8);
+                        (cap, inv_cfg_clone)
+                    });
+                    threads.push(handle);
+                }
             }
-            if let Some(max_pct) = inv_cfg.max_charge_pct {
-                max_charge_pct = max_pct;
+
+            for handle in threads {
+                if let Ok((cap, inv_cfg)) = handle.join() {
+                    battery_capacity_kwh += cap;
+                    max_power_w += inv_cfg.max_discharge.max(inv_cfg.max_charge);
+                    if let Some(min_pct) = inv_cfg.min_charge_pct {
+                        min_charge_pct = min_pct;
+                    }
+                    if let Some(max_pct) = inv_cfg.max_charge_pct {
+                        max_charge_pct = max_pct;
+                    }
+                }
             }
-        }
+        });
     }
 
     if battery_capacity_kwh == 0.0 {
