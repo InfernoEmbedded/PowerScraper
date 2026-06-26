@@ -42,6 +42,13 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
         "CREATE INDEX IF NOT EXISTS idx_telemetry_history_timestamp ON telemetry_history (timestamp)",
         [],
     )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS solar_forecast (
+            timestamp INTEGER PRIMARY KEY,
+            predicted_solar_w REAL NOT NULL
+        )",
+        [],
+    )?;
     Ok(())
 }
 
@@ -1430,6 +1437,53 @@ impl PowerManager {
         }
 
         let mut expected_solar_kwh = 0.0;
+        let mut forecast_used = false;
+
+        let now_ts = chrono::Local::now().timestamp();
+        let demand_start_time = demand_window.map(|(start, _)| start).unwrap_or_else(|| NaiveTime::from_hms_opt(17, 0, 0).unwrap());
+        let mut end_dt = chrono::Local::now().date_naive().and_time(demand_start_time).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now_ts);
+        
+        let start_ts = if now_ts >= end_dt {
+            let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
+            end_dt = tomorrow.date_naive().and_time(demand_start_time).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now_ts);
+            tomorrow.date_naive().and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now_ts)
+        } else {
+            now_ts
+        };
+
+        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+            if let Ok(mut stmt) = conn.prepare("SELECT timestamp, predicted_solar_w FROM solar_forecast WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC") {
+                if let Ok(mut rows) = stmt.query(rusqlite::params![start_ts, end_dt]) {
+                    let mut prev_ts = None;
+                    let mut sum_kwh = 0.0;
+                    let mut points = 0;
+                    while let Ok(Some(row)) = rows.next() {
+                        let ts: i64 = row.get(0).unwrap_or(0);
+                        let val: f64 = row.get(1).unwrap_or(0.0);
+                        if let Some(pts) = prev_ts {
+                            let diff = (ts - pts) as f64 / 3600.0;
+                            if diff > 0.0 && diff <= 2.0 {
+                                sum_kwh += (val / 1000.0) * diff;
+                                points += 1;
+                            }
+                        } else {
+                            let diff = (ts - start_ts) as f64 / 3600.0;
+                            if diff > 0.0 && diff <= 2.0 {
+                                sum_kwh += (val / 1000.0) * diff;
+                                points += 1;
+                            }
+                        }
+                        prev_ts = Some(ts);
+                    }
+                    if points > 0 {
+                        expected_solar_kwh = sum_kwh;
+                        forecast_used = true;
+                        println!("Using Open-Meteo weather forecast for solar predictions: {:.2} kWh", expected_solar_kwh);
+                    }
+                }
+            }
+        }
+
         let mut demand_energy_needed_kwh = 0.0;
         let mut import_prices = Vec::new();
 
@@ -1456,7 +1510,7 @@ impl PowerManager {
                 .unwrap_or_else(|| chrono::Local::now());
             let dt_time = dt.time();
 
-            if demand_window.map_or(false, |(start, _)| dt_time < start) {
+            if !forecast_used && demand_window.map_or(false, |(start, _)| dt_time < start) {
                 expected_solar_kwh += (solar / 1000.0) * duration_hours;
             }
 
@@ -1568,6 +1622,12 @@ pub async fn run_power_manager_task(
     let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
         tm.start_background_loop(cancel_token_clone).await;
+    });
+
+    let cancel_token_weather = cancel_token.clone();
+    let db_path_weather = db_path.clone();
+    tokio::spawn(async move {
+        run_weather_fetcher_task(db_path_weather, cancel_token_weather).await;
     });
 
     // Subscribe to all meter and inverter status topics
@@ -3030,6 +3090,176 @@ fn is_time_in_window(now_time: NaiveTime, start: NaiveTime, end: NaiveTime) -> b
         now_time >= start && now_time < end
     } else {
         !(now_time >= end && now_time < start)
+    }
+}
+
+// --- Weather & Solar Forecast Logic ---
+
+pub fn calculate_solar_position(lat: f64, lon: f64, utc_time: chrono::DateTime<chrono::Utc>) -> (f64, f64) {
+    use chrono::Datelike;
+    use chrono::Timelike;
+    let lat_rad = lat.to_radians();
+    let d = utc_time.ordinal() as f64;
+    
+    // Declination angle delta (radians)
+    let delta = (23.45_f64.to_radians()) * ((2.0 * std::f64::consts::PI * (284.0 + d) / 365.0).sin());
+    
+    // Equation of Time (EoT) in minutes
+    let b = (360.0 * (d - 81.0) / 364.0).to_radians();
+    let eot = 9.87 * (2.0 * b).sin() - 7.53 * b.cos() - 1.5 * b.sin();
+    
+    // Hour of day in UTC
+    let utc_hour = utc_time.hour() as f64 + utc_time.minute() as f64 / 60.0 + utc_time.second() as f64 / 3600.0;
+    
+    // Solar Time in hours (lon / 15.0 converts longitude to hours timezone offset)
+    let solar_time = utc_hour + lon / 15.0 + eot / 60.0;
+    
+    // Hour Angle H (radians)
+    let h = (15.0 * (solar_time - 12.0)).to_radians();
+    
+    // Solar Altitude (elevation) alpha (radians)
+    let sin_alpha = lat_rad.sin() * delta.sin() + lat_rad.cos() * delta.cos() * h.cos();
+    let alpha = sin_alpha.asin();
+    
+    // Solar Azimuth theta_s (radians)
+    let cos_alpha = alpha.cos();
+    let cos_theta_s = if cos_alpha.abs() > 1e-6 {
+        ((delta.sin() * lat_rad.cos() - delta.cos() * lat_rad.sin() * h.cos()) / cos_alpha).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let sin_theta_s = if cos_alpha.abs() > 1e-6 {
+        (-delta.cos() * h.sin() / cos_alpha).clamp(-1.0, 1.0)
+    } else {
+        0.0
+    };
+    let theta_s = sin_theta_s.atan2(cos_theta_s);
+    
+    (alpha, theta_s)
+}
+
+pub fn calculate_poa_irradiance(
+    dni: f64,
+    dhi: f64,
+    solar_elevation: f64,
+    solar_azimuth: f64,
+    tilt_deg: f64,
+    azimuth_deg: f64,
+) -> f64 {
+    if solar_elevation <= 0.0 {
+        return 0.0;
+    }
+    
+    let tilt_rad = tilt_deg.to_radians();
+    let azimuth_rad = azimuth_deg.to_radians();
+    
+    let cos_incidence = solar_elevation.sin() * tilt_rad.cos()
+        + solar_elevation.cos() * tilt_rad.sin() * (solar_azimuth - azimuth_rad).cos();
+    
+    let direct_poa = dni * cos_incidence.max(0.0);
+    let diffuse_poa = dhi * (1.0 + tilt_rad.cos()) / 2.0;
+    
+    direct_poa + diffuse_poa
+}
+
+pub async fn run_weather_fetcher_task(db_path: String, cancel_token: tokio_util::sync::CancellationToken) {
+    println!("Spawning Weather Forecast Task...");
+    let client = reqwest::Client::new();
+    
+    // Sleep 5 seconds initially to let startup settle
+    tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+    
+    loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
+        
+        let config = crate::config::Config::load_from_db(&db_path).ok();
+        let location_opt = config.and_then(|c| c.location);
+        
+        if let Some(loc) = location_opt {
+            let lat = loc.latitude;
+            let lon = loc.longitude;
+            
+            let url = format!(
+                "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&hourly=direct_normal_irradiance,diffuse_radiation&forecast_days=2&timezone=UTC",
+                lat, lon
+            );
+            
+            println!("Fetching weather forecast from Open-Meteo for lat: {}, lon: {}...", lat, lon);
+            match client.get(&url).send().await {
+                Ok(resp) => {
+                    #[derive(serde::Deserialize, Debug)]
+                    struct OpenMeteoHourly {
+                        time: Vec<String>,
+                        direct_normal_irradiance: Vec<f64>,
+                        diffuse_radiation: Vec<f64>,
+                    }
+                    #[derive(serde::Deserialize, Debug)]
+                    struct OpenMeteoResponse {
+                        hourly: OpenMeteoHourly,
+                    }
+                    
+                    match resp.json::<OpenMeteoResponse>().await {
+                        Ok(data) => {
+                            println!("Successfully received weather forecast data ({} slots)", data.hourly.time.len());
+                            let mut predictions = Vec::new();
+                            for i in 0..data.hourly.time.len() {
+                                let t_str = &data.hourly.time[i];
+                                let rfc_str = format!("{}:00Z", t_str);
+                                if let Ok(utc_dt) = chrono::DateTime::parse_from_rfc3339(&rfc_str) {
+                                    let utc_dt = utc_dt.with_timezone(&chrono::Utc);
+                                    let (el, az) = calculate_solar_position(lat, lon, utc_dt);
+                                    
+                                    let mut hourly_w = 0.0;
+                                    let dni = data.hourly.direct_normal_irradiance[i];
+                                    let dhi = data.hourly.diffuse_radiation[i];
+                                    
+                                    for array in &loc.arrays {
+                                        let poa = calculate_poa_irradiance(dni, dhi, el, az, array.tilt, array.azimuth);
+                                        hourly_w += array.capacity_w * (poa / 1000.0) * 0.85;
+                                    }
+                                    
+                                    predictions.push((utc_dt.timestamp(), hourly_w));
+                                }
+                            }
+                            
+                            if !predictions.is_empty() {
+                                if let Ok(mut conn) = rusqlite::Connection::open(&db_path) {
+                                    if let Ok(tx) = conn.transaction() {
+                                        let _ = tx.execute("DELETE FROM solar_forecast", []);
+                                        for (ts, predicted_w) in &predictions {
+                                            let _ = tx.execute(
+                                                "INSERT OR REPLACE INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)",
+                                                rusqlite::params![ts, predicted_w],
+                                            );
+                                        }
+                                        if let Err(e) = tx.commit() {
+                                            eprintln!("Failed to commit solar forecast transaction: {}", e);
+                                        } else {
+                                            println!("Saved {} hourly solar predictions to solar_forecast table.", predictions.len());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to parse weather forecast JSON: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to fetch weather forecast from Open-Meteo: {}", e);
+                }
+            }
+        }
+        
+        for _ in 0..720 {
+            if cancel_token.is_cancelled() {
+                break;
+            }
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        }
     }
 }
 
@@ -4569,6 +4799,121 @@ mod tests {
         let cmd = pm.evaluate_and_command("solax1");
         assert_eq!(cmd, Some(0));
 
+        let _ = std::fs::remove_file(temp_db);
+    }
+
+    #[test]
+    fn test_solar_math() {
+        use chrono::TimeZone;
+        let lat = -33.8688;
+        let lon = 151.2093;
+        // Solar position at noon
+        let utc_dt = chrono::Utc.with_ymd_and_hms(2026, 6, 26, 2, 0, 0).unwrap(); // ~12pm Sydney time (UTC+10)
+        let (elevation, azimuth) = calculate_solar_position(lat, lon, utc_dt);
+        
+        // Solar elevation should be positive during mid-day
+        assert!(elevation > 0.0, "Elevation should be positive during mid-day");
+        assert!(elevation < std::f64::consts::PI / 2.0);
+        
+        // Test POA calculation
+        let dni = 800.0;
+        let dhi = 150.0;
+        let tilt = 20.0;
+        let array_azimuth = 0.0; // facing North
+        
+        // If elevation is negative (night), POA should be 0
+        let poa_night = calculate_poa_irradiance(dni, dhi, -0.1, azimuth, tilt, array_azimuth);
+        assert_eq!(poa_night, 0.0);
+        
+        // Positive elevation should yield a valid POA
+        let poa_day = calculate_poa_irradiance(dni, dhi, elevation, azimuth, tilt, array_azimuth);
+        assert!(poa_day > 0.0);
+        assert!(poa_day < dni + dhi);
+    }
+
+    #[test]
+    fn test_forecast_loading_fallback() {
+        let temp_db = "test_forecast_fallback.db";
+        let _ = std::fs::remove_file(temp_db);
+        init_history_db(temp_db).unwrap();
+        
+        let config = SolaxBatteryControlConfig {
+            source: Some("MainsMeter".to_string()),
+            demand: Some(crate::config::DemandConfig {
+                start: "17:00:00".to_string(),
+                end: "20:00:00".to_string(),
+                rate: 30.0,
+            }),
+            ..Default::default()
+        };
+        let mut pm = PowerManager::new(config, "sensors".to_string());
+        pm.db_path = temp_db.to_string();
+        
+        // Populate telemetry history for yesterday to see if get_persistence_metrics falls back to it.
+        let now = chrono::Local::now().timestamp();
+        let mut buffer = Vec::new();
+        for h in 0..24 {
+            let ts = now - 86400 + h * 3600;
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "solax1/PV1 Power".to_string(),
+                value: 1000.0,
+            });
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "MainsMeter/Total system power".to_string(),
+                value: 500.0,
+            });
+        }
+        flush_history_to_db(temp_db, &mut buffer, None);
+        
+        // 1. Fallback scenario (no forecast in DB)
+        let metrics_fallback = pm.get_persistence_metrics();
+        assert!(metrics_fallback.0 > 0.0, "Expected solar fallback yield to be > 0.0, got {}", metrics_fallback.0);
+        
+        // 2. Forecast scenario (forecast exists in DB)
+        // Calculate the exact window get_persistence_metrics will query:
+        let demand_window = get_demand_window(Some(&pm.config));
+        let demand_start_time = demand_window.map(|(start, _)| start).unwrap_or_else(|| NaiveTime::from_hms_opt(17, 0, 0).unwrap());
+        let mut end_dt = chrono::Local::now().date_naive().and_time(demand_start_time).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now);
+        
+        let start_ts = if now >= end_dt {
+            let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
+            end_dt = tomorrow.date_naive().and_time(demand_start_time).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now);
+            tomorrow.date_naive().and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now)
+        } else {
+            now
+        };
+
+        // Insert forecasted solar values (5000 W) in the query window
+        {
+            let conn = rusqlite::Connection::open(temp_db).unwrap();
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS solar_forecast (
+                    timestamp INTEGER PRIMARY KEY,
+                    predicted_solar_w REAL NOT NULL
+                )",
+                [],
+            ).unwrap();
+            
+            let ts1 = start_ts;
+            let ts2 = start_ts + 1800; // 30 mins later (well within window)
+            assert!(ts2 <= end_dt, "Forecast test timestamps must be within the end_dt window bounds");
+            conn.execute(
+                "INSERT INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)",
+                rusqlite::params![ts1, 5000.0],
+            ).unwrap();
+            conn.execute(
+                "INSERT INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)",
+                rusqlite::params![ts2, 5000.0],
+            ).unwrap();
+        }
+        
+        let metrics_forecast = pm.get_persistence_metrics();
+        // Since forecast_used is true, expected_solar_kwh should match the forecast (5 kW * 0.5 hours = 2.5 kWh)
+        assert!(metrics_forecast.0 > 0.0);
+        assert!((metrics_forecast.0 - 2.5).abs() < 1e-3, "Expected 2.5 kWh solar forecast, got {}", metrics_forecast.0);
+        
         let _ = std::fs::remove_file(temp_db);
     }
 }

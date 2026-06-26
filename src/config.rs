@@ -274,6 +274,24 @@ pub struct DemandConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
+pub struct PvArrayConfig {
+    pub name: String,
+    pub capacity_w: f64,
+    pub tilt: f64,
+    pub azimuth: f64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "kebab-case")]
+pub struct LocationConfig {
+    pub latitude: f64,
+    pub longitude: f64,
+    #[serde(default)]
+    pub arrays: Vec<PvArrayConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "kebab-case")]
 pub struct SolaxBatteryControlConfig {
     pub source: Option<String>,
     #[serde(default, alias = "linked_batteries", alias = "linked-batteries")]
@@ -344,6 +362,9 @@ pub struct Config {
 
     #[serde(rename = "MQTTInverter")]
     pub mqtt_inverter: Option<MQTTInverterConfig>,
+
+    #[serde(rename = "Location")]
+    pub location: Option<LocationConfig>,
 }
 
 impl Config {
@@ -438,6 +459,7 @@ impl Config {
             }),
             battery_control: None,
             mqtt_inverter: None,
+            location: None,
         }
     }
 }

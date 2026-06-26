@@ -1003,6 +1003,31 @@ async function loadConfig(configData = null) {
             document.getElementById('influx-user').value = influx.influx_user || '';
             document.getElementById('influx-pass').value = influx.influx_pass || '';
         }
+
+        // Load Location Settings
+        const loc = config.Location;
+        if (loc) {
+            document.getElementById('location-lat').value = loc.latitude !== undefined && loc.latitude !== null ? loc.latitude : '';
+            document.getElementById('location-lon').value = loc.longitude !== undefined && loc.longitude !== null ? loc.longitude : '';
+            
+            const arraysContainer = document.getElementById('location-arrays-list');
+            if (arraysContainer) {
+                arraysContainer.innerHTML = '';
+                if (loc.arrays) {
+                    loc.arrays.forEach(arr => {
+                        renderPvArrayCard(arr);
+                    });
+                }
+            }
+        } else {
+            document.getElementById('location-lat').value = '';
+            document.getElementById('location-lon').value = '';
+            const arraysContainer = document.getElementById('location-arrays-list');
+            if (arraysContainer) {
+                arraysContainer.innerHTML = '';
+            }
+        }
+
         updateHeaderButtons();
     } catch (e) {
         console.error("Failed to load config backend", e);
@@ -1044,6 +1069,9 @@ function isConfigPopulated(config) {
         if (mqtt.username || mqtt.password) return true;
         if (mqtt["base-topic"] && mqtt["base-topic"] !== "sensors") return true;
     }
+
+    // Check if Location is configured
+    if (config.Location && (config.Location.latitude || config.Location.longitude)) return true;
 
     return false;
 }
@@ -1250,6 +1278,46 @@ function addTariffTOUPeriod() {
         end: '23:59:59',
         import_rate: 30.0,
         export_rate: 10.0
+    });
+}
+
+function renderPvArrayCard(array) {
+    const container = document.getElementById('location-arrays-list');
+    if (!container) return;
+    const card = document.createElement('div');
+    card.className = 'list-item-card pv-array-card';
+    card.innerHTML = `
+        <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Array Name</label>
+                    <input type="text" class="array-name" value="${array.name || ''}" placeholder="e.g. North Roof">
+                </div>
+                <div class="form-group">
+                    <label>Capacity (W)</label>
+                    <input type="number" step="1" class="array-capacity" value="${array["capacity-w"] !== undefined ? array["capacity-w"] : (array.capacity_w !== undefined ? array.capacity_w : 3000.0)}">
+                </div>
+                <div class="form-group">
+                    <label>Tilt (°)</label>
+                    <input type="number" step="0.1" class="array-tilt" value="${array.tilt !== undefined ? array.tilt : 20.0}">
+                </div>
+                <div class="form-group">
+                    <label>Azimuth (°)</label>
+                    <input type="number" step="0.1" class="array-azimuth" value="${array.azimuth !== undefined ? array.azimuth : 0.0}">
+                </div>
+            </div>
+        </div>
+        <button class="sub-btn danger" style="margin-left: 20px;" onclick="this.parentElement.remove()">Remove</button>
+    `;
+    container.appendChild(card);
+}
+
+function addLocationPvArray() {
+    renderPvArrayCard({
+        name: 'PV Array ' + (document.querySelectorAll('.pv-array-card').length + 1),
+        capacity_w: 3000.0,
+        tilt: 20.0,
+        azimuth: 0.0
     });
 }
 
@@ -1603,6 +1671,26 @@ async function saveConfiguration() {
         };
     } else {
         cfg.influx = null;
+    }
+
+    // Location
+    const latVal = document.getElementById('location-lat').value.trim();
+    const lonVal = document.getElementById('location-lon').value.trim();
+    if (latVal !== "" || lonVal !== "") {
+        cfg.Location = {
+            latitude: parseFloat(latVal) || 0.0,
+            longitude: parseFloat(lonVal) || 0.0,
+            arrays: Array.from(document.querySelectorAll('.pv-array-card')).map(card => {
+                return {
+                    name: card.querySelector('.array-name').value.trim(),
+                    "capacity-w": parseFloat(card.querySelector('.array-capacity').value) || 0.0,
+                    tilt: parseFloat(card.querySelector('.array-tilt').value) || 0.0,
+                    azimuth: parseFloat(card.querySelector('.array-azimuth').value) || 0.0
+                };
+            }).filter(a => a.name)
+        };
+    } else {
+        cfg.Location = null;
     }
 
     try {

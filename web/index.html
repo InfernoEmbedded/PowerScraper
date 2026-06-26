@@ -45,6 +45,10 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"></line><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>
                 Electricity Tariff
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-location', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                Location
+            </button>
             <button class="nav-btn" onclick="switchTab('tab-simulation', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="18" y="3" width="4" height="18" rx="1"></rect><rect x="10" y="8" width="4" height="13" rx="1"></rect><rect x="2" y="13" width="4" height="8" rx="1"></rect></svg>
                 Simulation
@@ -478,9 +482,41 @@
                 </div>
             </div>
         </div>
-    </div>
 
-    <!-- SIMULATION TAB -->
+        <!-- LOCATION TAB -->
+        <div id="tab-location" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">System Coordinates</div>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Define the system's geographical coordinates. This allows the system to query local weather forecasts and calculate the sun's position throughout the day.
+                </p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="location-lat">Latitude</label>
+                        <input type="number" step="0.000001" id="location-lat" placeholder="e.g. -33.8688">
+                    </div>
+                    <div class="form-group">
+                        <label for="location-lon">Longitude</label>
+                        <input type="number" step="0.000001" id="location-lon" placeholder="e.g. 151.2093">
+                    </div>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                    <span>PV Solar Arrays Orientation</span>
+                    <button class="sub-btn" onclick="addLocationPvArray()">Add PV Array</button>
+                </div>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Define the capacity and physical alignment of each solar panel string (array) to enable precise, weather-adjusted solar yield modeling.
+                </p>
+                <div id="location-arrays-list">
+                    <!-- Dynamic PV Arrays List -->
+                </div>
+            </div>
+        </div>
+
+        <!-- SIMULATION TAB -->
         <div id="tab-simulation" class="tab-content">
             <div class="glass-card">
                 <div class="card-title">Historical Simulation & Optimization Model Comparison</div>

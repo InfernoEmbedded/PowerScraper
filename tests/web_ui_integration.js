@@ -553,6 +553,18 @@ async function main() {
         await page.fill('#demand-end', '21:00');
         await page.fill('#demand-rate', '0.155');
 
+        // 7. Location (Latitude, Longitude, and PV Arrays)
+        console.log("Filling Location tab...");
+        await page.click('.nav-btn:has-text("Location")');
+        await page.fill('#location-lat', '-33.8688');
+        await page.fill('#location-lon', '151.2093');
+        await page.click('button:has-text("Add PV Array")');
+        await page.waitForSelector('.pv-array-card');
+        await page.fill('.pv-array-card .array-name', 'East Roof');
+        await page.fill('.pv-array-card .array-capacity', '4500');
+        await page.fill('.pv-array-card .array-tilt', '22.5');
+        await page.fill('.pv-array-card .array-azimuth', '-90');
+
         // Save and Apply Changes
         console.log("Applying complete valid configuration...");
         dialogText = null;
@@ -679,6 +691,32 @@ async function main() {
             await page.inputValue('#demand-rate') !== '0.155') {
             throw new Error("Tariff configuration did not reload correctly!");
         }
+
+        // Verify Location Settings
+        await page.click('.nav-btn:has-text("Location")');
+        if (await page.inputValue('#location-lat') !== '-33.8688' ||
+            await page.inputValue('#location-lon') !== '151.2093') {
+            throw new Error("Location coordinates did not reload correctly!");
+        }
+        const arrayCards = await page.$$('.pv-array-card');
+        let arrayFound = false;
+        for (const card of arrayCards) {
+            const name = await card.$eval('.array-name', el => el.value);
+            if (name === 'East Roof') {
+                arrayFound = true;
+                const capacity = await card.$eval('.array-capacity', el => el.value);
+                const tilt = await card.$eval('.array-tilt', el => el.value);
+                const azimuth = await card.$eval('.array-azimuth', el => el.value);
+                if (capacity !== '4500' || tilt !== '22.5' || azimuth !== '-90') {
+                    throw new Error(`PV Array values incorrect for East Roof: capacity=${capacity}, tilt=${tilt}, azimuth=${azimuth}`);
+                }
+                break;
+            }
+        }
+        if (!arrayFound) {
+            throw new Error("Could not find saved PV Array 'East Roof'");
+        }
+
         console.log("Test 8 Passed successfully!");
 
 
