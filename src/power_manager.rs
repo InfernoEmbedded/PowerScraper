@@ -2,7 +2,7 @@ use crate::config::{
     BatteryControlInverter, BatteryControlPeriod, MqttBrokerConfig, SolaxBatteryControlConfig,
 };
 use crate::mqtt_helper::create_mqtt_client;
-use chrono::{Local, NaiveTime, Timelike, Utc, Datelike, TimeZone};
+use chrono::{NaiveTime, Timelike, Utc, Datelike, TimeZone};
 use rumqttc::{Event, Packet, QoS};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -2838,6 +2838,7 @@ pub async fn run_weather_fetcher_task(db_path: String, cancel_token: tokio_util:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Local;
 
     #[test]
     fn test_print_simulation() {
