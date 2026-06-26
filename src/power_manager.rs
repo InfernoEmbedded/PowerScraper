@@ -2620,15 +2620,19 @@ pub fn run_historical_simulation_impl(
     export_prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
     let mut suggest_charge_threshold = if !import_prices.is_empty() {
+        let median_import = import_prices[import_prices.len() / 2];
         let idx = ((import_prices.len() - 1) as f64 * 0.05) as usize;
-        Some((import_prices[idx] * 10.0).round() / 10.0)
+        let val = import_prices[idx].min(median_import * 0.25);
+        Some((val * 10.0).round() / 10.0)
     } else {
         None
     };
 
     let suggest_discharge_threshold = if !export_prices.is_empty() {
+        let median_export = export_prices[export_prices.len() / 2];
         let idx = ((export_prices.len() - 1) as f64 * 0.95) as usize;
-        Some((export_prices[idx].max(15.0) * 10.0).round() / 10.0)
+        let val = export_prices[idx].max(median_export * 4.0).max(15.0);
+        Some((val * 10.0).round() / 10.0)
     } else {
         None
     };
@@ -4621,15 +4625,19 @@ mod tests {
         flush_history_to_db(temp_db, &mut buffer, None);
 
         let res = run_historical_simulation_impl(temp_db, "1d", None).unwrap();
-        // sorted import_prices: 1.0, 2.0, ..., 100.0
-        // idx = ((100 - 1) as f64 * 0.05) as usize = 4
-        // suggest_charge_val = import_prices[4] = 6.0 (since last record with i=1 is skipped, records.len() is 99, 98*0.05=4.9 -> 4, sorted_imports[4] = 6.0)
+        // sorted import_prices: 1.0, 2.0, ..., 100.0 (records.len() is 99)
+        // median_import = import_prices[49] = 51.0
+        // 1/4 * median = 12.75
+        // idx = ((100 - 1) as f64 * 0.05) as usize = 4 -> import_prices[4] = 6.0
+        // min(6.0, 12.75) = 6.0
         assert_eq!(res.suggest_charge_threshold, Some(6.0));
 
-        // sorted export_prices: 1.0, 2.0, ..., 100.0
-        // idx = ((100 - 1) as f64 * 0.95) as usize = 94
-        // suggest_discharge_val = export_prices[94] = 95.0
-        assert_eq!(res.suggest_discharge_threshold, Some(95.0));
+        // sorted export_prices: 1.0, 2.0, ..., 100.0 (records.len() is 99)
+        // median_export = export_prices[49] = 51.0
+        // 4 * median = 204.0
+        // idx = ((100 - 1) as f64 * 0.95) as usize = 93 -> export_prices[93] = 95.0
+        // max(95.0, 204.0).max(15.0) = 204.0
+        assert_eq!(res.suggest_discharge_threshold, Some(204.0));
 
         let _ = std::fs::remove_file(temp_db);
 
@@ -4639,18 +4647,18 @@ mod tests {
         init_history_db(temp_db_overlap).unwrap();
 
         let mut buffer_overlap = Vec::new();
-        // Let's insert 10 points: import prices all 50.0, export prices all 10.0
+        // Let's insert 10 points: import prices all 100.0, export prices all 1.0
         for i in 1..=10 {
             let ts = now_ts - (i * 60);
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
                 topic: "tariff/import_price".to_string(),
-                value: 50.0,
+                value: 100.0,
             });
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
                 topic: "tariff/export_price".to_string(),
-                value: 10.0, // export percentile will be 10.0, clamped by max(15.0) to 15.0
+                value: 1.0,
             });
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
@@ -4661,8 +4669,9 @@ mod tests {
         flush_history_to_db(temp_db_overlap, &mut buffer_overlap, None);
 
         let res_overlap = run_historical_simulation_impl(temp_db_overlap, "1d", None).unwrap();
-        // Since 5th percentile import (50.0) >= 95th percentile export (clamped to 15.0),
-        // the safety check should fire and clamp charge threshold to 15.0 - 1.0 = 14.0.
+        // median import = 100.0 -> 1/4 * median = 25.0. 5th percentile is 100.0 -> suggest_charge_threshold = 25.0
+        // median export = 1.0 -> 4 * median = 4.0. 95th percentile is 1.0. max(1.0, 4.0).max(15.0) = 15.0 -> suggest_discharge_threshold = 15.0
+        // Since 25.0 >= 15.0, the safety check should fire and clamp charge threshold to 15.0 - 1.0 = 14.0.
         assert_eq!(res_overlap.suggest_discharge_threshold, Some(15.0));
         assert_eq!(res_overlap.suggest_charge_threshold, Some(14.0));
 
