@@ -1866,6 +1866,7 @@ let simChartInstance = null;
 let simDetailChartInstance = null;
 let currentScenarioKey = 'evolved_heuristic';
 let lastHoveredDate = null;
+let lockedSimCell = null;
 
 const scenarioNames = {
     no_battery: "Scenario A (No Battery)",
@@ -1963,10 +1964,16 @@ function showSimulationChart(scenarioKey, metric) {
     document.querySelectorAll('.sim-metric-cell').forEach(cell => {
         const cScenario = cell.getAttribute('data-scenario');
         const cMetric = cell.getAttribute('data-metric');
-        if (cScenario === scenarioKey && cMetric === metric) {
-            cell.classList.add('active-chart');
-        } else {
-            cell.classList.remove('active-chart');
+        
+        cell.classList.remove('active-chart');
+        cell.classList.remove('locked-chart');
+        
+        if (lockedSimCell === cell) {
+            cell.classList.add('locked-chart');
+        } else if (cScenario === scenarioKey && cMetric === metric) {
+            if (!lockedSimCell) {
+                cell.classList.add('active-chart');
+            }
         }
     });
 
@@ -2305,6 +2312,7 @@ function updateSimDetailChart(dateStr) {
 }
 
 async function runHistoricalSimulation() {
+    lockedSimCell = null;
     const range = document.getElementById('sim-range').value;
     const btn = document.getElementById('btn-run-simulation');
     const loadingDiv = document.getElementById('sim-loading');
@@ -2412,11 +2420,23 @@ async function runHistoricalSimulation() {
                 // Save dynamic reference for hover events
                 lastSimulationData = data;
 
-                // Attach hover listeners to all metric cells
+                // Attach hover and click listeners to all metric cells
                 document.querySelectorAll('.sim-metric-cell').forEach(cell => {
                     cell.addEventListener('mouseenter', () => {
+                        if (lockedSimCell) return;
                         const scenario = cell.getAttribute('data-scenario');
                         const metric = cell.getAttribute('data-metric');
+                        showSimulationChart(scenario, metric);
+                    });
+
+                    cell.addEventListener('click', () => {
+                        const scenario = cell.getAttribute('data-scenario');
+                        const metric = cell.getAttribute('data-metric');
+                        if (lockedSimCell === cell) {
+                            lockedSimCell = null;
+                        } else {
+                            lockedSimCell = cell;
+                        }
                         showSimulationChart(scenario, metric);
                     });
                 });
