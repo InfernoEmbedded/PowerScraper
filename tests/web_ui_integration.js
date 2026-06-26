@@ -178,6 +178,7 @@ async function main() {
             { btnText: 'Forwarders', expectedTitle: 'Forwarders', tabId: 'tab-forwarders' },
             { btnText: 'Electricity Tariff', expectedTitle: 'Electricity Tariff', tabId: 'tab-tariff' },
             { btnText: 'Simulation', expectedTitle: 'Simulation', tabId: 'tab-simulation' },
+            { btnText: 'About', expectedTitle: 'About', tabId: 'tab-about' },
             { btnText: 'Dashboard', expectedTitle: 'System Dashboard', tabId: 'tab-dashboard' }
         ];
 

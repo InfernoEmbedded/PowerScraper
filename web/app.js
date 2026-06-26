@@ -14,7 +14,7 @@ function switchTab(tabId, el) {
     // Show/hide 'Apply Changes' button based on tabId
     const applyBtn = document.querySelector('.btn-apply');
     if (applyBtn) {
-        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation') {
+        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation' || tabId === 'tab-about') {
             applyBtn.style.display = 'none';
         } else {
             applyBtn.style.display = 'inline-block';
@@ -64,6 +64,13 @@ async function fetchStatus() {
         }
 
         document.getElementById('stat-mode').innerText = status.active_mode || "Auto";
+
+        if (status.version) {
+            const versionEl = document.getElementById('about-version');
+            if (versionEl) {
+                versionEl.innerText = status.version;
+            }
+        }
 
         // Style and update Grid Target card
         const targetEl = document.getElementById('stat-target');

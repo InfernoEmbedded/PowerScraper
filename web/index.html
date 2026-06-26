@@ -49,6 +49,10 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="18" y="3" width="4" height="18" rx="1"></rect><rect x="10" y="8" width="4" height="13" rx="1"></rect><rect x="2" y="13" width="4" height="8" rx="1"></rect></svg>
                 Simulation
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-about', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                About
+            </button>
         </nav>
     </aside>
 
@@ -571,6 +575,45 @@
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ABOUT TAB -->
+        <div id="tab-about" class="tab-content">
+            <div class="glass-card" style="max-width: 800px; margin: 0 auto; text-align: center; padding: 40px 20px;">
+                <div class="logo" style="justify-content: center; font-size: 2.2rem; margin-bottom: 20px; background: linear-gradient(to right, #fff, var(--primary)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; display: flex; align-items: center; gap: 10px;">
+                    <span>⚡ PowerScraper</span>
+                </div>
+                <p class="text-muted" style="font-size: 1.1rem; margin-bottom: 30px;">
+                    A multithreaded daemon to scrape solar inverter telemetry, regulate grid import/export, and coordinate intelligent battery storage charging strategies.
+                </p>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; text-align: left; margin-bottom: 45px;">
+                    <div class="glass-card" style="padding: 20px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03); margin-bottom: 0;">
+                        <div class="text-muted" style="font-size: 0.85rem; margin-bottom: 5px;">Software Version</div>
+                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--primary);" id="about-version">1.0.0</div>
+                    </div>
+                    <div class="glass-card" style="padding: 20px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03); margin-bottom: 0;">
+                        <div class="text-muted" style="font-size: 0.85rem; margin-bottom: 5px;">License Type</div>
+                        <div style="font-size: 1.3rem; font-weight: 600; color: var(--accent);">GNU GPL v3</div>
+                    </div>
+                    <div class="glass-card" style="padding: 20px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03); margin-bottom: 0;">
+                        <div class="text-muted" style="font-size: 0.85rem; margin-bottom: 5px;">Source Code</div>
+                        <div style="font-size: 1.1rem; font-weight: 600;">
+                            <a href="https://github.com/InfernoEmbedded/PowerScraper" target="_blank" style="color: #fff; text-decoration: none; display: flex; align-items: center; gap: 6px; margin-top: 5px;">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"></path></svg>
+                                GitHub Repo
+                            </a>
+                        </div>
+                    </div>
+                </div>
+                <div style="border-top: 1px solid rgba(255,255,255,0.05); padding-top: 25px;">
+                    <p style="font-size: 0.95rem; margin-bottom: 10px;">
+                        Copyright &copy; 2026 Inferno Embedded. All rights reserved.
+                    </p>
+                    <p class="text-muted" style="font-size: 0.85rem; max-width: 600px; margin: 0 auto; line-height: 1.4;">
+                        PowerScraper is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+                    </p>
                 </div>
             </div>
         </div>

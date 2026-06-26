@@ -28,7 +28,7 @@ pub struct PriceThresholds {
     pub export_70: f64,
 }
 
-#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 pub struct SystemStatus {
     pub active_mode: String,
     pub grid_target: f64,
@@ -39,6 +39,24 @@ pub struct SystemStatus {
     pub import_price: Option<f64>,
     pub export_price: Option<f64>,
     pub price_thresholds: Option<PriceThresholds>,
+    pub version: String,
+}
+
+impl Default for SystemStatus {
+    fn default() -> Self {
+        SystemStatus {
+            active_mode: String::new(),
+            grid_target: 0.0,
+            inverters: HashMap::new(),
+            meter_power: 0.0,
+            meter_last_updated: None,
+            mqtt_connected: false,
+            import_price: None,
+            export_price: None,
+            price_thresholds: None,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }
+    }
 }
 
 pub static SYSTEM_STATUS: OnceLock<Mutex<SystemStatus>> = OnceLock::new();
