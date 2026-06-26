@@ -961,6 +961,18 @@ async function loadConfig(configData = null) {
             toggleTariffType('none');
         }
 
+        // Load Demand settings
+        const demand = (bat && bat.demand) ? bat.demand : null;
+        if (demand) {
+            document.getElementById('demand-start').value = demand.start || '';
+            document.getElementById('demand-end').value = demand.end || '';
+            document.getElementById('demand-rate').value = demand.rate || '';
+        } else {
+            document.getElementById('demand-start').value = '';
+            document.getElementById('demand-end').value = '';
+            document.getElementById('demand-rate').value = '';
+        }
+
         // Load EmonCMS
         const emon = config.emoncms;
         document.getElementById('emon-enable').checked = !!emon;
@@ -1013,6 +1025,7 @@ function isConfigPopulated(config) {
         if (bat.inverter && Object.keys(bat.inverter).length > 0) return true;
         if (bat.period && Object.keys(bat.period).length > 0) return true;
         if (bat.tariff && bat.tariff.type && bat.tariff.type !== 'none') return true;
+        if (bat.demand && bat.demand.start && bat.demand.end) return true;
     }
 
     // Check if MQTT is customized from default empty values
@@ -1539,6 +1552,21 @@ async function saveConfiguration() {
             };
         } else {
             cfg["Solax-BatteryControl"].tariff = null;
+        }
+
+        // Compile Demand Settings
+        const dStart = document.getElementById('demand-start').value.trim();
+        const dEnd = document.getElementById('demand-end').value.trim();
+        const dRateRaw = document.getElementById('demand-rate').value.trim();
+        const dRate = parseFloat(dRateRaw);
+        if (dStart && dEnd && !isNaN(dRate)) {
+            cfg["Solax-BatteryControl"].demand = {
+                start: dStart,
+                end: dEnd,
+                rate: dRate
+            };
+        } else {
+            cfg["Solax-BatteryControl"].demand = null;
         }
     } else {
         cfg["Solax-BatteryControl"] = null;

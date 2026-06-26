@@ -440,6 +440,34 @@
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Demand Tariff Settings -->
+            <div class="glass-card">
+                <div class="card-title" style="display: flex; align-items: center;">
+                    <span>Demand Tariff & Peak Shaving Settings</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ℹ️</span>
+                        <div class="tooltip-content">
+                            A demand period defines a daily time window (e.g. 17:00 to 21:00) during which peak power draw (kW) from the grid is measured. A daily rate ($/kW/day) is applied to the peak draw to calculate demand charges. If these fields are left blank, demand period and charges are disabled.
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="demand-start">Demand Period Start Time</label>
+                        <input type="time" id="demand-start">
+                    </div>
+                    <div class="form-group">
+                        <label for="demand-end">Demand Period End Time</label>
+                        <input type="time" id="demand-end">
+                    </div>
+                    <div class="form-group">
+                        <label for="demand-rate">Daily Demand Rate ($/kW/day)</label>
+                        <input type="number" step="0.0001" id="demand-rate" placeholder="e.g. 0.155">
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

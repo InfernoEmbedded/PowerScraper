@@ -532,6 +532,11 @@ async function main() {
         await page.check('#amber-high-price-discharge');
         await page.fill('#amber-high-price-threshold', '65.2');
 
+        // Fill Demand Settings
+        await page.fill('#demand-start', '17:00');
+        await page.fill('#demand-end', '21:00');
+        await page.fill('#demand-rate', '0.155');
+
         // Save and Apply Changes
         console.log("Applying complete valid configuration...");
         dialogText = null;
@@ -652,7 +657,10 @@ async function main() {
             await page.isChecked('#amber-low-price-charge') !== true ||
             await page.inputValue('#amber-low-price-threshold') !== '5.5' ||
             await page.isChecked('#amber-high-price-discharge') !== true ||
-            await page.inputValue('#amber-high-price-threshold') !== '65.2') {
+            await page.inputValue('#amber-high-price-threshold') !== '65.2' ||
+            await page.inputValue('#demand-start') !== '17:00' ||
+            await page.inputValue('#demand-end') !== '21:00' ||
+            await page.inputValue('#demand-rate') !== '0.155') {
             throw new Error("Tariff configuration did not reload correctly!");
         }
         console.log("Test 8 Passed successfully!");

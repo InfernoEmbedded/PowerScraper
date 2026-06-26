@@ -443,6 +443,34 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <!-- Demand Tariff Settings -->
+            <div class="glass-card">
+                <div class="card-title" style="display: flex; align-items: center;">
+                    <span>Demand Tariff & Peak Shaving Settings</span>
+                    <div class="tooltip-container">
+                        <span class="tooltip-icon">ℹ️</span>
+                        <div class="tooltip-content">
+                            A demand period defines a daily time window (e.g. 17:00 to 21:00) during which peak power draw (kW) from the grid is measured. A daily rate ($/kW/day) is applied to the peak draw to calculate demand charges. If these fields are left blank, demand period and charges are disabled.
+                        </div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="demand-start">Demand Period Start Time</label>
+                        <input type="time" id="demand-start">
+                    </div>
+                    <div class="form-group">
+                        <label for="demand-end">Demand Period End Time</label>
+                        <input type="time" id="demand-end">
+                    </div>
+                    <div class="form-group">
+                        <label for="demand-rate">Daily Demand Rate ($/kW/day)</label>
+                        <input type="number" step="0.0001" id="demand-rate" placeholder="e.g. 0.155">
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1087,6 +1115,54 @@ input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
 .sim-table tbody tr:last-child {
     background-color: rgba(81, 71, 229, 0.05);
 }
+
+/* Glassmorphic Tooltip styling */
+.tooltip-container {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    margin-left: 8px;
+    cursor: pointer;
+    color: var(--primary);
+    transition: color 0.2s ease;
+    font-size: 1rem; /* standard size for icon */
+}
+
+.tooltip-container:hover {
+    color: var(--accent);
+}
+
+.tooltip-content {
+    visibility: hidden;
+    position: absolute;
+    bottom: 130%;
+    left: 50%;
+    transform: translateX(-50%) translateY(10px);
+    width: 280px;
+    background: rgba(22, 26, 49, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    color: var(--text-main);
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 400;
+    line-height: 1.4;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s ease;
+    z-index: 100;
+    text-transform: none; /* prevent inheritance of uppercase headers */
+    text-align: left;
+}
+
+.tooltip-container:hover .tooltip-content {
+    visibility: visible;
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
 "###;
 pub const APP_JS: &str = r###"let currentConfig = {};
 let lastStatusData = null;
@@ -2051,6 +2127,18 @@ async function loadConfig(configData = null) {
             toggleTariffType('none');
         }
 
+        // Load Demand settings
+        const demand = (bat && bat.demand) ? bat.demand : null;
+        if (demand) {
+            document.getElementById('demand-start').value = demand.start || '';
+            document.getElementById('demand-end').value = demand.end || '';
+            document.getElementById('demand-rate').value = demand.rate || '';
+        } else {
+            document.getElementById('demand-start').value = '';
+            document.getElementById('demand-end').value = '';
+            document.getElementById('demand-rate').value = '';
+        }
+
         // Load EmonCMS
         const emon = config.emoncms;
         document.getElementById('emon-enable').checked = !!emon;
@@ -2103,6 +2191,7 @@ function isConfigPopulated(config) {
         if (bat.inverter && Object.keys(bat.inverter).length > 0) return true;
         if (bat.period && Object.keys(bat.period).length > 0) return true;
         if (bat.tariff && bat.tariff.type && bat.tariff.type !== 'none') return true;
+        if (bat.demand && bat.demand.start && bat.demand.end) return true;
     }
 
     // Check if MQTT is customized from default empty values
@@ -2629,6 +2718,21 @@ async function saveConfiguration() {
             };
         } else {
             cfg["Solax-BatteryControl"].tariff = null;
+        }
+
+        // Compile Demand Settings
+        const dStart = document.getElementById('demand-start').value.trim();
+        const dEnd = document.getElementById('demand-end').value.trim();
+        const dRateRaw = document.getElementById('demand-rate').value.trim();
+        const dRate = parseFloat(dRateRaw);
+        if (dStart && dEnd && !isNaN(dRate)) {
+            cfg["Solax-BatteryControl"].demand = {
+                start: dStart,
+                end: dEnd,
+                rate: dRate
+            };
+        } else {
+            cfg["Solax-BatteryControl"].demand = null;
         }
     } else {
         cfg["Solax-BatteryControl"] = null;

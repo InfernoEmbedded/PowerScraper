@@ -186,6 +186,8 @@ fn parse_time(s: &str) -> Option<NaiveTime> {
     NaiveTime::parse_from_str(s, "%H:%M:%S")
         .or_else(|_| NaiveTime::parse_from_str(s, "%k:%M:%S"))
         .or_else(|_| NaiveTime::parse_from_str(s, "%I:%M:%S %p"))
+        .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
+        .or_else(|_| NaiveTime::parse_from_str(s, "%k:%M"))
         .ok()
 }
 

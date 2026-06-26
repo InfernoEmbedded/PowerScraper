@@ -266,6 +266,14 @@ pub enum TariffConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
+pub struct DemandConfig {
+    pub start: String,
+    pub end: String,
+    pub rate: f64,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
+#[serde(rename_all = "kebab-case")]
 pub struct SolaxBatteryControlConfig {
     pub source: Option<String>,
     #[serde(default, alias = "linked_batteries", alias = "linked-batteries")]
@@ -280,6 +288,8 @@ pub struct SolaxBatteryControlConfig {
     #[serde(alias = "initial_mode")]
     pub initial_mode: Option<String>,
     pub tariff: Option<TariffConfig>,
+    #[serde(default)]
+    pub demand: Option<DemandConfig>,
 }
 
 fn default_flush_interval() -> u32 { 30 }
