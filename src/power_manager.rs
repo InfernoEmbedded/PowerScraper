@@ -826,6 +826,20 @@ impl PowerManager {
         let inverter_config = self.config.inverter.get(inverter_name)?.clone();
         let period_opt = self.get_period().cloned();
 
+        let (negative_export_prevent, low_price_charge, low_price_threshold, high_price_discharge, high_price_threshold) =
+            if let Some(crate::config::TariffConfig::Amber {
+                negative_export_prevent,
+                low_price_charge,
+                low_price_threshold,
+                high_price_discharge,
+                high_price_threshold,
+                ..
+            }) = self.tariff_manager.config() {
+                (*negative_export_prevent, *low_price_charge, *low_price_threshold, *high_price_discharge, *high_price_threshold)
+            } else {
+                (false, false, 15.0, false, 30.0) // defaults/disabled for non-Amber live control
+            };
+
         let min_charge = self.config.period.values()
             .map(|p| p.min_charge)
             .min()
@@ -901,11 +915,7 @@ impl PowerManager {
                 let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
 
                 // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() {
-                    *negative_export_prevent && export_rate < 0.0
-                } else {
-                    false
-                };
+                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
                 if import_rate < 0.0 || negative_export_triggered {
                     let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
                     if inv_state.battery_capacity < max_limit {
@@ -923,7 +933,7 @@ impl PowerManager {
                     Some(charge_val)
                 }
                 // 2. High export price: dump to grid (arbitrage)
-                else if export_rate >= 30.0 && inv_state.battery_capacity > reserve_pct {
+                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > reserve_pct {
                     let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
                     if inv_state.battery_capacity > min_limit {
                         inv_state.discharge_power = inverter_config.max_discharge;
@@ -941,7 +951,7 @@ impl PowerManager {
                     Some(charge_val)
                 }
                 // 3. Pre-charge window: top up using cheap grid
-                else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && import_rate < 15.0 && inv_state.battery_capacity < 85 {
+                else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && low_price_charge && import_rate <= low_price_threshold && inv_state.battery_capacity < 85 {
                     inv_state.discharge_power = -inverter_config.max_charge;
                     self.assist_needed.insert(inverter_name.to_string(), false);
                     let charge_val = Self::discharge_at(
@@ -979,11 +989,7 @@ impl PowerManager {
                 let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
 
                 // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() {
-                    *negative_export_prevent && export_rate < 0.0
-                } else {
-                    false
-                };
+                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
                 if import_rate < 0.0 || negative_export_triggered {
                     let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
                     if inv_state.battery_capacity < max_limit {
@@ -1001,7 +1007,7 @@ impl PowerManager {
                     Some(charge_val)
                 }
                 // 2. High export price: dump to grid (arbitrage)
-                else if export_rate >= 30.0 && inv_state.battery_capacity > reserve_pct {
+                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > reserve_pct {
                     let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
                     if inv_state.battery_capacity > min_limit {
                         inv_state.discharge_power = inverter_config.max_discharge;
@@ -1065,11 +1071,7 @@ impl PowerManager {
                 let reserve_pct = reserve_pct.max(period.min_charge);
 
                 // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() {
-                    *negative_export_prevent && export_rate < 0.0
-                } else {
-                    false
-                };
+                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
                 if import_rate < 0.0 || negative_export_triggered {
                     let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
                     if inv_state.battery_capacity < max_limit {
@@ -1087,7 +1089,7 @@ impl PowerManager {
                     Some(charge_val)
                 }
                 // 2. High export price: dump to grid (arbitrage)
-                else if export_rate >= 30.0 && inv_state.battery_capacity > (reserve_pct + 10) {
+                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > (reserve_pct + 10) {
                     let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
                     if inv_state.battery_capacity > min_limit {
                         inv_state.discharge_power = inverter_config.max_discharge;
@@ -1106,7 +1108,7 @@ impl PowerManager {
                 }
                 // 3. Pre-charge if projected deficit exists
                 else if demand_window.map_or(false, |(start, _)| now_time < start) && (inv_state.battery_capacity as f64 / 100.0 * capacity_kwh + expected_solar) < required_reserve {
-                    let is_cheap = import_rate < 12.0 || import_rate <= cheap_threshold;
+                    let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
                     if is_cheap {
                         inv_state.discharge_power = -inverter_config.max_charge;
                         self.assist_needed.insert(inverter_name.to_string(), false);
@@ -1158,7 +1160,7 @@ impl PowerManager {
                 let required_reserve = total_needed.min(capacity_kwh * 0.95);
 
                 let current_charge = (inv_state.battery_capacity as f64 / 100.0) * capacity_kwh;
-                let is_cheap = import_rate < 12.0 || import_rate <= cheap_threshold;
+                let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
                 let now_before_demand = demand_window.map_or(true, |(start, _)| now_time < start);
 
                 let target_reserve = if night_avg_price > import_rate * 1.10 {
@@ -1171,11 +1173,7 @@ impl PowerManager {
                 let reserve_pct = reserve_pct.max(period.min_charge);
 
                 // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() {
-                    *negative_export_prevent && export_rate < 0.0
-                } else {
-                    false
-                };
+                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
                 if import_rate < 0.0 || negative_export_triggered {
                     let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
                     if inv_state.battery_capacity < max_limit {
@@ -1193,7 +1191,7 @@ impl PowerManager {
                     Some(charge_val)
                 }
                 // 2. High export price: dump to grid (arbitrage)
-                else if export_rate >= 30.0 && inv_state.battery_capacity > (reserve_pct + 10) {
+                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > (reserve_pct + 10) {
                     let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
                     if inv_state.battery_capacity > min_limit {
                         inv_state.discharge_power = inverter_config.max_discharge;
@@ -2015,6 +2013,8 @@ pub struct SimulationResponse {
     pub lookahead_mpc: SimulationResultModel,
     pub adaptive_peak: SimulationResultModel,
     pub mpc_arbitrage: SimulationResultModel,
+    pub suggest_charge_threshold: Option<f64>,
+    pub suggest_discharge_threshold: Option<f64>,
 }
 
 pub fn run_historical_simulation(db_path: &str, range: &str) -> Result<SimulationResponse, String> {
@@ -2035,6 +2035,24 @@ pub fn run_historical_simulation_impl(
     let mains_source = config.battery_control.as_ref()
         .and_then(|bc| bc.source.as_deref())
         .unwrap_or("MainsMeter");
+
+    let (negative_export_prevent, low_price_charge, low_price_threshold, high_price_discharge, high_price_threshold) =
+        if let Some(ref bc) = config.battery_control {
+            if let Some(crate::config::TariffConfig::Amber {
+                negative_export_prevent,
+                low_price_charge,
+                low_price_threshold,
+                high_price_discharge,
+                high_price_threshold,
+                ..
+            }) = bc.tariff.as_ref() {
+                (*negative_export_prevent, *low_price_charge, *low_price_threshold, *high_price_discharge, *high_price_threshold)
+            } else {
+                (true, true, 15.0, true, 30.0) // default simulation settings for non-Amber configurations
+            }
+        } else {
+            (true, true, 15.0, true, 30.0)
+        };
 
     let mut battery_capacity_kwh = 0.0;
     let mut max_power_w = 0.0;
@@ -2474,16 +2492,17 @@ pub fn run_historical_simulation_impl(
                     let mut charge_w = 0.0;
                     let mut discharge_w = 0.0;
 
-                    if import_price < 0.0 {
+                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
+                    if import_price < 0.0 || negative_export_triggered {
                         let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
                         charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                    } else if export_price >= 30.0 {
+                    } else if high_price_discharge && export_price >= high_price_threshold {
                         let reserve = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
                         if bat_soc > reserve {
                             let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
                             discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
                         }
-                    } else if is_pre_charge && import_price < 15.0 && (bat_soc / battery_capacity_kwh) < 0.85 {
+                    } else if is_pre_charge && low_price_charge && import_price <= low_price_threshold && (bat_soc / battery_capacity_kwh) < 0.85 {
                         let target = battery_capacity_kwh * 0.85;
                         let deficit = target - bat_soc;
                         let max_avail_charge = (deficit / 0.95) / r.duration_hours * 1000.0;
@@ -2613,31 +2632,47 @@ pub fn run_historical_simulation_impl(
                     let mut charge_w = 0.0;
                     let mut discharge_w = 0.0;
 
-                    if is_demand {
-                        if net_w > 0.0 {
-                            let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                        } else {
-                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    } else {
-                        let projected_deficit = required_reserve - (bat_soc + expected_solar * 0.95);
-                        let is_cheap = import_price < 12.0 || import_price <= cheap_threshold;
-
-                        if projected_deficit > 0.0 && is_cheap {
+                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
+                    if import_price < 0.0 || negative_export_triggered {
+                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
+                    } else if high_price_discharge && export_price >= high_price_threshold && bat_soc > (required_reserve + battery_capacity_kwh * 0.1) {
+                        let max_avail_discharge = ((bat_soc - required_reserve) * 0.95) / r.duration_hours * 1000.0;
+                        discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
+                    } else if demand_window.map_or(false, |(start, _)| now_time < start) && (bat_soc + expected_solar * 0.95) < required_reserve {
+                        let is_cheap = if low_price_charge { import_price <= low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold };
+                        if is_cheap {
+                            let projected_deficit = required_reserve - (bat_soc + expected_solar * 0.95);
                             let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;
                             charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                        } else if net_w < 0.0 {
-                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        } else if export_price >= 30.0 && bat_soc > (required_reserve + battery_capacity_kwh * 0.1) {
-                            let max_avail_discharge = ((bat_soc - required_reserve) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-                        } else if net_w > 0.0 {
-                            let available = (bat_soc - required_reserve).max(0.0);
-                            let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                        } else {
+                            if net_w < 0.0 {
+                                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                            } else if net_w > 0.0 {
+                                let available = (bat_soc - required_reserve).max(0.0);
+                                let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
+                                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                            }
+                        }
+                    } else {
+                        if is_demand {
+                            if net_w > 0.0 {
+                                let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
+                                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                            } else {
+                                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                            }
+                        } else {
+                            if net_w < 0.0 {
+                                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
+                            } else if net_w > 0.0 {
+                                let available = (bat_soc - required_reserve).max(0.0);
+                                let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
+                                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
+                            }
                         }
                     }
 
@@ -2708,10 +2743,11 @@ pub fn run_historical_simulation_impl(
                     let mut charge_w = 0.0;
                     let mut discharge_w = 0.0;
 
-                    if import_price < 0.0 {
+                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
+                    if import_price < 0.0 || negative_export_triggered {
                         let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
                         charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                    } else if export_price >= 30.0 {
+                    } else if high_price_discharge && export_price >= high_price_threshold {
                         let reserve = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
                         if bat_soc > reserve {
                             let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
@@ -2851,7 +2887,14 @@ pub fn run_historical_simulation_impl(
                     let mut charge_w = 0.0;
                     let mut discharge_w = 0.0;
 
-                    if is_demand {
+                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
+                    if import_price < 0.0 || negative_export_triggered {
+                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
+                    } else if high_price_discharge && export_price >= high_price_threshold && bat_soc > (target_reserve + battery_capacity_kwh * 0.1) {
+                        let max_avail_discharge = ((bat_soc - target_reserve) * 0.95) / r.duration_hours * 1000.0;
+                        discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
+                    } else if is_demand {
                         if net_w > 0.0 {
                             let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
                             discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
@@ -2861,7 +2904,7 @@ pub fn run_historical_simulation_impl(
                         }
                     } else {
                         let projected_deficit = target_reserve - (bat_soc + expected_solar * 0.95);
-                        let is_cheap = import_price < 12.0 || import_price <= cheap_threshold;
+                        let is_cheap = if low_price_charge { import_price <= low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold };
 
                         if projected_deficit > 0.0 && is_cheap {
                             let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;
@@ -2869,9 +2912,6 @@ pub fn run_historical_simulation_impl(
                         } else if net_w < 0.0 {
                             let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
                             charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        } else if export_price >= 30.0 && bat_soc > (target_reserve + battery_capacity_kwh * 0.1) {
-                            let max_avail_discharge = ((bat_soc - target_reserve) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
                         } else if net_w > 0.0 {
                             let available = (bat_soc - target_reserve).max(0.0);
                             let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
@@ -2939,6 +2979,26 @@ pub fn run_historical_simulation_impl(
         total_usage_kwh += (r.load_power_w / 1000.0) * r.duration_hours;
     }
 
+    let mut import_prices: Vec<f64> = records.iter().map(|r| r.import_price_cents).collect();
+    let mut export_prices: Vec<f64> = records.iter().map(|r| r.export_price_cents).collect();
+
+    import_prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    export_prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let suggest_charge_threshold = if !import_prices.is_empty() {
+        let idx = ((import_prices.len() - 1) as f64 * 0.20) as usize;
+        Some((import_prices[idx] * 10.0).round() / 10.0)
+    } else {
+        None
+    };
+
+    let suggest_discharge_threshold = if !export_prices.is_empty() {
+        let idx = ((export_prices.len() - 1) as f64 * 0.90) as usize;
+        Some((export_prices[idx].max(15.0) * 10.0).round() / 10.0)
+    } else {
+        None
+    };
+
     Ok(SimulationResponse {
         start_date,
         end_date,
@@ -2952,6 +3012,8 @@ pub fn run_historical_simulation_impl(
         lookahead_mpc: lookahead_mpc_res,
         adaptive_peak: adaptive_peak_res,
         mpc_arbitrage: mpc_arbitrage_res,
+        suggest_charge_threshold,
+        suggest_discharge_threshold,
     })
 }
 

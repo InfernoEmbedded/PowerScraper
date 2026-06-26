@@ -1858,6 +1858,19 @@ async function runHistoricalSimulation() {
                     `;
                 }).join('');
 
+                const insightsDiv = document.getElementById('sim-insights');
+                const suggestChargeVal = document.getElementById('suggest-charge-val');
+                const suggestDischargeVal = document.getElementById('suggest-discharge-val');
+
+                if (data.suggest_charge_threshold !== undefined && data.suggest_charge_threshold !== null &&
+                    data.suggest_discharge_threshold !== undefined && data.suggest_discharge_threshold !== null) {
+                    suggestChargeVal.innerText = data.suggest_charge_threshold.toFixed(1);
+                    suggestDischargeVal.innerText = data.suggest_discharge_threshold.toFixed(1);
+                    insightsDiv.style.display = 'block';
+                } else {
+                    insightsDiv.style.display = 'none';
+                }
+
                 resultsDiv.style.display = 'block';
             } else if (msg.type === 'Error') {
                 eventSource.close();

@@ -545,6 +545,20 @@
                     </div>
                 </div>
 
+                <div id="sim-insights" class="glass-card" style="display: none; background: linear-gradient(135deg, rgba(81, 71, 229, 0.1), rgba(16, 185, 129, 0.05)); border: 1px solid rgba(81, 71, 229, 0.2); margin-top: 20px; margin-bottom: 24px;">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <div style="font-size: 2.2rem; filter: drop-shadow(0 0 8px var(--primary));">💡</div>
+                        <div>
+                            <h4 style="margin: 0 0 6px 0; color: #fff; font-size: 1.15rem; font-weight: 600; letter-spacing: -0.2px;">Suggested Optimal Settings</h4>
+                            <p style="margin: 0; font-size: 0.95rem; line-height: 1.5;" class="text-muted">
+                                Based on the historical price distribution during this period, we suggest setting your Amber cost optimization thresholds to: 
+                                <strong style="color: var(--accent);">Force Charge: <span id="suggest-charge-val">-</span>¢</strong> (20th percentile of import) and 
+                                <strong style="color: #fff; background: var(--primary); padding: 2px 8px; border-radius: 4px; font-weight: 600;">Force Discharge: <span id="suggest-discharge-val">-</span>¢</strong> (90th percentile of export).
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="grid-2">
                     <div class="glass-card">
                         <div class="card-title">Model Comparison Insights</div>
