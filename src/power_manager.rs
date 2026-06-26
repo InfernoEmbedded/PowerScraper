@@ -2629,10 +2629,10 @@ pub fn run_historical_simulation_impl(
         let charge_val = p1_import.min(median_export);
         let suggest_charge = (charge_val * 10.0).round() / 10.0;
 
-        // 99th percentile of export, capped at 3x median_import (and floored at 15.0)
+        // 99th percentile of export, floored at 3x median_import
         let idx_discharge = ((export_prices.len() - 1) as f64 * 0.99) as usize;
         let p99_export = export_prices[idx_discharge];
-        let discharge_val = p99_export.max(15.0).min(median_import * 3.0);
+        let discharge_val = p99_export.max(median_import * 3.0);
         let suggest_discharge = (discharge_val * 10.0).round() / 10.0;
 
         // Ensure charge < discharge
@@ -4639,29 +4639,29 @@ mod tests {
         // median_import = 51.0, median_export = 51.0
         // 3 * median_import = 153.0
         // 99th percentile: idx = 98 * 0.99 = 97 -> export_prices[97] = 99.0
-        // max(99.0, 15.0).min(153.0) = 99.0
-        assert_eq!(res.suggest_discharge_threshold, Some(99.0));
+        // max(99.0, 153.0) = 153.0
+        assert_eq!(res.suggest_discharge_threshold, Some(153.0));
 
         let _ = std::fs::remove_file(temp_db);
 
-        // 2. Overlap safety guard scenario
+        // 2. Safety bounds test case
         let temp_db_overlap = "temp_test_suggestions_overlap.db";
         let _ = std::fs::remove_file(temp_db_overlap);
         init_history_db(temp_db_overlap).unwrap();
 
         let mut buffer_overlap = Vec::new();
-        // Let's insert 10 points: import prices all 100.0, export prices all 30.0
+        // Let's insert 10 points: import prices all 20.0, export prices all 20.0
         for i in 1..=10 {
             let ts = now_ts - (i * 60);
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
                 topic: "tariff/import_price".to_string(),
-                value: 100.0,
+                value: 20.0,
             });
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
                 topic: "tariff/export_price".to_string(),
-                value: 30.0,
+                value: 20.0,
             });
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
@@ -4672,12 +4672,11 @@ mod tests {
         flush_history_to_db(temp_db_overlap, &mut buffer_overlap, None);
 
         let res_overlap = run_historical_simulation_impl(temp_db_overlap, "1d", None).unwrap();
-        // median import = 100.0, median export = 30.0
-        // charge suggestion = 1st percentile of import (100.0) capped at median export (30.0) = 30.0
-        // discharge suggestion = 99th percentile of export (30.0) capped at 3x median import (300.0) = 30.0
-        // Since 30.0 >= 30.0, the safety check should fire and clamp charge threshold to 30.0 - 1.0 = 29.0.
-        assert_eq!(res_overlap.suggest_discharge_threshold, Some(30.0));
-        assert_eq!(res_overlap.suggest_charge_threshold, Some(29.0));
+        // median import = 20.0, median export = 20.0
+        // charge suggestion = 1st percentile of import (20.0) capped at median export (20.0) = 20.0
+        // discharge suggestion = 99th percentile of export (20.0) floored at 3x median import (60.0) = 60.0
+        assert_eq!(res_overlap.suggest_discharge_threshold, Some(60.0));
+        assert_eq!(res_overlap.suggest_charge_threshold, Some(20.0));
 
         let _ = std::fs::remove_file(temp_db_overlap);
     }
