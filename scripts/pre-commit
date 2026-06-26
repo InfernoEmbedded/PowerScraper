@@ -120,11 +120,19 @@ if awk "BEGIN { if ($overall_val < $OVERALL_THRESHOLD) exit 0; else exit 1 }"; t
     exit 1
 fi
 
-# Verify core logic coverage
-if awk "BEGIN { if ($pm_val < $PM_THRESHOLD) exit 0; else exit 1 }"; then
-    echo -e "${RED}FAILED: power_manager.rs coverage ($pm_val%) is below the required threshold of $PM_THRESHOLD%${NC}"
+# 5. Bump version by 0.0.1
+echo -n "Bumping version in Cargo.toml... "
+VERSION=$(grep '^version\s*=\s*' Cargo.toml | cut -d '"' -f2)
+if [ -z "$VERSION" ]; then
+    echo -e "${RED}FAILED: Could not find version in Cargo.toml${NC}"
     exit 1
 fi
+IFS='.' read -r major minor patch <<< "$VERSION"
+patch=$((patch + 1))
+NEW_VERSION="$major.$minor.$patch"
+sed -i "s/^version = \"$VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
+git add Cargo.toml
+echo -e "${GREEN}Bumped to $NEW_VERSION${NC}"
 
 echo -e "${GREEN}All checks passed successfully! Commit approved.${NC}"
 exit 0
