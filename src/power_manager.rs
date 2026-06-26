@@ -1871,17 +1871,18 @@ pub fn run_historical_simulation_impl(
         .and_then(|bc| bc.source.as_deref())
         .unwrap_or("MainsMeter");
 
-    let mut battery_capacity_kwh = 13.8;
-    let mut max_power_w = 5000.0;
+    let mut battery_capacity_kwh = 0.0;
+    let mut max_power_w = 0.0;
     let mut min_charge_pct = 20;
     let mut max_charge_pct = 100;
 
     if let Some(ref bc) = config.battery_control {
-        if let Some(inv_cfg) = bc.inverter.values().next() {
-            if let Some(cap) = inv_cfg.battery_capacity {
-                battery_capacity_kwh = cap;
-            }
-            max_power_w = inv_cfg.max_discharge.max(inv_cfg.max_charge);
+        for (inv_name, inv_cfg) in &bc.inverter {
+            let cap = inv_cfg.battery_capacity.or_else(|| {
+                calculate_inferred_battery_capacity(db_path, inv_name)
+            }).unwrap_or(13.8);
+            battery_capacity_kwh += cap;
+            max_power_w += inv_cfg.max_discharge.max(inv_cfg.max_charge);
             if let Some(min_pct) = inv_cfg.min_charge_pct {
                 min_charge_pct = min_pct;
             }
@@ -1889,6 +1890,13 @@ pub fn run_historical_simulation_impl(
                 max_charge_pct = max_pct;
             }
         }
+    }
+
+    if battery_capacity_kwh == 0.0 {
+        battery_capacity_kwh = 13.8;
+    }
+    if max_power_w == 0.0 {
+        max_power_w = 5000.0;
     }
 
     let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
