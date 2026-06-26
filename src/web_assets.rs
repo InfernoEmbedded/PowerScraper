@@ -621,8 +621,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                             <h4 style="margin: 0 0 6px 0; color: #fff; font-size: 1.15rem; font-weight: 600; letter-spacing: -0.2px;">Suggested Optimal Settings</h4>
                             <p style="margin: 0; font-size: 0.95rem; line-height: 1.5;" class="text-muted">
                                 Based on the historical price distribution during this period, we suggest setting your Amber cost optimization thresholds to: 
-                                <strong style="color: var(--accent);">Force Charge: <span id="suggest-charge-val">-</span>¢</strong> (5th percentile of import capped at 1/4 of median import) and 
-                                <strong style="color: #fff; background: var(--primary); padding: 2px 8px; border-radius: 4px; font-weight: 600;">Force Discharge: <span id="suggest-discharge-val">-</span>¢</strong> (95th percentile of export floored at 4x median export).
+                                <strong style="color: var(--accent);">Force Charge: <span id="suggest-charge-val">-</span>¢</strong> (1st percentile of import capped at median export) and 
+                                <strong style="color: #fff; background: var(--primary); padding: 2px 8px; border-radius: 4px; font-weight: 600;">Force Discharge: <span id="suggest-discharge-val">-</span>¢</strong> (99th percentile of export capped at 3x median import).
                             </p>
                         </div>
                     </div>

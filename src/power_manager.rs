@@ -2619,29 +2619,32 @@ pub fn run_historical_simulation_impl(
     import_prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     export_prices.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut suggest_charge_threshold = if !import_prices.is_empty() {
+    let (suggest_charge_threshold, suggest_discharge_threshold) = if !import_prices.is_empty() && !export_prices.is_empty() {
         let median_import = import_prices[import_prices.len() / 2];
-        let idx = ((import_prices.len() - 1) as f64 * 0.05) as usize;
-        let val = import_prices[idx].min(median_import * 0.25);
-        Some((val * 10.0).round() / 10.0)
-    } else {
-        None
-    };
-
-    let suggest_discharge_threshold = if !export_prices.is_empty() {
         let median_export = export_prices[export_prices.len() / 2];
-        let idx = ((export_prices.len() - 1) as f64 * 0.95) as usize;
-        let val = export_prices[idx].max(median_export * 4.0).max(15.0);
-        Some((val * 10.0).round() / 10.0)
-    } else {
-        None
-    };
 
-    if let (Some(c), Some(d)) = (suggest_charge_threshold, suggest_discharge_threshold) {
-        if c >= d {
-            suggest_charge_threshold = Some(d - 1.0);
+        // 1st percentile of import, capped at median_export
+        let idx_charge = ((import_prices.len() - 1) as f64 * 0.01) as usize;
+        let p1_import = import_prices[idx_charge];
+        let charge_val = p1_import.min(median_export);
+        let suggest_charge = (charge_val * 10.0).round() / 10.0;
+
+        // 99th percentile of export, capped at 3x median_import (and floored at 15.0)
+        let idx_discharge = ((export_prices.len() - 1) as f64 * 0.99) as usize;
+        let p99_export = export_prices[idx_discharge];
+        let discharge_val = p99_export.max(15.0).min(median_import * 3.0);
+        let suggest_discharge = (discharge_val * 10.0).round() / 10.0;
+
+        // Ensure charge < discharge
+        let mut final_charge = suggest_charge;
+        if final_charge >= suggest_discharge {
+            final_charge = suggest_discharge - 1.0;
         }
-    }
+
+        (Some(final_charge), Some(suggest_discharge))
+    } else {
+        (None, None)
+    };
 
     let (no_battery_res, baseline_res, auto_res, smart_heuristic_res, lookahead_mpc_res, adaptive_peak_res, mpc_arbitrage_res, evolved_res) = threads_res;
 
@@ -4627,17 +4630,17 @@ mod tests {
         let res = run_historical_simulation_impl(temp_db, "1d", None).unwrap();
         // sorted import_prices: 1.0, 2.0, ..., 100.0 (records.len() is 99)
         // median_import = import_prices[49] = 51.0
-        // 1/4 * median = 12.75
-        // idx = ((100 - 1) as f64 * 0.05) as usize = 4 -> import_prices[4] = 6.0
-        // min(6.0, 12.75) = 6.0
-        assert_eq!(res.suggest_charge_threshold, Some(6.0));
+        // median_export = export_prices[49] = 51.0
+        // 1st percentile: idx = 98 * 0.01 = 0 -> import_prices[0] = 2.0
+        // capped at median_export: min(2.0, 51.0) = 2.0
+        assert_eq!(res.suggest_charge_threshold, Some(2.0));
 
         // sorted export_prices: 1.0, 2.0, ..., 100.0 (records.len() is 99)
-        // median_export = export_prices[49] = 51.0
-        // 4 * median = 204.0
-        // idx = ((100 - 1) as f64 * 0.95) as usize = 93 -> export_prices[93] = 95.0
-        // max(95.0, 204.0).max(15.0) = 204.0
-        assert_eq!(res.suggest_discharge_threshold, Some(204.0));
+        // median_import = 51.0, median_export = 51.0
+        // 3 * median_import = 153.0
+        // 99th percentile: idx = 98 * 0.99 = 97 -> export_prices[97] = 99.0
+        // max(99.0, 15.0).min(153.0) = 99.0
+        assert_eq!(res.suggest_discharge_threshold, Some(99.0));
 
         let _ = std::fs::remove_file(temp_db);
 
@@ -4647,7 +4650,7 @@ mod tests {
         init_history_db(temp_db_overlap).unwrap();
 
         let mut buffer_overlap = Vec::new();
-        // Let's insert 10 points: import prices all 100.0, export prices all 1.0
+        // Let's insert 10 points: import prices all 100.0, export prices all 30.0
         for i in 1..=10 {
             let ts = now_ts - (i * 60);
             buffer_overlap.push(HistoryRecord {
@@ -4658,7 +4661,7 @@ mod tests {
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
                 topic: "tariff/export_price".to_string(),
-                value: 1.0,
+                value: 30.0,
             });
             buffer_overlap.push(HistoryRecord {
                 timestamp: ts,
@@ -4669,11 +4672,12 @@ mod tests {
         flush_history_to_db(temp_db_overlap, &mut buffer_overlap, None);
 
         let res_overlap = run_historical_simulation_impl(temp_db_overlap, "1d", None).unwrap();
-        // median import = 100.0 -> 1/4 * median = 25.0. 5th percentile is 100.0 -> suggest_charge_threshold = 25.0
-        // median export = 1.0 -> 4 * median = 4.0. 95th percentile is 1.0. max(1.0, 4.0).max(15.0) = 15.0 -> suggest_discharge_threshold = 15.0
-        // Since 25.0 >= 15.0, the safety check should fire and clamp charge threshold to 15.0 - 1.0 = 14.0.
-        assert_eq!(res_overlap.suggest_discharge_threshold, Some(15.0));
-        assert_eq!(res_overlap.suggest_charge_threshold, Some(14.0));
+        // median import = 100.0, median export = 30.0
+        // charge suggestion = 1st percentile of import (100.0) capped at median export (30.0) = 30.0
+        // discharge suggestion = 99th percentile of export (30.0) capped at 3x median import (300.0) = 30.0
+        // Since 30.0 >= 30.0, the safety check should fire and clamp charge threshold to 30.0 - 1.0 = 29.0.
+        assert_eq!(res_overlap.suggest_discharge_threshold, Some(30.0));
+        assert_eq!(res_overlap.suggest_charge_threshold, Some(29.0));
 
         let _ = std::fs::remove_file(temp_db_overlap);
     }
