@@ -637,6 +637,7 @@ impl PowerManager {
                     }
                 }
 
+                /*
                 println!(
                     "DEBUG [{}] (linked) total_power={}, total_discharge_power={}, inv_state.discharge_power={}, assist_needed={:?}",
                     inverter_name,
@@ -645,6 +646,7 @@ impl PowerManager {
                     inv_state.discharge_power,
                     self.assist_needed
                 );
+                */
 
                 if inv_state.discharge_power > inverter_config.max_discharge {
                     inv_state.discharge_power = inverter_config.max_discharge;
@@ -758,6 +760,7 @@ impl PowerManager {
                         inv_state.discharge_power += total_error * 0.1;
                     }
 
+                    /*
                     println!(
                         "DEBUG [{}] total_power={}, total_discharge_power={}, inv_state.discharge_power={}, any_assist={}, assist_needed={:?}",
                         inverter_name,
@@ -767,6 +770,7 @@ impl PowerManager {
                         self.assist_needed.values().any(|&v| v),
                         self.assist_needed
                     );
+                    */
 
                     // Clamp values
                     if inv_state.discharge_power > inverter_config.max_discharge {
