@@ -10,6 +10,75 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 
+fn parse_timezone_offset(tz_str: &str) -> chrono::FixedOffset {
+    let mut seconds = 0;
+    let tz_trimmed = tz_str.trim();
+    
+    let is_posix = if let Some(first_char) = tz_trimmed.chars().next() {
+        first_char.is_alphabetic() && !tz_trimmed.to_uppercase().starts_with("UTC") && !tz_trimmed.to_uppercase().starts_with("GMT")
+    } else {
+        false
+    };
+    
+    let search_str = if tz_trimmed.to_uppercase().starts_with("UTC") {
+        &tz_trimmed[3..]
+    } else if tz_trimmed.to_uppercase().starts_with("GMT") {
+        &tz_trimmed[3..]
+    } else {
+        tz_trimmed
+    };
+    
+    let mut sign = 1;
+    let mut offset_str = "";
+    
+    if let Some(pos) = search_str.find(|c: char| c == '+' || c == '-' || c.is_ascii_digit()) {
+        let remainder = &search_str[pos..];
+        if remainder.starts_with('+') {
+            sign = 1;
+            offset_str = &remainder[1..];
+        } else if remainder.starts_with('-') {
+            sign = -1;
+            offset_str = &remainder[1..];
+        } else {
+            sign = 1;
+            offset_str = remainder;
+        }
+    }
+    
+    if is_posix {
+        sign = -sign;
+    }
+    
+    if !offset_str.is_empty() {
+        if offset_str.contains(':') {
+            let parts: Vec<&str> = offset_str.split(':').collect();
+            if let Ok(hours) = parts[0].trim().parse::<i32>() {
+                let minutes = parts.get(1).and_then(|m| m.trim().parse::<i32>().ok()).unwrap_or(0);
+                seconds = sign * (hours * 3600 + minutes * 60);
+            }
+        } else if offset_str.contains('.') {
+            if let Ok(val) = offset_str.parse::<f64>() {
+                seconds = (sign as f64 * val * 3600.0) as i32;
+            }
+        } else {
+            if let Ok(hours) = offset_str.trim().parse::<i32>() {
+                seconds = sign * hours * 3600;
+            }
+        }
+    }
+    
+    chrono::FixedOffset::east_opt(seconds).unwrap_or_else(|| chrono::FixedOffset::east_opt(0).unwrap())
+}
+
+pub fn get_timezone_offset(tz_str: Option<&str>) -> chrono::FixedOffset {
+    if let Some(tz) = tz_str {
+        parse_timezone_offset(tz)
+    } else {
+        use chrono::Offset;
+        chrono::Local::now().offset().fix()
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 struct InverterState {
     battery_capacity: u8,
@@ -420,6 +489,7 @@ pub enum PowerManagerMode {
     AdaptivePeakShaving,
     MpcOptimizer,
     MpcArbitrage,
+    EvolvedHeuristic,
 }
 
 impl std::fmt::Display for PowerManagerMode {
@@ -432,6 +502,7 @@ impl std::fmt::Display for PowerManagerMode {
             PowerManagerMode::AdaptivePeakShaving => write!(f, "AdaptivePeakShaving"),
             PowerManagerMode::MpcOptimizer => write!(f, "MpcOptimizer"),
             PowerManagerMode::MpcArbitrage => write!(f, "MpcArbitrage"),
+            PowerManagerMode::EvolvedHeuristic => write!(f, "EvolvedHeuristic"),
         }
     }
 }
@@ -458,6 +529,9 @@ impl std::str::FromStr for PowerManagerMode {
             }
             "mpcarbitrage" | "arbitrage" => {
                 Ok(PowerManagerMode::MpcArbitrage)
+            }
+            "evolvedheuristic" | "evolved" => {
+                Ok(PowerManagerMode::EvolvedHeuristic)
             }
             _ => Err(()),
         }
@@ -535,7 +609,8 @@ impl PowerManager {
     }
 
     fn get_period(&self) -> Option<&BatteryControlPeriod> {
-        let now_time = Local::now().time();
+        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+        let now_time = chrono::Utc::now().with_timezone(&tz_offset).time();
         let now = NaiveTime::from_hms_opt(now_time.hour(), now_time.minute(), now_time.second())?;
 
         for period in self.config.period.values() {
@@ -917,7 +992,8 @@ impl PowerManager {
                 let import_rate = rates.import_rate;
                 let export_rate = rates.export_rate;
 
-                let now = chrono::Local::now();
+                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                let now = chrono::Utc::now().with_timezone(&tz_offset);
                 let now_time = now.time();
                 let demand_window = get_demand_window(Some(&self.config));
 
@@ -985,13 +1061,134 @@ impl PowerManager {
                     Some(charge_val)
                 }
             }
+            PowerManagerMode::EvolvedHeuristic => {
+                let period = period_opt?;
+                let rates = self.tariff_manager.get_current_rates();
+                let import_rate = rates.import_rate;
+                let export_rate = rates.export_rate;
+
+                use chrono::Timelike;
+                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                let now = chrono::Utc::now().with_timezone(&tz_offset);
+                let now_time = now.time();
+                let hour = now.hour();
+                let demand_window = get_demand_window(Some(&self.config));
+
+                let eh_config = self.config.evolved_heuristic.clone()
+                    .unwrap_or_else(|| crate::config::EvolvedHeuristicConfig::default());
+
+                // 1. Extreme negative price: charge from grid
+                if import_rate < eh_config.neg_price_threshold {
+                    let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
+                    if inv_state.battery_capacity < max_limit {
+                        inv_state.discharge_power = -inverter_config.max_charge;
+                    } else {
+                        inv_state.discharge_power = 0.0;
+                    }
+                    self.assist_needed.insert(inverter_name.to_string(), false);
+                    let charge_val = Self::discharge_at(
+                        &inverter_config,
+                        &period,
+                        inv_state.discharge_power,
+                        inv_state.battery_capacity,
+                    );
+                    Some(charge_val)
+                }
+                // 2. High export price: dump to grid (arbitrage)
+                else if export_rate >= eh_config.export_dump_threshold {
+                    let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
+                    
+                    let is_near_or_in_demand = if let Some((_start, end)) = demand_window {
+                        let hour_val = hour as i32;
+                        let end_hour = end.hour() as i32;
+                        hour_val >= 12 && hour_val < end_hour
+                    } else {
+                        hour >= 12 && hour < 21
+                    };
+                    
+                    let reserve_kwh = if is_near_or_in_demand {
+                        eh_config.dump_reserve_demand
+                    } else {
+                        eh_config.dump_reserve_normal
+                    };
+                    let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
+                    
+                    if inv_state.battery_capacity > reserve_pct {
+                        inv_state.discharge_power = inverter_config.max_discharge;
+                        self.assist_needed.insert(inverter_name.to_string(), true);
+                    } else {
+                        inv_state.discharge_power = 0.0;
+                        self.assist_needed.insert(inverter_name.to_string(), false);
+                    }
+                    let charge_val = Self::discharge_at(
+                        &inverter_config,
+                        &period,
+                        inv_state.discharge_power,
+                        inv_state.battery_capacity,
+                    );
+                    Some(charge_val)
+                }
+                // 3. Pre-charge window: top up using cheap grid
+                else if {
+                    let is_pre_charge_window = if let Some((start, _)) = demand_window {
+                        hour >= eh_config.pre_charge_start_hour && hour < start.hour()
+                    } else {
+                        hour >= eh_config.pre_charge_start_hour && hour < 15
+                    };
+                    is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (inv_state.battery_capacity as f64 / 100.0) < eh_config.pre_charge_soc_limit
+                } {
+                    inv_state.discharge_power = -inverter_config.max_charge;
+                    self.assist_needed.insert(inverter_name.to_string(), false);
+                    let charge_val = Self::discharge_at(
+                        &inverter_config,
+                        &period,
+                        inv_state.discharge_power,
+                        inv_state.battery_capacity,
+                    );
+                    Some(charge_val)
+                }
+                // 4. Demand window: cover load with optionally adaptive limit
+                else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+                    let orig_target = self.grid_target;
+                    if eh_config.use_adaptive_shaving {
+                        let monthly_peak = self.get_monthly_peak_draw();
+                        let target_peak = (monthly_peak - eh_config.adaptive_safety_buffer).max(0.0);
+                        self.grid_target = target_peak;
+                    } else {
+                        self.grid_target = 0.0;
+                    }
+
+                    let charge_val = self.evaluate_auto_regulate(
+                        inverter_name,
+                        &inverter_config,
+                        &period,
+                        &mut inv_state,
+                        num_inverters,
+                    );
+
+                    self.grid_target = orig_target;
+                    Some(charge_val)
+                }
+                // 5. Default grid regulation fallback
+                else {
+                    let charge_val = self.evaluate_auto_regulate(
+                        inverter_name,
+                        &inverter_config,
+                        &period,
+                        &mut inv_state,
+                        num_inverters,
+                    );
+                    Some(charge_val)
+                }
+            }
             PowerManagerMode::AdaptivePeakShaving => {
                 let period = period_opt?;
                 let rates = self.tariff_manager.get_current_rates();
                 let import_rate = rates.import_rate;
                 let export_rate = rates.export_rate;
 
-                let now = chrono::Local::now();
+                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                let now = chrono::Utc::now().with_timezone(&tz_offset);
                 let now_time = now.time();
                 let demand_window = get_demand_window(Some(&self.config));
 
@@ -1070,7 +1267,8 @@ impl PowerManager {
                 let import_rate = rates.import_rate;
                 let export_rate = rates.export_rate;
 
-                let now = chrono::Local::now();
+                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                let now = chrono::Utc::now().with_timezone(&tz_offset);
                 let now_time = now.time();
                 let demand_window = get_demand_window(Some(&self.config));
 
@@ -1159,7 +1357,8 @@ impl PowerManager {
                 let import_rate = rates.import_rate;
                 let export_rate = rates.export_rate;
 
-                let now = chrono::Local::now();
+                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                let now = chrono::Utc::now().with_timezone(&tz_offset);
                 let now_time = now.time();
                 let demand_window = get_demand_window(Some(&self.config));
 
@@ -1352,8 +1551,9 @@ impl PowerManager {
             Err(_) => return 0.0,
         };
 
-        let now = chrono::Local::now();
-        let start_of_month = match chrono::Local.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0) {
+        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+        let now = chrono::Utc::now().with_timezone(&tz_offset);
+        let start_of_month = match tz_offset.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0) {
             chrono::LocalResult::Single(t) => t,
             _ => return 0.0,
         };
@@ -1375,8 +1575,8 @@ impl PowerManager {
 
                 let dt = chrono::Utc.timestamp_opt(ts, 0)
                     .single()
-                    .map(|utc| utc.with_timezone(&chrono::Local))
-                    .unwrap_or_else(|| chrono::Local::now());
+                    .map(|utc| utc.with_timezone(&tz_offset))
+                    .unwrap_or_else(|| chrono::Utc::now().with_timezone(&tz_offset));
 
                 let dt_time = dt.time();
                 if is_time_in_window(dt_time, demand_start, demand_end) && val > peak {
@@ -1462,14 +1662,16 @@ impl PowerManager {
         let mut expected_solar_kwh = 0.0;
         let mut forecast_used = false;
 
-        let now_ts = chrono::Local::now().timestamp();
+        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+        let now = chrono::Utc::now().with_timezone(&tz_offset);
+        let now_ts = now.timestamp();
         let demand_start_time = demand_window.map(|(start, _)| start).unwrap_or_else(|| NaiveTime::from_hms_opt(17, 0, 0).unwrap());
-        let mut end_dt = chrono::Local::now().date_naive().and_time(demand_start_time).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now_ts);
+        let mut end_dt = now.date_naive().and_time(demand_start_time).and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(now_ts);
         
         let start_ts = if now_ts >= end_dt {
-            let tomorrow = chrono::Local::now() + chrono::Duration::days(1);
-            end_dt = tomorrow.date_naive().and_time(demand_start_time).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now_ts);
-            tomorrow.date_naive().and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()).and_local_timezone(chrono::Local).single().map(|dt| dt.timestamp()).unwrap_or(now_ts)
+            let tomorrow = now + chrono::Duration::days(1);
+            end_dt = tomorrow.date_naive().and_time(demand_start_time).and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(now_ts);
+            tomorrow.date_naive().and_time(NaiveTime::from_hms_opt(10, 0, 0).unwrap()).and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(now_ts)
         } else {
             now_ts
         };
@@ -1529,8 +1731,8 @@ impl PowerManager {
 
             let dt = chrono::Utc.timestamp_opt(ts, 0)
                 .single()
-                .map(|utc| utc.with_timezone(&chrono::Local))
-                .unwrap_or_else(|| chrono::Local::now());
+                .map(|utc| utc.with_timezone(&tz_offset))
+                .unwrap_or_else(|| chrono::Utc::now().with_timezone(&tz_offset));
             let dt_time = dt.time();
 
             if !forecast_used && demand_window.map_or(false, |(start, _)| dt_time < start) {
@@ -2072,7 +2274,15 @@ pub async fn run_power_manager_task(
     }
 }
 
-#[derive(serde::Serialize, Clone, Default)]
+#[derive(serde::Serialize, Clone, Default, Debug)]
+pub struct DailyScenarioResult {
+    pub import_kwh: f64,
+    pub export_kwh: f64,
+    pub cycles: f64,
+    pub energy_cost: f64,
+}
+
+#[derive(serde::Serialize, Clone, Default, Debug)]
 pub struct SimulationResultModel {
     pub import_kwh: f64,
     pub export_kwh: f64,
@@ -2080,9 +2290,10 @@ pub struct SimulationResultModel {
     pub energy_cost: f64,
     pub demand_charges: f64,
     pub net_bill: f64,
+    pub daily: std::collections::BTreeMap<String, DailyScenarioResult>,
 }
 
-#[derive(serde::Serialize, Clone)]
+#[derive(serde::Serialize, Clone, Debug)]
 pub struct SimulationResponse {
     pub start_date: String,
     pub end_date: String,
@@ -2096,8 +2307,11 @@ pub struct SimulationResponse {
     pub lookahead_mpc: SimulationResultModel,
     pub adaptive_peak: SimulationResultModel,
     pub mpc_arbitrage: SimulationResultModel,
+    pub evolved_heuristic: SimulationResultModel,
     pub suggest_charge_threshold: Option<f64>,
     pub suggest_discharge_threshold: Option<f64>,
+    pub daily_solar: std::collections::BTreeMap<String, f64>,
+    pub daily_usage: std::collections::BTreeMap<String, f64>,
 }
 
 pub fn run_historical_simulation(db_path: &str, range: &str) -> Result<SimulationResponse, String> {
@@ -2110,6 +2324,9 @@ pub fn run_historical_simulation_impl(
     progress_cb: Option<&(dyn Fn(f64, f64) + Send + Sync)>,
 ) -> Result<SimulationResponse, String> {
     let config = crate::config::Config::load_from_db(db_path).unwrap_or_else(|_| crate::config::Config::default_empty());
+    let evolved_heuristic_config = config.battery_control.as_ref()
+        .and_then(|bc| bc.evolved_heuristic.clone())
+        .unwrap_or_else(|| crate::config::EvolvedHeuristicConfig::default());
     let demand_window = get_demand_window(config.battery_control.as_ref());
     let demand_rate = config.battery_control.as_ref()
         .and_then(|bc| bc.demand.as_ref())
@@ -2204,14 +2421,9 @@ pub fn run_historical_simulation_impl(
     ).map_err(|e| e.to_string())?;
 
     use std::collections::BTreeMap;
-    struct SimTempGroup {
-        solar: f64,
-        load: Option<f64>,
-        battery: f64,
-        import_price: Option<f64>,
-        export_price: Option<f64>,
-    }
-    let mut groups: BTreeMap<i64, SimTempGroup> = BTreeMap::new();
+    use std::collections::HashMap;
+
+    let mut groups: BTreeMap<i64, HashMap<String, f64>> = BTreeMap::new();
 
     let mut rows = stmt.query(rusqlite::params![start_ts]).map_err(|e| e.to_string())?;
     while let Ok(Some(row)) = rows.next() {
@@ -2219,25 +2431,9 @@ pub fn run_historical_simulation_impl(
         let topic: String = row.get(1).unwrap_or_default();
         let val: f64 = row.get(2).unwrap_or(0.0);
 
-        let entry = groups.entry(ts).or_insert(SimTempGroup {
-            solar: 0.0,
-            load: None,
-            battery: 0.0,
-            import_price: None,
-            export_price: None,
-        });
-
-        if topic.ends_with("/PV1 Power") || topic.ends_with("/PV2 Power") || topic.contains("/Input 1 Power") || topic.contains("/Input 2 Power") {
-            entry.solar += val;
-        } else if topic == format!("{}/Total system power", mains_source) {
-            entry.load = Some(val);
-        } else if topic.ends_with("/Battery Power") {
-            entry.battery += val;
-        } else if topic == "tariff/import_price" {
-            entry.import_price = Some(val);
-        } else if topic == "tariff/export_price" {
-            entry.export_price = Some(val);
-        }
+        let ts_rounded = (ts / 60) * 60;
+        let entry = groups.entry(ts_rounded).or_insert_with(HashMap::new);
+        entry.insert(topic, val);
     }
 
     let keys: Vec<i64> = groups.keys().cloned().collect();
@@ -2245,16 +2441,7 @@ pub fn run_historical_simulation_impl(
         return Err("Insufficient historical telemetry data in database to run simulation.".to_string());
     }
 
-    #[derive(Clone)]
-    struct SimCleanRecord {
-        timestamp: i64,
-        dt_local: chrono::DateTime<chrono::Local>,
-        solar_power_w: f64,
-        load_power_w: f64,
-        import_price_cents: f64,
-        export_price_cents: f64,
-        duration_hours: f64,
-    }
+    let tz_offset = get_timezone_offset(config.battery_control.as_ref().and_then(|bc| bc.timezone.as_deref()));
 
     let mut records = Vec::new();
     for i in 0..keys.len() - 1 {
@@ -2266,25 +2453,46 @@ pub fn run_historical_simulation_impl(
         }
 
         let g = &groups[&ts];
-        if g.load.is_none() {
+        
+        let mut solar = 0.0;
+        let mut battery = 0.0;
+        let mut load = None;
+        let mut import_price = None;
+        let mut export_price = None;
+
+        for (topic, val) in g {
+            if topic.ends_with("/PV1 Power") || topic.ends_with("/PV2 Power") || topic.contains("/Input 1 Power") || topic.contains("/Input 2 Power") {
+                solar += val;
+            } else if topic == &format!("{}/Total system power", mains_source) {
+                load = Some(*val);
+            } else if topic.ends_with("/Battery Power") {
+                battery += val;
+            } else if topic == "tariff/import_price" {
+                import_price = Some(*val);
+            } else if topic == "tariff/export_price" {
+                export_price = Some(*val);
+            }
+        }
+
+        if load.is_none() {
             continue;
         }
 
         let dt_local = chrono::Utc.timestamp_opt(ts, 0)
             .single()
-            .map(|utc| utc.with_timezone(&chrono::Local))
-            .unwrap_or_else(|| chrono::Local::now());
+            .map(|utc| utc.with_timezone(&tz_offset))
+            .unwrap_or_else(|| chrono::Utc::now().with_timezone(&tz_offset));
 
-        let grid_w = g.load.unwrap();
-        let gross_load_w = (grid_w + g.solar + g.battery).max(0.0);
+        let grid_w = load.unwrap();
+        let gross_load_w = (grid_w + solar + battery).max(0.0);
 
-        records.push(SimCleanRecord {
+        records.push(crate::simulation::SimRecord {
             timestamp: ts,
             dt_local,
-            solar_power_w: g.solar,
+            solar_power_w: solar,
             load_power_w: gross_load_w,
-            import_price_cents: g.import_price.unwrap_or(0.0),
-            export_price_cents: g.export_price.unwrap_or(0.0),
+            import_price_cents: import_price.unwrap_or(f64::NAN),
+            export_price_cents: export_price.unwrap_or(f64::NAN),
             duration_hours,
         });
     }
@@ -2295,753 +2503,80 @@ pub fn run_historical_simulation_impl(
 
     let mut last_imp = 25.0;
     let mut last_exp = 8.0;
-    let mut last_imp_age = 9999;
-    let mut last_exp_age = 9999;
 
     for r in &mut records {
-        if r.import_price_cents > 0.0 {
+        if !r.import_price_cents.is_nan() {
             last_imp = r.import_price_cents;
-            last_imp_age = 0;
-        } else {
-            if last_imp_age < 4 {
-                r.import_price_cents = last_imp;
-                last_imp_age += 1;
-            } else {
-                r.import_price_cents = 25.0;
-                last_imp_age = 9999;
-            }
         }
+        r.import_price_cents = last_imp;
 
-        if r.export_price_cents > 0.0 {
+        if !r.export_price_cents.is_nan() {
             last_exp = r.export_price_cents;
-            last_exp_age = 0;
-        } else {
-            if last_exp_age < 4 {
-                r.export_price_cents = last_exp;
-                last_exp_age += 1;
-            } else {
-                r.export_price_cents = 8.0;
-                last_exp_age = 9999;
-            }
         }
-    }
-
-    fn calculate_demand_charges_total(monthly_peaks: &HashMap<String, f64>, rate: f64) -> f64 {
-        let mut total = 0.0;
-        for peak_w in monthly_peaks.values() {
-            let peak_kw = peak_w / 1000.0;
-            total += peak_kw * rate * 30.0;
-        }
-        total
+        r.export_price_cents = last_exp;
     }
 
     let start_date = records.first().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
     let end_date = records.last().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
     let records_simulated = records.len();
 
+    let periods_list = if let Some(ref bc) = config.battery_control {
+        bc.period.values().cloned().collect()
+    } else {
+        Vec::new()
+    };
+
+    let sim_config = crate::simulation::SimConfig {
+        battery_capacity_kwh,
+        max_power_w,
+        min_charge_pct: min_charge_pct as u8,
+        max_charge_pct: max_charge_pct as u8,
+        demand_window,
+        demand_rate,
+        negative_export_prevent,
+        low_price_charge,
+        low_price_threshold,
+        high_price_discharge,
+        high_price_threshold,
+        periods: periods_list,
+        evolved_heuristic: evolved_heuristic_config,
+    };
+
+    let sim_config_ref = &sim_config;
     let records_ref = &records;
 
-    let (no_battery_res, baseline_res, auto_res, smart_heuristic_res, lookahead_mpc_res, adaptive_peak_res, mpc_arbitrage_res) =
+    let threads_res =
         std::thread::scope(|s| {
             let t_no_bat = s.spawn(move || {
-                let mut no_bat_import_kwh = 0.0;
-                let mut no_bat_export_kwh = 0.0;
-                let mut no_bat_energy_cost = 0.0;
-                let mut no_bat_peaks = HashMap::new();
-
-                for r in records_ref {
-                    let net_w = r.load_power_w - r.solar_power_w;
-                    let now_time = r.dt_local.time();
-                    let month_key = r.dt_local.format("%Y-%m").to_string();
-
-                    if net_w > 0.0 {
-                        let kwh = (net_w / 1000.0) * r.duration_hours;
-                        no_bat_import_kwh += kwh;
-                        no_bat_energy_cost += kwh * (r.import_price_cents / 100.0);
-
-                        if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
-                            let peak = no_bat_peaks.entry(month_key).or_insert(0.0);
-                            if net_w > *peak {
-                                *peak = net_w;
-                            }
-                        }
-                    } else {
-                        let kwh = (-net_w / 1000.0) * r.duration_hours;
-                        no_bat_export_kwh += kwh;
-                        no_bat_energy_cost -= kwh * (r.export_price_cents / 100.0);
-                    }
-                }
-                let no_bat_demand = calculate_demand_charges_total(&no_bat_peaks, demand_rate);
-                SimulationResultModel {
-                    import_kwh: no_bat_import_kwh,
-                    export_kwh: no_bat_export_kwh,
-                    cycles: 0.0,
-                    energy_cost: no_bat_energy_cost,
-                    demand_charges: no_bat_demand,
-                    net_bill: no_bat_energy_cost + no_bat_demand,
-                }
+                crate::simulation::no_battery::run(records_ref, sim_config_ref)
             });
 
             let t_base = s.spawn(move || {
-                let mut base_import_kwh = 0.0;
-                let mut base_export_kwh = 0.0;
-                let mut base_energy_cost = 0.0;
-                let mut base_peaks = HashMap::new();
-                let mut base_cycles = 0.0;
-                let mut bat_soc = battery_capacity_kwh * 0.5;
-
-                for r in records_ref {
-                    let net_w = r.load_power_w - r.solar_power_w;
-                    let now_time = r.dt_local.time();
-                    let month_key = r.dt_local.format("%Y-%m").to_string();
-
-                    let net_grid_w;
-                    if net_w > 0.0 {
-                        let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-                        let discharge = net_w.min(max_power_w).min(max_avail_discharge);
-
-                        bat_soc -= (discharge / 1000.0) * r.duration_hours / 0.95;
-                        base_cycles += (discharge / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w - discharge;
-                    } else {
-                        let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                        let charge = (-net_w).min(max_power_w).min(max_avail_charge);
-
-                        bat_soc += (charge / 1000.0) * r.duration_hours * 0.95;
-                        base_cycles += (charge / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w + charge;
-                    }
-
-                    if net_grid_w > 0.0 {
-                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-                        base_import_kwh += kwh;
-                        base_energy_cost += kwh * (r.import_price_cents / 100.0);
-
-                        if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
-                            let peak = base_peaks.entry(month_key).or_insert(0.0);
-                            if net_grid_w > *peak {
-                                *peak = net_grid_w;
-                            }
-                        }
-                    } else {
-                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-                        base_export_kwh += kwh;
-                        base_energy_cost -= kwh * (r.export_price_cents / 100.0);
-                    }
-                }
-                let base_demand = calculate_demand_charges_total(&base_peaks, demand_rate);
-                SimulationResultModel {
-                    import_kwh: base_import_kwh,
-                    export_kwh: base_export_kwh,
-                    cycles: base_cycles,
-                    energy_cost: base_energy_cost,
-                    demand_charges: base_demand,
-                    net_bill: base_energy_cost + base_demand,
-                }
+                crate::simulation::baseline::run(records_ref, sim_config_ref)
             });
 
             let t_auto = s.spawn(move || {
-                let mut auto_import_kwh = 0.0;
-                let mut auto_export_kwh = 0.0;
-                let mut auto_energy_cost = 0.0;
-                let mut auto_peaks = HashMap::new();
-                let mut auto_cycles = 0.0;
-                let mut bat_soc = battery_capacity_kwh * 0.5;
-
-                for r in records_ref {
-                    let net_w = r.load_power_w - r.solar_power_w;
-                    let month_key = r.dt_local.format("%Y-%m").to_string();
-
-                    let mut charge_w = 0.0;
-                    let mut discharge_w = 0.0;
-
-                    let now_time = r.dt_local.time();
-
-                    // Match period
-                    let mut active_period = None;
-                    if let Some(ref bc) = config.battery_control {
-                        for period in bc.period.values() {
-                            if let (Ok(start), Ok(end)) = (
-                                NaiveTime::parse_from_str(&period.start, "%H:%M:%S"),
-                                NaiveTime::parse_from_str(&period.end, "%H:%M:%S"),
-                            ) {
-                                if start < end {
-                                    if now_time >= start && now_time < end {
-                                        active_period = Some(period);
-                                        break;
-                                    }
-                                } else {
-                                    if !(now_time >= end && now_time < start) {
-                                        active_period = Some(period);
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    let min_pct = active_period.map(|p| p.min_charge).unwrap_or(min_charge_pct) as f64;
-                    let grid_charge = active_period.map(|p| p.grid_charge).unwrap_or(false);
-                    let prefer_battery = active_period.map(|p| p.prefer_battery).unwrap_or(false);
-                    let force_discharge = active_period.and_then(|p| p.force_discharge);
-
-                    let bat_pct = (bat_soc / battery_capacity_kwh) * 100.0;
-
-                    if let Some(fd_w) = force_discharge {
-                        if fd_w > 0.0 {
-                            let max_avail_discharge = ((bat_soc - (min_pct / 100.0) * battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = fd_w.min(max_power_w).min(max_avail_discharge);
-                        } else if fd_w < 0.0 {
-                            let max_avail_charge = (((battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-fd_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    } else if grid_charge && bat_pct < min_pct {
-                        let max_avail_charge = (((battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                        charge_w = max_power_w.min(max_avail_charge);
-                    } else if prefer_battery && bat_pct < min_pct {
-                        if net_w < 0.0 {
-                            let max_avail_charge = (((battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    } else {
-                        if net_w > 0.0 {
-                            let max_avail_discharge = ((bat_soc - (min_pct / 100.0) * battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                        } else {
-                            let max_avail_charge = (((battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    }
-
-                    let net_grid_w;
-                    if charge_w > 0.0 {
-                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-                        auto_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w + charge_w;
-                    } else if discharge_w > 0.0 {
-                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-                        auto_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w - discharge_w;
-                    } else {
-                        net_grid_w = net_w;
-                    }
-
-                    if net_grid_w > 0.0 {
-                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-                        auto_import_kwh += kwh;
-                        auto_energy_cost += kwh * (r.import_price_cents / 100.0);
-
-                        if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
-                            let peak = auto_peaks.entry(month_key).or_insert(0.0);
-                            if net_grid_w > *peak {
-                                *peak = net_grid_w;
-                            }
-                        }
-                    } else {
-                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-                        auto_export_kwh += kwh;
-                        auto_energy_cost -= kwh * (r.export_price_cents / 100.0);
-                    }
-                }
-                let auto_demand = calculate_demand_charges_total(&auto_peaks, demand_rate);
-                SimulationResultModel {
-                    import_kwh: auto_import_kwh,
-                    export_kwh: auto_export_kwh,
-                    cycles: auto_cycles,
-                    energy_cost: auto_energy_cost,
-                    demand_charges: auto_demand,
-                    net_bill: auto_energy_cost + auto_demand,
-                }
+                crate::simulation::auto::run(records_ref, sim_config_ref)
             });
 
             let t_smart = s.spawn(move || {
-                let mut smart_import_kwh = 0.0;
-                let mut smart_export_kwh = 0.0;
-                let mut smart_energy_cost = 0.0;
-                let mut smart_peaks = HashMap::new();
-                let mut smart_cycles = 0.0;
-                let mut bat_soc = battery_capacity_kwh * 0.5;
-
-                for r in records_ref {
-                    let net_w = r.load_power_w - r.solar_power_w;
-                    let now_time = r.dt_local.time();
-                    let month_key = r.dt_local.format("%Y-%m").to_string();
-                    let import_price = r.import_price_cents;
-                    let export_price = r.export_price_cents;
-
-                    let is_demand = demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end));
-                    let is_pre_charge = demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start);
-
-                    let mut charge_w = 0.0;
-                    let mut discharge_w = 0.0;
-
-                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
-                    if import_price < 0.0 || negative_export_triggered {
-                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                    } else if high_price_discharge && export_price >= high_price_threshold {
-                        let reserve = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
-                        if bat_soc > reserve {
-                            let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-                        }
-                    } else if is_pre_charge && low_price_charge && import_price <= low_price_threshold && (bat_soc / battery_capacity_kwh) < 0.85 {
-                        let target = battery_capacity_kwh * 0.85;
-                        let deficit = target - bat_soc;
-                        let max_avail_charge = (deficit / 0.95) / r.duration_hours * 1000.0;
-                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                    } else if is_demand {
-                        if net_w > 0.0 {
-                            let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
-                            let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                        } else {
-                            let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    } else {
-                        if net_w > 0.0 {
-                            let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
-                            let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                        } else {
-                            let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    }
-
-                    let net_grid_w;
-                    if charge_w > 0.0 {
-                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-                        smart_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w + charge_w;
-                    } else if discharge_w > 0.0 {
-                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-                        smart_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w - discharge_w;
-                    } else {
-                        net_grid_w = net_w;
-                    }
-
-                    if net_grid_w > 0.0 {
-                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-                        smart_import_kwh += kwh;
-                        smart_energy_cost += kwh * (import_price / 100.0);
-
-                        if is_demand {
-                            let peak = smart_peaks.entry(month_key).or_insert(0.0);
-                            if net_grid_w > *peak {
-                                *peak = net_grid_w;
-                            }
-                        }
-                    } else {
-                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-                        smart_export_kwh += kwh;
-                        smart_energy_cost -= kwh * (export_price / 100.0);
-                    }
-                }
-                let smart_demand = calculate_demand_charges_total(&smart_peaks, demand_rate);
-                SimulationResultModel {
-                    import_kwh: smart_import_kwh,
-                    export_kwh: smart_export_kwh,
-                    cycles: smart_cycles,
-                    energy_cost: smart_energy_cost,
-                    demand_charges: smart_demand,
-                    net_bill: smart_energy_cost + smart_demand,
-                }
+                crate::simulation::smart_heuristic::run(records_ref, sim_config_ref)
             });
 
             let t_mpc = s.spawn(move || {
-                let mut mpc_import_kwh = 0.0;
-                let mut mpc_export_kwh = 0.0;
-                let mut mpc_energy_cost = 0.0;
-                let mut mpc_peaks = HashMap::new();
-                let mut mpc_cycles = 0.0;
-                let mut bat_soc = battery_capacity_kwh * 0.5;
-
-                let progress_step = (records_simulated / 100).max(1);
-                let start_time = std::time::Instant::now();
-
-                for i in 0..records_simulated {
-                    if i % progress_step == 0 {
-                        if let Some(cb) = progress_cb {
-                            let elapsed = start_time.elapsed().as_secs_f64();
-                            let percent = (i as f64 / records_simulated as f64) * 100.0;
-                            let eta_seconds = if i > 0 {
-                                elapsed * (records_simulated as f64 - i as f64) / i as f64
-                            } else {
-                                0.0
-                            };
-                            cb(percent, eta_seconds);
-                        }
-                    }
-
-                    let r = &records_ref[i];
-                    let net_w = r.load_power_w - r.solar_power_w;
-                    let now_time = r.dt_local.time();
-                    let month_key = r.dt_local.format("%Y-%m").to_string();
-                    let import_price = r.import_price_cents;
-                    let export_price = r.export_price_cents;
-
-                    let is_demand = demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end));
-
-                    let mut expected_solar = 0.0;
-                    let mut demand_needed = 0.0;
-                    let mut cheapest_future = Vec::new();
-
-                    for j in i..records_simulated {
-                        let fr = &records_ref[j];
-                        if fr.timestamp - r.timestamp > 86400 {
-                            break;
-                        }
-                        let ftime = fr.dt_local.time();
-                        let fnet = fr.load_power_w - fr.solar_power_w;
-
-                        if demand_window.map_or(false, |(start, end)| is_time_in_window(ftime, start, end)) && fnet > 0.0 {
-                            demand_needed += (fnet / 1000.0) * fr.duration_hours;
-                        }
-                        if demand_window.map_or(false, |(start, _)| ftime < start) && fnet < 0.0 {
-                            expected_solar += (-fnet / 1000.0) * fr.duration_hours;
-                        }
-                        cheapest_future.push((j, fr.import_price_cents));
-                    }
-
-                    cheapest_future.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-                    let threshold_idx = (cheapest_future.len() / 5).max(1);
-                    let cheap_threshold = cheapest_future[threshold_idx - 1].1;
-
-                    let required_reserve = (demand_needed / 0.95).min(battery_capacity_kwh * 0.95);
-
-                    let mut charge_w = 0.0;
-                    let mut discharge_w = 0.0;
-
-                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
-                    if import_price < 0.0 || negative_export_triggered {
-                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                    } else if high_price_discharge && export_price >= high_price_threshold && bat_soc > (required_reserve + battery_capacity_kwh * 0.1) {
-                        let max_avail_discharge = ((bat_soc - required_reserve) * 0.95) / r.duration_hours * 1000.0;
-                        discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-                    } else if demand_window.map_or(false, |(start, _)| now_time < start) && (bat_soc + expected_solar * 0.95) < required_reserve {
-                        let is_cheap = if low_price_charge { import_price <= low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold };
-                        if is_cheap {
-                            let projected_deficit = required_reserve - (bat_soc + expected_solar * 0.95);
-                            let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                        } else {
-                            if net_w < 0.0 {
-                                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                            } else if net_w > 0.0 {
-                                let available = (bat_soc - required_reserve).max(0.0);
-                                let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
-                                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                            }
-                        }
-                    } else {
-                        if is_demand {
-                            if net_w > 0.0 {
-                                let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-                                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                            } else {
-                                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                            }
-                        } else {
-                            if net_w < 0.0 {
-                                let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                                charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                            } else if net_w > 0.0 {
-                                let available = (bat_soc - required_reserve).max(0.0);
-                                let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
-                                discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                            }
-                        }
-                    }
-
-                    let net_grid_w;
-                    if charge_w > 0.0 {
-                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-                        mpc_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w + charge_w;
-                    } else if discharge_w > 0.0 {
-                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-                        mpc_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w - discharge_w;
-                    } else {
-                        net_grid_w = net_w;
-                    }
-
-                    if net_grid_w > 0.0 {
-                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-                        mpc_import_kwh += kwh;
-                        mpc_energy_cost += kwh * (import_price / 100.0);
-
-                        if is_demand {
-                            let peak = mpc_peaks.entry(month_key).or_insert(0.0);
-                            if net_grid_w > *peak {
-                                *peak = net_grid_w;
-                            }
-                        }
-                    } else {
-                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-                        mpc_export_kwh += kwh;
-                        mpc_energy_cost -= kwh * (export_price / 100.0);
-                    }
-                }
-
-                if let Some(cb) = progress_cb {
-                    cb(100.0, 0.0);
-                }
-
-                let mpc_demand = calculate_demand_charges_total(&mpc_peaks, demand_rate);
-                SimulationResultModel {
-                    import_kwh: mpc_import_kwh,
-                    export_kwh: mpc_export_kwh,
-                    cycles: mpc_cycles,
-                    energy_cost: mpc_energy_cost,
-                    demand_charges: mpc_demand,
-                    net_bill: mpc_energy_cost + mpc_demand,
-                }
+                crate::simulation::lookahead_mpc::run(records_ref, sim_config_ref, progress_cb)
             });
 
             let t_adapt = s.spawn(move || {
-                let mut adapt_import_kwh = 0.0;
-                let mut adapt_export_kwh = 0.0;
-                let mut adapt_energy_cost = 0.0;
-                let mut adapt_peaks = HashMap::new();
-                let mut adapt_cycles = 0.0;
-                let mut bat_soc = battery_capacity_kwh * 0.5;
-
-                for r in records_ref {
-                    let net_w = r.load_power_w - r.solar_power_w;
-                    let now_time = r.dt_local.time();
-                    let month_key = r.dt_local.format("%Y-%m").to_string();
-                    let import_price = r.import_price_cents;
-                    let export_price = r.export_price_cents;
-
-                    let is_demand = demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end));
-                    let current_month_peak = *adapt_peaks.get(&month_key).unwrap_or(&0.0);
-
-                    let mut charge_w = 0.0;
-                    let mut discharge_w = 0.0;
-
-                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
-                    if import_price < 0.0 || negative_export_triggered {
-                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                    } else if high_price_discharge && export_price >= high_price_threshold {
-                        let reserve = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
-                        if bat_soc > reserve {
-                            let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-                        }
-                    } else if is_demand {
-                        if net_w > current_month_peak {
-                            let excess = net_w - current_month_peak;
-                            let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = excess.min(max_power_w).min(max_avail_discharge);
-                        } else if net_w < 0.0 {
-                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    } else {
-                        if net_w > 0.0 {
-                            let min_pct_limit = battery_capacity_kwh * (min_charge_pct as f64 / 100.0);
-                            let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                        } else {
-                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    }
-
-                    let net_grid_w;
-                    if charge_w > 0.0 {
-                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-                        adapt_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w + charge_w;
-                    } else if discharge_w > 0.0 {
-                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-                        adapt_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w - discharge_w;
-                    } else {
-                        net_grid_w = net_w;
-                    }
-
-                    if net_grid_w > 0.0 {
-                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-                        adapt_import_kwh += kwh;
-                        adapt_energy_cost += kwh * (import_price / 100.0);
-
-                        if is_demand {
-                            let peak = adapt_peaks.entry(month_key).or_insert(0.0);
-                            if net_grid_w > *peak {
-                                *peak = net_grid_w;
-                            }
-                        }
-                    } else {
-                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-                        adapt_export_kwh += kwh;
-                        adapt_energy_cost -= kwh * (export_price / 100.0);
-                    }
-                }
-                let adapt_demand = calculate_demand_charges_total(&adapt_peaks, demand_rate);
-                SimulationResultModel {
-                    import_kwh: adapt_import_kwh,
-                    export_kwh: adapt_export_kwh,
-                    cycles: adapt_cycles,
-                    energy_cost: adapt_energy_cost,
-                    demand_charges: adapt_demand,
-                    net_bill: adapt_energy_cost + adapt_demand,
-                }
+                crate::simulation::adaptive_peak::run(records_ref, sim_config_ref)
             });
 
             let t_arb = s.spawn(move || {
-                let mut arb_import_kwh = 0.0;
-                let mut arb_export_kwh = 0.0;
-                let mut arb_energy_cost = 0.0;
-                let mut arb_peaks = HashMap::new();
-                let mut arb_cycles = 0.0;
-                let mut bat_soc = battery_capacity_kwh * 0.5;
+                crate::simulation::mpc_arbitrage::run(records_ref, sim_config_ref)
+            });
 
-                for i in 0..records_simulated {
-                    let r = &records_ref[i];
-                    let net_w = r.load_power_w - r.solar_power_w;
-                    let now_time = r.dt_local.time();
-                    let month_key = r.dt_local.format("%Y-%m").to_string();
-                    let import_price = r.import_price_cents;
-                    let export_price = r.export_price_cents;
-
-                    let is_demand = demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end));
-
-                    let mut expected_solar = 0.0;
-                    let mut demand_needed = 0.0;
-                    let mut cheapest_future = Vec::new();
-                    let mut night_needed = 0.0;
-                    let mut night_prices = Vec::new();
-
-                    let night_start = demand_window.map(|(_, end)| end).unwrap_or_else(|| NaiveTime::from_hms_opt(20, 0, 0).unwrap());
-                    let night_end = NaiveTime::from_hms_opt(6, 0, 0).unwrap();
-
-                    for j in i..records_simulated {
-                        let fr = &records_ref[j];
-                        if fr.timestamp - r.timestamp > 86400 {
-                            break;
-                        }
-                        let ftime = fr.dt_local.time();
-                        let fnet = fr.load_power_w - fr.solar_power_w;
-
-                        if demand_window.map_or(false, |(start, end)| is_time_in_window(ftime, start, end)) && fnet > 0.0 {
-                            demand_needed += (fnet / 1000.0) * fr.duration_hours;
-                        }
-                        if demand_window.map_or(false, |(start, _)| ftime < start) && fnet < 0.0 {
-                            expected_solar += (-fnet / 1000.0) * fr.duration_hours;
-                        }
-                        if is_time_in_window(ftime, night_start, night_end) {
-                            if fnet > 0.0 {
-                                night_needed += (fnet / 1000.0) * fr.duration_hours;
-                            }
-                            night_prices.push(fr.import_price_cents);
-                        }
-                        cheapest_future.push((j, fr.import_price_cents));
-                    }
-
-                    cheapest_future.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-                    let threshold_idx = (cheapest_future.len() / 5).max(1);
-                    let cheap_threshold = cheapest_future[threshold_idx - 1].1;
-
-                    let night_avg_price = if !night_prices.is_empty() {
-                        night_prices.iter().sum::<f64>() / night_prices.len() as f64
-                    } else {
-                        30.0
-                    };
-
-                    let demand_reserve = (demand_needed / 0.95).min(battery_capacity_kwh * 0.95);
-                    let total_needed = (demand_needed + night_needed) / 0.95;
-                    let required_reserve = total_needed.min(battery_capacity_kwh * 0.95);
-
-                    let target_reserve = if night_avg_price > import_price * 1.10 {
-                        required_reserve
-                    } else {
-                        demand_reserve
-                    };
-
-                    let mut charge_w = 0.0;
-                    let mut discharge_w = 0.0;
-
-                    let negative_export_triggered = negative_export_prevent && export_price < 0.0;
-                    if import_price < 0.0 || negative_export_triggered {
-                        let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                        charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                    } else if high_price_discharge && export_price >= high_price_threshold && bat_soc > (target_reserve + battery_capacity_kwh * 0.1) {
-                        let max_avail_discharge = ((bat_soc - target_reserve) * 0.95) / r.duration_hours * 1000.0;
-                        discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
-                    } else if is_demand {
-                        if net_w > 0.0 {
-                            let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                        } else {
-                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        }
-                    } else {
-                        let projected_deficit = target_reserve - (bat_soc + expected_solar * 0.95);
-                        let is_cheap = if low_price_charge { import_price <= low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold };
-
-                        if projected_deficit > 0.0 && is_cheap {
-                            let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = max_power_w.min(max_avail_charge.max(0.0));
-                        } else if net_w < 0.0 {
-                            let max_avail_charge = ((battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
-                            charge_w = (-net_w).min(max_power_w).min(max_avail_charge);
-                        } else if net_w > 0.0 {
-                            let available = (bat_soc - target_reserve).max(0.0);
-                            let max_avail_discharge = (available * 0.95) / r.duration_hours * 1000.0;
-                            discharge_w = net_w.min(max_power_w).min(max_avail_discharge);
-                        }
-                    }
-
-                    let net_grid_w;
-                    if charge_w > 0.0 {
-                        bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
-                        arb_cycles += (charge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w + charge_w;
-                    } else if discharge_w > 0.0 {
-                        bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
-                        arb_cycles += (discharge_w / 1000.0) * r.duration_hours / battery_capacity_kwh;
-                        net_grid_w = net_w - discharge_w;
-                    } else {
-                        net_grid_w = net_w;
-                    }
-
-                    if net_grid_w > 0.0 {
-                        let kwh = (net_grid_w / 1000.0) * r.duration_hours;
-                        arb_import_kwh += kwh;
-                        arb_energy_cost += kwh * (import_price / 100.0);
-
-                        if is_demand {
-                            let peak = arb_peaks.entry(month_key).or_insert(0.0);
-                            if net_grid_w > *peak {
-                                *peak = net_grid_w;
-                            }
-                        }
-                    } else {
-                        let kwh = (-net_grid_w / 1000.0) * r.duration_hours;
-                        arb_export_kwh += kwh;
-                        arb_energy_cost -= kwh * (export_price / 100.0);
-                    }
-                }
-
-                let arb_demand = calculate_demand_charges_total(&arb_peaks, demand_rate);
-                SimulationResultModel {
-                    import_kwh: arb_import_kwh,
-                    export_kwh: arb_export_kwh,
-                    cycles: arb_cycles,
-                    energy_cost: arb_energy_cost,
-                    demand_charges: arb_demand,
-                    net_bill: arb_energy_cost + arb_demand,
-                }
+            let t_evolved = s.spawn(move || {
+                crate::simulation::evolved_heuristic::run(records_ref, sim_config_ref)
             });
 
             (
@@ -3052,14 +2587,23 @@ pub fn run_historical_simulation_impl(
                 t_mpc.join().unwrap(),
                 t_adapt.join().unwrap(),
                 t_arb.join().unwrap(),
+                t_evolved.join().unwrap(),
             )
         });
 
+    let mut daily_solar = std::collections::BTreeMap::new();
+    let mut daily_usage = std::collections::BTreeMap::new();
     let mut total_solar_kwh = 0.0;
     let mut total_usage_kwh = 0.0;
     for r in &records {
-        total_solar_kwh += (r.solar_power_w / 1000.0) * r.duration_hours;
-        total_usage_kwh += (r.load_power_w / 1000.0) * r.duration_hours;
+        let sol = (r.solar_power_w / 1000.0) * r.duration_hours;
+        let usg = (r.load_power_w / 1000.0) * r.duration_hours;
+        total_solar_kwh += sol;
+        total_usage_kwh += usg;
+        
+        let date_str = r.dt_local.date_naive().to_string();
+        *daily_solar.entry(date_str.clone()).or_insert(0.0) += sol;
+        *daily_usage.entry(date_str).or_insert(0.0) += usg;
     }
 
     let mut import_prices: Vec<f64> = records.iter().map(|r| r.import_price_cents).collect();
@@ -3082,6 +2626,8 @@ pub fn run_historical_simulation_impl(
         None
     };
 
+    let (no_battery_res, baseline_res, auto_res, smart_heuristic_res, lookahead_mpc_res, adaptive_peak_res, mpc_arbitrage_res, evolved_res) = threads_res;
+
     Ok(SimulationResponse {
         start_date,
         end_date,
@@ -3095,8 +2641,11 @@ pub fn run_historical_simulation_impl(
         lookahead_mpc: lookahead_mpc_res,
         adaptive_peak: adaptive_peak_res,
         mpc_arbitrage: mpc_arbitrage_res,
+        evolved_heuristic: evolved_res,
         suggest_charge_threshold,
         suggest_discharge_threshold,
+        daily_solar,
+        daily_usage,
     })
 }
 
@@ -3289,6 +2838,70 @@ pub async fn run_weather_fetcher_task(db_path: String, cancel_token: tokio_util:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_print_simulation() {
+        let db_to_test = if std::path::Path::new("config.db").exists() {
+            "config.db"
+        } else if std::path::Path::new("remote_config.db").exists() {
+            "remote_config.db"
+        } else {
+            return;
+        };
+        println!("TESTING SIMULATION ON DATABASE: {}", db_to_test);
+        let config = crate::config::Config::load_from_db(db_to_test).unwrap();
+        let demand_window = get_demand_window(config.battery_control.as_ref());
+        let demand_rate = config.battery_control.as_ref()
+            .and_then(|bc| bc.demand.as_ref())
+            .map(|d| d.rate)
+            .unwrap_or(0.0);
+        println!("TEST CONFIG: demand_window={:?}, demand_rate={}", demand_window, demand_rate);
+
+        // Let's connect directly to see the timestamps and dt_local conversion
+        let tz_offset = get_timezone_offset(config.battery_control.as_ref().and_then(|bc| bc.timezone.as_deref()));
+        let conn = rusqlite::Connection::open(db_to_test).unwrap();
+        let mut stmt = conn.prepare("SELECT timestamp, topic, value FROM telemetry_history ORDER BY timestamp ASC").unwrap();
+        let mut rows = stmt.query([]).unwrap();
+        let mut count = 0;
+        let mut in_window_count = 0;
+        while let Ok(Some(row)) = rows.next() {
+            let ts: i64 = row.get(0).unwrap();
+            let topic: String = row.get(1).unwrap();
+            if topic == "MainsMeter/Total system power" {
+                let dt_local = chrono::Utc.timestamp_opt(ts, 0)
+                    .single()
+                    .map(|utc| utc.with_timezone(&tz_offset))
+                    .unwrap_or_else(|| chrono::Utc::now().with_timezone(&tz_offset));
+                let now_time = dt_local.time();
+                if count < 5 {
+                    println!("FIRST RECORD: ts={}, dt_local={}, now_time={:?}", ts, dt_local, now_time);
+                }
+                if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+                    in_window_count += 1;
+                    if in_window_count < 5 {
+                        println!("IN WINDOW RECORD: ts={}, dt_local={}, now_time={:?}", ts, dt_local, now_time);
+                    }
+                }
+                count += 1;
+            }
+        }
+        println!("TOTAL MAINS METER RECORDS: {}, IN WINDOW RECORDS: {}", count, in_window_count);
+
+        println!("RUNNING HISTORICAL SIMULATION FOR 1m ON {}...", db_to_test);
+        match run_historical_simulation_impl(db_to_test, "1m", None) {
+            Ok(res) => {
+                println!("RESULT_START_DATE: {}", res.start_date);
+                println!("RESULT_END_DATE: {}", res.end_date);
+                println!("RESULT_RECORDS: {}", res.records_simulated);
+                println!("RESULT_NO_BATTERY: {:#?}", res.no_battery);
+                println!("RESULT_MPC_ARBITRAGE: {:#?}", res.mpc_arbitrage);
+                println!("RESULT_EVOLVED_HEURISTIC: {:#?}", res.evolved_heuristic);
+            }
+            Err(e) => {
+                println!("ERROR: {}", e);
+            }
+        }
+    }
 
     fn mock_period(
         start: &str,
@@ -4013,6 +3626,7 @@ mod tests {
             initial_mode: Some("ChargeBatteries".to_string()),
             tariff: None,
             demand: None,
+            ..Default::default()
         };
 
         let mut pm = PowerManager::new(config, "sensors".to_string());
@@ -4128,6 +3742,7 @@ mod tests {
             initial_mode: Some("Auto".to_string()),
             tariff: None,
             demand: None,
+            ..Default::default()
         };
 
         let mut pm = PowerManager::new(config, "sensors".to_string());
@@ -4192,6 +3807,7 @@ mod tests {
             initial_mode: Some("Auto".to_string()),
             tariff: None,
             demand: None,
+            ..Default::default()
         };
 
         let mut pm = PowerManager::new(config, "sensors".to_string());
@@ -4253,6 +3869,7 @@ mod tests {
             initial_mode: Some("Auto".to_string()),
             tariff: None,
             demand: None,
+            ..Default::default()
         };
 
         let mut pm = PowerManager::new(config_unlinked, "sensors".to_string());
@@ -4339,6 +3956,7 @@ mod tests {
             initial_mode: Some("SmartHeuristic".to_string()),
             tariff: Some(tariff_config),
             demand: None,
+            ..Default::default()
         };
 
         let mut pm = PowerManager::new(config, "sensors".to_string());
@@ -4481,6 +4099,7 @@ mod tests {
             initial_mode: Some("ChargeBatteries".to_string()),
             tariff: None,
             demand: None,
+            ..Default::default()
         };
 
         let mut pm = PowerManager::new(config, "sensors".to_string());
@@ -4737,6 +4356,7 @@ mod tests {
             initial_mode: Some("MpcArbitrage".to_string()),
             tariff: Some(tariff_config),
             demand: None,
+            ..Default::default()
         };
 
         let mut pm = PowerManager::new(config, "sensors".to_string());

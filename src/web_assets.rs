@@ -11,6 +11,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
 
@@ -55,6 +56,10 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             <button class="nav-btn" onclick="switchTab('tab-simulation', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="18" y="3" width="4" height="18" rx="1"></rect><rect x="10" y="8" width="4" height="13" rx="1"></rect><rect x="2" y="13" width="4" height="8" rx="1"></rect></svg>
                 Simulation
+            </button>
+            <button class="nav-btn" onclick="switchTab('tab-tuning', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.5 1z"></path></svg>
+                Model Tuning
             </button>
             <button class="nav-btn" onclick="switchTab('tab-about', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
@@ -141,6 +146,10 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     <div class="mode-card" id="mode-mpc-arbitrage" onclick="setInstantMode('MpcArbitrage')">
                         <h3>MPC Arbitrage</h3>
                         <p>Predictive charging to cover night-time rates</p>
+                    </div>
+                    <div class="mode-card" id="mode-evolved" onclick="setInstantMode('EvolvedHeuristic')">
+                        <h3>Evolved Heuristic</h3>
+                        <p>Optimized genetic algorithm parameters</p>
                     </div>
                 </div>
                 <div class="form-group" style="margin-top: 10px;">
@@ -237,8 +246,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                             <input type="text" id="battery-source" placeholder="e.g. MainsMeter">
                         </div>
                         <div class="form-group">
-                            <label for="battery-tz">Local Timezone</label>
-                            <input type="text" id="battery-tz" placeholder="e.g. Australia/Sydney">
+                            <label for="battery-tz">Grid Timezone</label>
+                            <input type="text" id="battery-tz" placeholder="e.g. AEST-10">
                         </div>
                     </div>
                     <div class="form-row">
@@ -256,6 +265,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                                 <option value="AdaptivePeakShaving">Adaptive Peak Shaving</option>
                                 <option value="MpcOptimizer">Look-Ahead MPC</option>
                                 <option value="MpcArbitrage">MPC Arbitrage</option>
+                                <option value="EvolvedHeuristic">Evolved Heuristic</option>
                             </select>
                         </div>
                     </div>
@@ -584,6 +594,16 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     </div>
                 </div>
 
+                <div class="glass-card" style="margin-top: 20px;">
+                    <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Daily Simulation Trend</span>
+                        <span id="sim-chart-dataset-name" style="font-size: 0.9rem; color: var(--accent); font-weight: 600;">Hover over any cell in the table above to view daily graph</span>
+                    </div>
+                    <div style="position: relative; height: 320px; width: 100%;">
+                        <canvas id="sim-chart"></canvas>
+                    </div>
+                </div>
+
                 <div id="sim-insights" class="glass-card" style="display: none; background: linear-gradient(135deg, rgba(81, 71, 229, 0.1), rgba(16, 185, 129, 0.05)); border: 1px solid rgba(81, 71, 229, 0.2); margin-top: 20px; margin-bottom: 24px;">
                     <div style="display: flex; align-items: center; gap: 15px;">
                         <div style="font-size: 2.2rem; filter: drop-shadow(0 0 8px var(--primary));">💡</div>
@@ -637,6 +657,111 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                             </div>
                         </div>
                     </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- MODEL TUNING TAB -->
+        <div id="tab-tuning" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">Genetic Algorithm Model Tuning</div>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Optimize your battery regulation rules using a genetic algorithm evaluated against your real historical telemetry. You can start tuning from scratch or seed the run using your current parameters.
+                </p>
+                
+                <div class="checkbox-group" style="margin-bottom: 20px;">
+                    <input type="checkbox" id="tune-seed" checked>
+                    <label for="tune-seed">Seed with current parameters (Additional Training)</label>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="tune-generations">Generations Count</label>
+                        <input type="number" id="tune-generations" value="300" min="10" max="10000">
+                    </div>
+                    <div class="form-group">
+                        <label for="tune-popsize">Population Size</label>
+                        <input type="number" id="tune-popsize" value="40" min="10" max="200">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="tune-penalty">Battery Cycle Penalty (cents/cycle)</label>
+                        <input type="number" step="0.1" id="tune-penalty" value="35.0" min="0" max="1000">
+                    </div>
+                    <div class="form-group">
+                        <label for="tune-cores">CPU Core Limit</label>
+                        <select id="tune-cores">
+                            <option value="auto">Auto (All-1 Cores)</option>
+                            <option value="1">Low CPU (1 Core)</option>
+                            <option value="2">Medium CPU (2 Cores)</option>
+                            <option value="4">High CPU (4 Cores)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="margin-top: 25px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                    <button class="sub-btn active" id="btn-start-tuning" onclick="startTuning()" style="background: linear-gradient(135deg, var(--primary) 0%, #3b2ddb 100%); border: none; box-shadow: 0 4px 15px var(--primary-glow); padding: 10px 24px;">Start Evolutionary Training</button>
+                    <button class="sub-btn danger" id="btn-cancel-tuning" onclick="cancelTuning()" disabled style="padding: 10px 24px;">Cancel Training</button>
+                </div>
+            </div>
+
+            <!-- TRAINING PROGRESS SECTION -->
+            <div id="tune-progress-card" class="glass-card" style="display: none;">
+                <div class="card-title" id="tune-progress-title">Training Status: In Progress...</div>
+                
+                <div style="width: 100%; background: rgba(255,255,255,0.05); height: 10px; border-radius: 5px; margin: 15px 0; overflow: hidden; border: 1px solid rgba(255,255,255,0.1);">
+                    <div id="tune-progress-bar" style="width: 0%; height: 100%; background: linear-gradient(90deg, var(--primary), var(--accent)); transition: width 0.3s ease;"></div>
+                </div>
+                
+                <div class="grid-3" style="margin-top: 20px; margin-bottom: 20px;">
+                    <div class="glass-card" style="margin-bottom: 0; padding: 15px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03);">
+                        <div class="inverter-field-title">Generation</div>
+                        <div class="inverter-field-val" id="tune-stat-gen">-- / --</div>
+                    </div>
+                    <div class="glass-card" style="margin-bottom: 0; padding: 15px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03);">
+                        <div class="inverter-field-title">Best Cost (Score)</div>
+                        <div class="inverter-field-val" id="tune-stat-cost" style="color: var(--accent);">--</div>
+                    </div>
+                    <div class="glass-card" style="margin-bottom: 0; padding: 15px; background: rgba(255,255,255,0.02); border: 1px solid rgba(255,255,255,0.03);">
+                        <div class="inverter-field-title">Projected Bill / Battery Cycles</div>
+                        <div class="inverter-field-val" id="tune-stat-bill">-- / --</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- LIVE CONSOLE LOGS -->
+            <div id="tune-console-card" class="glass-card" style="display: none;">
+                <div class="card-title">Live Training Console Logs</div>
+                <div id="tune-console" style="background: rgba(10,12,22,0.85); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 15px; max-height: 250px; overflow-y: auto; font-family: monospace; font-size: 0.85rem; color: #8e95bf; line-height: 1.4; white-space: pre-wrap;">Console ready...</div>
+            </div>
+
+            <!-- EVOLVED PARAMETERS RESULT COMPARISON -->
+            <div id="tune-results-card" class="glass-card" style="display: none;">
+                <div class="card-title">Evolved Heuristic Parameters</div>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    The genetic algorithm successfully completed optimization. Below is a comparison between your current configuration and the newly evolved parameters.
+                </p>
+                <div style="overflow-x: auto; margin-bottom: 25px;">
+                    <table class="sim-table" style="width: 100%; border-collapse: collapse; text-align: left;">
+                        <thead>
+                            <tr style="border-bottom: 2px solid rgba(255,255,255,0.1); color: var(--text-muted); font-size: 0.9rem;">
+                                <th style="padding: 12px 15px; font-weight: 600;">Parameter Name</th>
+                                <th style="padding: 12px 15px; font-weight: 600;">Current Value</th>
+                                <th style="padding: 12px 15px; font-weight: 600; color: var(--accent);">Evolved Value</th>
+                                <th style="padding: 12px 15px; font-weight: 600;">Description</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tune-results-body">
+                            <!-- Populated dynamically -->
+                        </tbody>
+                    </table>
+                </div>
+                
+                <div style="display: flex; gap: 15px; align-items: center;">
+                    <button class="btn-apply" id="btn-apply-tuning" onclick="applyTuning()" style="display: inline-block;">Apply Evolved Parameters</button>
+                    <span id="tune-apply-status" style="font-weight: 500; font-size: 0.9rem; color: var(--accent); transition: all 0.3s ease;"></span>
                 </div>
             </div>
         </div>
@@ -1265,6 +1390,22 @@ input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
     transform: translateX(-50%) translateY(0);
 }
 
+.sim-metric-cell {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.sim-metric-cell:hover {
+    background: rgba(81, 71, 229, 0.15) !important;
+    color: #fff !important;
+    box-shadow: inset 0 0 0 1px rgba(81, 71, 229, 0.3);
+}
+.sim-metric-cell.active-chart {
+    background: rgba(16, 185, 129, 0.15) !important;
+    color: #fff !important;
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.4);
+}
+
+
 "###;
 pub const APP_JS: &str = r###"let currentConfig = {};
 let lastStatusData = null;
@@ -1282,11 +1423,15 @@ function switchTab(tabId, el) {
     // Show/hide 'Apply Changes' button based on tabId
     const applyBtn = document.querySelector('.btn-apply');
     if (applyBtn) {
-        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation' || tabId === 'tab-about') {
+        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation' || tabId === 'tab-about' || tabId === 'tab-tuning') {
             applyBtn.style.display = 'none';
         } else {
             applyBtn.style.display = 'inline-block';
         }
+    }
+
+    if (tabId === 'tab-simulation' && simChartInstance) {
+        simChartInstance.resize();
     }
 }
 
@@ -1363,6 +1508,7 @@ async function fetchStatus() {
         if (status.active_mode === "AdaptivePeakShaving") document.getElementById('mode-adaptive').classList.add('active');
         if (status.active_mode === "MpcOptimizer") document.getElementById('mode-mpc').classList.add('active');
         if (status.active_mode === "MpcArbitrage") document.getElementById('mode-mpc-arbitrage').classList.add('active');
+        if (status.active_mode === "EvolvedHeuristic") document.getElementById('mode-evolved').classList.add('active');
 
         // Render inverter lists and calculate total inverter interaction and total solar power
         const list = document.getElementById('dash-inverters-list');
@@ -3123,6 +3269,225 @@ function updateAgeCounters() {
     });
 }
 
+let lastSimulationData = null;
+let simChartInstance = null;
+
+const scenarioNames = {
+    no_battery: "Scenario A (No Battery)",
+    baseline: "Scenario B (Baseline Solar)",
+    auto: "Scenario C (Auto)",
+    smart_heuristic: "Scenario D (Smart Heuristic)",
+    lookahead_mpc: "Scenario E (Look-Ahead MPC)",
+    adaptive_peak: "Scenario F (Adaptive Peak Shaving)",
+    mpc_arbitrage: "Scenario G (MPC Arbitrage)",
+    evolved_heuristic: "Scenario H (Evolved Heuristic)"
+};
+
+const metricNames = {
+    usage: "Daily Household Usage (kWh)",
+    solar: "Daily Solar Generation (kWh)",
+    import: "Daily Grid Import (kWh)",
+    export: "Daily Grid Export (kWh)",
+    cycles: "Daily Battery Cycles",
+    cost: "Daily Energy Cost ($)",
+    net_bill: "Daily Net Bill (Energy Cost) ($)",
+    savings: "Daily Net Savings (vs No Battery) ($)"
+};
+
+function getMetricColor(metric) {
+    const rootStyle = getComputedStyle(document.documentElement);
+    let varName = '--primary';
+    if (metric === 'savings' || metric === 'export') {
+        varName = '--accent';
+    } else if (metric === 'solar') {
+        varName = '--warning';
+    } else if (metric === 'import' || metric === 'cost' || metric === 'net_bill') {
+        varName = '--danger';
+    }
+    return rootStyle.getPropertyValue(varName).trim() || '#5147e5';
+}
+
+function formatMetricValue(metric, val) {
+    if (metric === 'cost' || metric === 'net_bill' || metric === 'savings') {
+        const sign = val < 0 ? '-' : '';
+        return `${sign}$${Math.abs(val).toFixed(2)}`;
+    }
+    if (metric === 'cycles') {
+        return val.toFixed(2);
+    }
+    return `${val.toFixed(1)} kWh`;
+}
+
+function getDailyDataset(scenarioKey, metric, data) {
+    const dates = Object.keys(data.daily_solar || {}).sort();
+    const values = dates.map(date => {
+        if (metric === 'usage') {
+            return data.daily_usage[date] || 0.0;
+        } else if (metric === 'solar') {
+            return data.daily_solar[date] || 0.0;
+        } else {
+            const mData = data[scenarioKey];
+            if (!mData || !mData.daily || !mData.daily[date]) return 0.0;
+            const d = mData.daily[date];
+            if (metric === 'import') return d.import_kwh;
+            if (metric === 'export') return d.export_kwh;
+            if (metric === 'cycles') return d.cycles;
+            if (metric === 'cost') return d.energy_cost;
+            if (metric === 'net_bill') return d.energy_cost;
+            if (metric === 'savings') {
+                const noBatData = data.no_battery;
+                if (noBatData && noBatData.daily && noBatData.daily[date]) {
+                    return noBatData.daily[date].energy_cost - d.energy_cost;
+                }
+                return 0.0;
+            }
+            return 0.0;
+        }
+    });
+    return { dates, values };
+}
+
+function showSimulationChart(scenarioKey, metric) {
+    if (!lastSimulationData) return;
+    
+    const chartEl = document.getElementById('sim-chart');
+    if (!chartEl) return;
+    
+    const { dates, values } = getDailyDataset(scenarioKey, metric, lastSimulationData);
+    
+    // Highlight matching cells and remove highlight from others
+    document.querySelectorAll('.sim-metric-cell').forEach(cell => {
+        const cScenario = cell.getAttribute('data-scenario');
+        const cMetric = cell.getAttribute('data-metric');
+        if (cScenario === scenarioKey && cMetric === metric) {
+            cell.classList.add('active-chart');
+        } else {
+            cell.classList.remove('active-chart');
+        }
+    });
+
+    const metricName = metricNames[metric] || metric;
+    const scenarioName = scenarioNames[scenarioKey] || scenarioKey;
+    
+    const datasetNameEl = document.getElementById('sim-chart-dataset-name');
+    if (datasetNameEl) {
+        datasetNameEl.innerText = `${scenarioName} - ${metricName}`;
+    }
+    
+    const baseColor = getMetricColor(metric);
+    const hslaColor = baseColor.replace('hsl', 'hsla').replace(')', ', 0.25)');
+    const hslaTransparent = baseColor.replace('hsl', 'hsla').replace(')', ', 0.0)');
+    
+    const ctx = chartEl.getContext('2d');
+    
+    if (simChartInstance) {
+        simChartInstance.destroy();
+    }
+    
+    // Create gradient fill
+    const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+    gradient.addColorStop(0, hslaColor);
+    gradient.addColorStop(1, hslaTransparent);
+    
+    const textColor = '#8e95bf'; // --text-muted
+    const gridColor = 'rgba(255, 255, 255, 0.05)';
+    
+    simChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: dates,
+            datasets: [{
+                label: metricName,
+                data: values,
+                borderColor: baseColor,
+                borderWidth: 2,
+                backgroundColor: gradient,
+                fill: true,
+                tension: 0.3,
+                pointRadius: dates.length > 60 ? 0 : 2,
+                pointHoverRadius: 5,
+                pointBackgroundColor: baseColor,
+                pointBorderColor: '#fff',
+                pointBorderWidth: 1,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    backgroundColor: 'rgba(22, 26, 49, 0.95)',
+                    titleColor: '#fff',
+                    titleFont: {
+                        family: 'Outfit',
+                        size: 13,
+                        weight: '600'
+                    },
+                    bodyColor: '#f0f2fd',
+                    bodyFont: {
+                        family: 'Outfit',
+                        size: 12
+                    },
+                    borderColor: 'rgba(255, 255, 255, 0.1)',
+                    borderWidth: 1,
+                    padding: 10,
+                    cornerRadius: 8,
+                    callbacks: {
+                        label: function(context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.y !== null) {
+                                label += formatMetricValue(metric, context.parsed.y);
+                            }
+                            return label;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        color: gridColor,
+                        borderColor: gridColor
+                    },
+                    ticks: {
+                        color: textColor,
+                        font: {
+                            family: 'Outfit',
+                            size: 10
+                        },
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                },
+                y: {
+                    grid: {
+                        color: gridColor,
+                        borderColor: gridColor
+                    },
+                    ticks: {
+                        color: textColor,
+                        font: {
+                            family: 'Outfit',
+                            size: 10
+                        },
+                        callback: function(value) {
+                            return formatMetricValue(metric, value);
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 async function runHistoricalSimulation() {
     const range = document.getElementById('sim-range').value;
     const btn = document.getElementById('btn-run-simulation');
@@ -3189,7 +3554,8 @@ async function runHistoricalSimulation() {
                     { name: "Scenario D: Smart Heuristic", key: "smart_heuristic" },
                     { name: "Scenario E: Look-Ahead MPC", key: "lookahead_mpc" },
                     { name: "Scenario F: Adaptive Peak Shaving", key: "adaptive_peak" },
-                    { name: "Scenario G: MPC Arbitrage", key: "mpc_arbitrage" }
+                    { name: "Scenario G: MPC Arbitrage", key: "mpc_arbitrage" },
+                    { name: "Scenario H: Evolved Heuristic", key: "evolved_heuristic" }
                 ];
 
                 const noBatteryBill = data.no_battery.net_bill;
@@ -3201,15 +3567,15 @@ async function runHistoricalSimulation() {
                     return `
                         <tr style="border-bottom: 1px solid var(--border-color);">
                             <td style="padding: 12px 15px; font-weight: 500; color: #fff;">${m.name}</td>
-                            <td style="padding: 12px 15px; text-align: right;">${data.total_usage_kwh.toFixed(1)}</td>
-                            <td style="padding: 12px 15px; text-align: right;">${data.total_solar_kwh.toFixed(1)}</td>
-                            <td style="padding: 12px 15px; text-align: right;">${mData.import_kwh.toFixed(1)}</td>
-                            <td style="padding: 12px 15px; text-align: right;">${mData.export_kwh.toFixed(1)}</td>
-                            <td style="padding: 12px 15px; text-align: right;">${m.isBaseline ? '-' : mData.cycles.toFixed(1)}</td>
-                            <td style="padding: 12px 15px; text-align: right;">${fmtVal(mData.energy_cost)}</td>
+                            <td class="sim-metric-cell" data-scenario="${m.key}" data-metric="usage" style="padding: 12px 15px; text-align: right;">${data.total_usage_kwh.toFixed(1)}</td>
+                            <td class="sim-metric-cell" data-scenario="${m.key}" data-metric="solar" style="padding: 12px 15px; text-align: right;">${data.total_solar_kwh.toFixed(1)}</td>
+                            <td class="sim-metric-cell" data-scenario="${m.key}" data-metric="import" style="padding: 12px 15px; text-align: right;">${mData.import_kwh.toFixed(1)}</td>
+                            <td class="sim-metric-cell" data-scenario="${m.key}" data-metric="export" style="padding: 12px 15px; text-align: right;">${mData.export_kwh.toFixed(1)}</td>
+                            <td class="${m.isBaseline ? '' : 'sim-metric-cell'}" data-scenario="${m.key}" data-metric="cycles" style="padding: 12px 15px; text-align: right;">${m.isBaseline ? '-' : mData.cycles.toFixed(1)}</td>
+                            <td class="sim-metric-cell" data-scenario="${m.key}" data-metric="cost" style="padding: 12px 15px; text-align: right;">${fmtVal(mData.energy_cost)}</td>
                             <td style="padding: 12px 15px; text-align: right;">${fmtVal(mData.demand_charges)}</td>
-                            <td style="padding: 12px 15px; text-align: right; font-weight: 600; color: var(--primary);">${fmtVal(mData.net_bill)}</td>
-                            <td style="padding: 12px 15px; text-align: right;">${fmtSavings(netSavings, m.isBaseline)}</td>
+                            <td class="sim-metric-cell" data-scenario="${m.key}" data-metric="net_bill" style="padding: 12px 15px; text-align: right; font-weight: 600; color: var(--primary);">${fmtVal(mData.net_bill)}</td>
+                            <td class="${m.isBaseline ? '' : 'sim-metric-cell'}" data-scenario="${m.key}" data-metric="savings" style="padding: 12px 15px; text-align: right;">${fmtSavings(netSavings, m.isBaseline)}</td>
                         </tr>
                     `;
                 }).join('');
@@ -3226,6 +3592,21 @@ async function runHistoricalSimulation() {
                 } else {
                     insightsDiv.style.display = 'none';
                 }
+
+                // Save dynamic reference for hover events
+                lastSimulationData = data;
+
+                // Attach hover listeners to all metric cells
+                document.querySelectorAll('.sim-metric-cell').forEach(cell => {
+                    cell.addEventListener('mouseenter', () => {
+                        const scenario = cell.getAttribute('data-scenario');
+                        const metric = cell.getAttribute('data-metric');
+                        showSimulationChart(scenario, metric);
+                    });
+                });
+
+                // Display default chart (Scenario H, Net Savings)
+                showSimulationChart("evolved_heuristic", "savings");
 
                 resultsDiv.style.display = 'block';
             } else if (msg.type === 'Error') {
@@ -3252,7 +3633,283 @@ async function runHistoricalSimulation() {
 window.addEventListener('load', () => {
     loadConfig();
     fetchStatus();
+    checkTuningStatus();
     setInterval(fetchStatus, 3000); // Poll status every 3s
     setInterval(updateAgeCounters, 1000); // Update elapsed age counters every 1s
 });
+
+// Model Tuning UI State
+let tuningEventSource = null;
+let currentEvolvedParams = null;
+
+async function checkTuningStatus() {
+    try {
+        const res = await fetch('/api/train/status');
+        if (!res.ok) return;
+        const progress = await res.json();
+        
+        if (progress.logs && progress.logs.length > 0) {
+            const consoleEl = document.getElementById('tune-console');
+            const consoleCard = document.getElementById('tune-console-card');
+            if (consoleEl && consoleCard) {
+                consoleCard.style.display = 'block';
+                consoleEl.innerText = progress.logs.join('\n');
+                consoleEl.scrollTop = consoleEl.scrollHeight;
+            }
+        }
+
+        if (progress.is_running) {
+            // Training is currently active! Reconnect to stream.
+            document.getElementById('btn-start-tuning').disabled = true;
+            document.getElementById('btn-cancel-tuning').disabled = false;
+            document.getElementById('tune-progress-card').style.display = 'block';
+            
+            // Set initial stats
+            if (progress.total_generations > 0) {
+                document.getElementById('tune-stat-gen').innerText = `${progress.last_generation} / ${progress.total_generations}`;
+            }
+            if (progress.best_cost > 0) {
+                document.getElementById('tune-stat-cost').innerText = `$${progress.best_cost.toFixed(2)}`;
+            }
+            if (progress.bill > 0 || progress.cycles > 0) {
+                document.getElementById('tune-stat-bill').innerText = `$${progress.bill.toFixed(2)} / ${progress.cycles.toFixed(1)} cycles`;
+            }
+            if (progress.percent > 0) {
+                document.getElementById('tune-progress-bar').style.width = `${progress.percent}%`;
+                document.getElementById('tune-progress-title').innerText = `Training Status: In Progress (${progress.percent.toFixed(0)}%)`;
+            }
+            
+            initTuningProgressStream();
+        } else if (progress.best_params) {
+            // Completed previously, show results comparison
+            currentEvolvedParams = progress.best_params;
+            renderTunedParametersComparison();
+        }
+    } catch (e) {
+        console.error("Error checking training status:", e);
+    }
+}
+
+function appendTuneLog(line) {
+    const consoleEl = document.getElementById('tune-console');
+    if (consoleEl) {
+        if (consoleEl.innerText === "Console ready...") {
+            consoleEl.innerText = "";
+        }
+        consoleEl.innerText += line + "\n";
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+    }
+}
+
+async function startTuning() {
+    const seed = document.getElementById('tune-seed').checked;
+    const generations = parseInt(document.getElementById('tune-generations').value) || 300;
+    const populationSize = parseInt(document.getElementById('tune-popsize').value) || 40;
+    const cyclePenalty = parseFloat(document.getElementById('tune-penalty').value) || 35.0;
+    const coresVal = document.getElementById('tune-cores').value;
+    const cores = coresVal === 'auto' ? null : parseInt(coresVal);
+
+    const btnStart = document.getElementById('btn-start-tuning');
+    const btnCancel = document.getElementById('btn-cancel-tuning');
+    const progressCard = document.getElementById('tune-progress-card');
+    const consoleCard = document.getElementById('tune-console-card');
+    const resultsCard = document.getElementById('tune-results-card');
+    const consoleEl = document.getElementById('tune-console');
+
+    // UI transitions
+    btnStart.disabled = true;
+    btnCancel.disabled = false;
+    progressCard.style.display = 'block';
+    consoleCard.style.display = 'block';
+    resultsCard.style.display = 'none';
+    
+    document.getElementById('tune-progress-bar').style.width = '0%';
+    document.getElementById('tune-progress-title').innerText = "Training Status: Starting...";
+    document.getElementById('tune-stat-gen').innerText = `-- / ${generations}`;
+    document.getElementById('tune-stat-cost').innerText = "--";
+    document.getElementById('tune-stat-bill').innerText = "--";
+    consoleEl.innerText = "Spawning python optimizer child process...\n";
+
+    try {
+        const res = await fetch('/api/train/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                seed: seed,
+                generations: generations,
+                population_size: populationSize,
+                cycle_penalty: cyclePenalty,
+                cores: cores
+            })
+        });
+
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err || `Status code ${res.status}`);
+        }
+
+        appendTuneLog("Process successfully spawned. Connecting to live progress stream...");
+        initTuningProgressStream();
+    } catch (e) {
+        btnStart.disabled = false;
+        btnCancel.disabled = true;
+        appendTuneLog(`Error starting training: ${e.message}`);
+        document.getElementById('tune-progress-title').innerText = "Training Status: Failed to Start";
+    }
+}
+
+function initTuningProgressStream() {
+    if (tuningEventSource) {
+        tuningEventSource.close();
+    }
+
+    tuningEventSource = new EventSource('/api/train/progress');
+    
+    tuningEventSource.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            
+            // Append log line
+            if (msg.log_line) {
+                appendTuneLog(msg.log_line);
+            }
+
+            // Update metrics
+            if (msg.total_gens > 0) {
+                document.getElementById('tune-stat-gen').innerText = `${msg.gen_num} / ${msg.total_gens}`;
+            }
+            if (msg.best_cost > 0) {
+                document.getElementById('tune-stat-cost').innerText = `$${msg.best_cost.toFixed(2)}`;
+            }
+            if (msg.bill > 0 || msg.cycles > 0) {
+                document.getElementById('tune-stat-bill').innerText = `$${msg.bill.toFixed(2)} / ${msg.cycles.toFixed(1)} cycles`;
+            }
+            
+            if (msg.percent > 0) {
+                document.getElementById('tune-progress-bar').style.width = `${msg.percent}%`;
+                document.getElementById('tune-progress-title').innerText = `Training Status: In Progress (${msg.percent.toFixed(0)}%)`;
+            }
+
+            if (msg.best_params) {
+                currentEvolvedParams = msg.best_params;
+            }
+
+            if (msg.done) {
+                tuningEventSource.close();
+                tuningEventSource = null;
+                
+                document.getElementById('btn-start-tuning').disabled = false;
+                document.getElementById('btn-cancel-tuning').disabled = true;
+
+                if (msg.error) {
+                    document.getElementById('tune-progress-title').innerText = "Training Status: Interrupted / Error";
+                    appendTuneLog(`\n[Tuning failed]: ${msg.error}`);
+                } else {
+                    document.getElementById('tune-progress-bar').style.width = '100%';
+                    document.getElementById('tune-progress-title').innerText = "Training Status: Successfully Completed";
+                    appendTuneLog(`\n[Tuning complete] Optimized parameters retrieved successfully.`);
+                    renderTunedParametersComparison();
+                }
+            }
+        } catch (e) {
+            console.error("Failed to parse training progress data", e);
+        }
+    };
+
+    tuningEventSource.onerror = (err) => {
+        console.error("SSE training stream error", err);
+        appendTuneLog("[Warning] Connection to training stream lost. Reconnecting...");
+    };
+}
+
+async function cancelTuning() {
+    try {
+        appendTuneLog("\nSending cancellation request...");
+        const res = await fetch('/api/train/cancel', { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err);
+        }
+        appendTuneLog("Cancellation request acknowledged.");
+    } catch (e) {
+        appendTuneLog(`Error cancelling training: ${e.message}`);
+    }
+}
+
+function renderTunedParametersComparison() {
+    if (!currentEvolvedParams) return;
+
+    const body = document.getElementById('tune-results-body');
+    const currentControl = currentConfig.battery_control || {};
+    const currentEvolved = currentControl.evolved_heuristic || {};
+
+    const paramMeta = [
+        { key: "neg_price_threshold", label: "Negative Price Threshold", desc: "Cents/kWh threshold below which battery charges from grid at full rate.", unit: "¢" },
+        { key: "export_dump_threshold", label: "Export Dump Threshold", desc: "Cents/kWh threshold above which battery discharges at max power to export.", unit: "¢" },
+        { key: "dump_reserve_demand", label: "Dump Reserve (Peak)", desc: "Minimum capacity (kWh) to reserve during peak demand window.", unit: " kWh" },
+        { key: "dump_reserve_normal", label: "Dump Reserve (Normal)", desc: "Minimum capacity (kWh) to reserve during normal/cheap periods.", unit: " kWh" },
+        { key: "pre_charge_price_threshold", label: "Pre-Charge Price Threshold", desc: "Charge from grid if import price is below this cents/kWh.", unit: "¢" },
+        { key: "pre_charge_soc_limit", label: "Pre-Charge SOC Limit", desc: "Stop pre-charging from grid once battery reaches this capacity ratio.", unit: "", format: v => `${(v * 100).toFixed(0)}%` },
+        { key: "pre_charge_start_hour", label: "Pre-Charge Start Hour", desc: "Hour of day (0-23) when pre-charging is permitted.", unit: ":00" },
+        { key: "use_adaptive_shaving", label: "Use Adaptive Shaving", desc: "Enables dynamic monthly peak target calculation.", unit: "", format: v => v ? "Enabled" : "Disabled" },
+        { key: "adaptive_safety_buffer", label: "Adaptive Safety Buffer", desc: "Safety threshold (W) added to peak limit to avoid demand spikes.", unit: " W" }
+    ];
+
+    body.innerHTML = paramMeta.map(p => {
+        const curVal = currentEvolved[p.key] !== undefined ? currentEvolved[p.key] : "-";
+        const val = currentEvolvedParams[p.key];
+        
+        const fmt = (v) => {
+            if (v === "-") return "-";
+            if (p.format) return p.format(v);
+            return typeof v === 'number' ? `${v.toFixed(1)}${p.unit}` : `${v}${p.unit}`;
+        };
+
+        return `
+            <tr style="border-bottom: 1px solid var(--border-color);">
+                <td style="padding: 12px 15px; font-weight: 500; color: #fff;">${p.label}</td>
+                <td style="padding: 12px 15px;">${fmt(curVal)}</td>
+                <td style="padding: 12px 15px; font-weight: 600; color: var(--accent);">${fmt(val)}</td>
+                <td style="padding: 12px 15px; font-size: 0.85rem; color: var(--text-muted);">${p.desc}</td>
+            </tr>
+        `;
+    }).join('');
+
+    document.getElementById('btn-apply-tuning').disabled = false;
+    document.getElementById('tune-apply-status').innerText = "";
+    document.getElementById('tune-results-card').style.display = 'block';
+}
+
+async function applyTuning() {
+    if (!currentEvolvedParams) return;
+
+    const btn = document.getElementById('btn-apply-tuning');
+    const statusText = document.getElementById('tune-apply-status');
+
+    btn.disabled = true;
+    statusText.innerText = "Applying evolved parameters...";
+
+    try {
+        const res = await fetch('/api/train/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(currentEvolvedParams)
+        });
+
+        if (!res.ok) {
+            const err = await res.text();
+            throw new Error(err);
+        }
+
+        statusText.innerText = "Parameters applied and daemon reloaded successfully!";
+        statusText.style.color = "var(--accent)";
+        
+        // Refresh local config cache
+        await loadConfig();
+    } catch (e) {
+        btn.disabled = false;
+        statusText.innerText = `Failed to apply: ${e.message}`;
+        statusText.style.color = "var(--danger)";
+    }
+}
 "###;

@@ -555,3 +555,19 @@ input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
     transform: translateX(-50%) translateY(0);
 }
 
+.sim-metric-cell {
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.sim-metric-cell:hover {
+    background: rgba(81, 71, 229, 0.15) !important;
+    color: #fff !important;
+    box-shadow: inset 0 0 0 1px rgba(81, 71, 229, 0.3);
+}
+.sim-metric-cell.active-chart {
+    background: rgba(16, 185, 129, 0.15) !important;
+    color: #fff !important;
+    box-shadow: inset 0 0 0 1px rgba(16, 185, 129, 0.4);
+}
+
+

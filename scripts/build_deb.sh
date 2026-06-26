@@ -42,6 +42,13 @@ chmod 755 "$BUILD_DIR/DEBIAN"
 # Copy compiled binary
 cp "$PROJECT_ROOT/target/$TARGET/release/PowerScraper" "$BUILD_DIR/usr/bin/powerscraper"
 
+# Copy Python scripts for evolutionary tuning
+mkdir -p "$BUILD_DIR/usr/share/powerscraper/scripts"
+cp "$PROJECT_ROOT/scripts/evolutionary_optimizer.py" "$BUILD_DIR/usr/share/powerscraper/scripts/evolutionary_optimizer.py"
+cp "$PROJECT_ROOT/scripts/battery_simulation.py" "$BUILD_DIR/usr/share/powerscraper/scripts/battery_simulation.py"
+chmod +x "$BUILD_DIR/usr/share/powerscraper/scripts/evolutionary_optimizer.py"
+chmod +x "$BUILD_DIR/usr/share/powerscraper/scripts/battery_simulation.py"
+
 # Create systemd service file
 cat << 'EOF' > "$BUILD_DIR/lib/systemd/system/powerscraper.service"
 [Unit]

@@ -290,6 +290,36 @@ pub struct LocationConfig {
     pub arrays: Vec<PvArrayConfig>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct EvolvedHeuristicConfig {
+    pub neg_price_threshold: f64,
+    pub export_dump_threshold: f64,
+    pub dump_reserve_demand: f64,
+    pub dump_reserve_normal: f64,
+    pub pre_charge_price_threshold: f64,
+    pub pre_charge_soc_limit: f64,
+    pub pre_charge_start_hour: u32,
+    pub use_adaptive_shaving: bool,
+    pub adaptive_safety_buffer: f64,
+}
+
+impl Default for EvolvedHeuristicConfig {
+    fn default() -> Self {
+        EvolvedHeuristicConfig {
+            neg_price_threshold: 0.86,
+            export_dump_threshold: 53.54,
+            dump_reserve_demand: 0.0,
+            dump_reserve_normal: 0.88,
+            pre_charge_price_threshold: 24.97,
+            pre_charge_soc_limit: 0.35,
+            pre_charge_start_hour: 4,
+            use_adaptive_shaving: true,
+            adaptive_safety_buffer: 0.0,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct SolaxBatteryControlConfig {
@@ -308,6 +338,8 @@ pub struct SolaxBatteryControlConfig {
     pub tariff: Option<TariffConfig>,
     #[serde(default)]
     pub demand: Option<DemandConfig>,
+    #[serde(default)]
+    pub evolved_heuristic: Option<EvolvedHeuristicConfig>,
 }
 
 fn default_flush_interval() -> u32 { 30 }
