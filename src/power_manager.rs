@@ -866,10 +866,12 @@ impl PowerManager {
                 let export_rate = rates.export_rate;
 
                 let now = chrono::Local::now();
-                let hour = now.hour();
+                let now_time = now.time();
+                let (demand_start, demand_end) = get_demand_window(Some(&self.config));
 
                 let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
-                let reserve_kwh = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
+                let reserve_start = demand_start - chrono::Duration::hours(3);
+                let reserve_kwh = if is_time_in_window(now_time, reserve_start, demand_end) { 5.0 } else { 2.0 };
                 let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
 
                 // 1. Extreme negative price or negative export price: charge from grid
@@ -913,7 +915,7 @@ impl PowerManager {
                     Some(charge_val)
                 }
                 // 3. Pre-charge window: top up using cheap grid
-                else if hour >= 10 && hour < 15 && import_rate < 15.0 && inv_state.battery_capacity < 85 {
+                else if now_time.hour() >= 10 && now_time < demand_start && import_rate < 15.0 && inv_state.battery_capacity < 85 {
                     inv_state.discharge_power = -inverter_config.max_charge;
                     self.assist_needed.insert(inverter_name.to_string(), false);
                     let charge_val = Self::discharge_at(
@@ -943,10 +945,12 @@ impl PowerManager {
                 let export_rate = rates.export_rate;
 
                 let now = chrono::Local::now();
-                let hour = now.hour();
+                let now_time = now.time();
+                let (demand_start, demand_end) = get_demand_window(Some(&self.config));
 
                 let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
-                let reserve_kwh = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
+                let reserve_start = demand_start - chrono::Duration::hours(3);
+                let reserve_kwh = if is_time_in_window(now_time, reserve_start, demand_end) { 5.0 } else { 2.0 };
                 let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
 
                 // 1. Extreme negative price or negative export price: charge from grid
@@ -989,8 +993,8 @@ impl PowerManager {
                     );
                     Some(charge_val)
                 }
-                // 3. Peak demand window shaving (15 <= hour < 21)
-                else if hour >= 15 && hour < 21 {
+                // 3. Peak demand window shaving
+                else if is_time_in_window(now_time, demand_start, demand_end) {
                     let monthly_peak = self.get_monthly_peak_draw();
                     let orig_target = self.grid_target;
                     self.grid_target = monthly_peak;
@@ -1025,7 +1029,8 @@ impl PowerManager {
                 let export_rate = rates.export_rate;
 
                 let now = chrono::Local::now();
-                let hour = now.hour();
+                let now_time = now.time();
+                let (demand_start, _) = get_demand_window(Some(&self.config));
 
                 let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
                 let (expected_solar, demand_needed, cheap_threshold) = self.get_persistence_metrics();
@@ -1075,7 +1080,7 @@ impl PowerManager {
                     Some(charge_val)
                 }
                 // 3. Pre-charge if projected deficit exists
-                else if hour < 15 && (inv_state.battery_capacity as f64 / 100.0 * capacity_kwh + expected_solar) < required_reserve {
+                else if now_time < demand_start && (inv_state.battery_capacity as f64 / 100.0 * capacity_kwh + expected_solar) < required_reserve {
                     let is_cheap = import_rate < 12.0 || import_rate <= cheap_threshold;
                     if is_cheap {
                         inv_state.discharge_power = -inverter_config.max_charge;
@@ -1208,6 +1213,7 @@ impl PowerManager {
     }
 
     fn get_monthly_peak_draw(&self) -> f64 {
+        let (demand_start, demand_end) = get_demand_window(Some(&self.config));
         let mains_source = self.config.source.as_deref().unwrap_or("MainsMeter");
         let conn = match rusqlite::Connection::open(&self.db_path) {
             Ok(c) => c,
@@ -1240,8 +1246,8 @@ impl PowerManager {
                     .map(|utc| utc.with_timezone(&chrono::Local))
                     .unwrap_or_else(|| chrono::Local::now());
 
-                let h = dt.hour();
-                if h >= 15 && h < 21 && val > peak {
+                let dt_time = dt.time();
+                if is_time_in_window(dt_time, demand_start, demand_end) && val > peak {
                     peak = val;
                 }
             }
@@ -1250,6 +1256,7 @@ impl PowerManager {
     }
 
     fn get_persistence_metrics(&self) -> (f64, f64, f64) {
+        let (demand_start, demand_end) = get_demand_window(Some(&self.config));
         let mains_source = self.config.source.as_deref().unwrap_or("MainsMeter");
         let conn = match rusqlite::Connection::open(&self.db_path) {
             Ok(c) => c,
@@ -1321,13 +1328,13 @@ impl PowerManager {
                 .single()
                 .map(|utc| utc.with_timezone(&chrono::Local))
                 .unwrap_or_else(|| chrono::Local::now());
-            let hour = dt.hour();
+            let dt_time = dt.time();
 
-            if hour < 15 {
+            if dt_time < demand_start {
                 expected_solar_kwh += (solar / 1000.0) * duration_hours;
             }
 
-            if hour >= 15 && hour < 21 {
+            if is_time_in_window(dt_time, demand_start, demand_end) {
                 let net_power = load - solar;
                 if net_power > 0.0 {
                     demand_energy_needed_kwh += (net_power / 1000.0) * duration_hours;
@@ -1867,6 +1874,7 @@ pub fn run_historical_simulation_impl(
     progress_cb: Option<&(dyn Fn(f64, f64) + Send + Sync)>,
 ) -> Result<SimulationResponse, String> {
     let config = crate::config::Config::load_from_db(db_path).unwrap_or_else(|_| crate::config::Config::default_empty());
+    let (demand_start, demand_end) = get_demand_window(config.battery_control.as_ref());
     let mains_source = config.battery_control.as_ref()
         .and_then(|bc| bc.source.as_deref())
         .unwrap_or("MainsMeter");
@@ -2062,7 +2070,7 @@ pub fn run_historical_simulation_impl(
 
                 for r in records_ref {
                     let net_w = r.load_power_w - r.solar_power_w;
-                    let hour = r.dt_local.hour();
+                    let now_time = r.dt_local.time();
                     let month_key = r.dt_local.format("%Y-%m").to_string();
 
                     if net_w > 0.0 {
@@ -2070,7 +2078,7 @@ pub fn run_historical_simulation_impl(
                         no_bat_import_kwh += kwh;
                         no_bat_energy_cost += kwh * (r.import_price_cents / 100.0);
 
-                        if hour >= 15 && hour < 21 {
+                        if is_time_in_window(now_time, demand_start, demand_end) {
                             let peak = no_bat_peaks.entry(month_key).or_insert(0.0);
                             if net_w > *peak {
                                 *peak = net_w;
@@ -2103,7 +2111,7 @@ pub fn run_historical_simulation_impl(
 
                 for r in records_ref {
                     let net_w = r.load_power_w - r.solar_power_w;
-                    let hour = r.dt_local.hour();
+                    let now_time = r.dt_local.time();
                     let month_key = r.dt_local.format("%Y-%m").to_string();
 
                     let net_grid_w;
@@ -2128,7 +2136,7 @@ pub fn run_historical_simulation_impl(
                         base_import_kwh += kwh;
                         base_energy_cost += kwh * (r.import_price_cents / 100.0);
 
-                        if hour >= 15 && hour < 21 {
+                        if is_time_in_window(now_time, demand_start, demand_end) {
                             let peak = base_peaks.entry(month_key).or_insert(0.0);
                             if net_grid_w > *peak {
                                 *peak = net_grid_w;
@@ -2161,7 +2169,6 @@ pub fn run_historical_simulation_impl(
 
                 for r in records_ref {
                     let net_w = r.load_power_w - r.solar_power_w;
-                    let hour = r.dt_local.hour();
                     let month_key = r.dt_local.format("%Y-%m").to_string();
 
                     let mut charge_w = 0.0;
@@ -2243,7 +2250,7 @@ pub fn run_historical_simulation_impl(
                         auto_import_kwh += kwh;
                         auto_energy_cost += kwh * (r.import_price_cents / 100.0);
 
-                        if hour >= 15 && hour < 21 {
+                        if is_time_in_window(now_time, demand_start, demand_end) {
                             let peak = auto_peaks.entry(month_key).or_insert(0.0);
                             if net_grid_w > *peak {
                                 *peak = net_grid_w;
@@ -2276,13 +2283,13 @@ pub fn run_historical_simulation_impl(
 
                 for r in records_ref {
                     let net_w = r.load_power_w - r.solar_power_w;
-                    let hour = r.dt_local.hour();
+                    let now_time = r.dt_local.time();
                     let month_key = r.dt_local.format("%Y-%m").to_string();
                     let import_price = r.import_price_cents;
                     let export_price = r.export_price_cents;
 
-                    let is_demand = hour >= 15 && hour < 21;
-                    let is_pre_charge = hour >= 10 && hour < 15;
+                    let is_demand = is_time_in_window(now_time, demand_start, demand_end);
+                    let is_pre_charge = now_time.hour() >= 10 && now_time < demand_start;
 
                     let mut charge_w = 0.0;
                     let mut discharge_w = 0.0;
@@ -2291,7 +2298,8 @@ pub fn run_historical_simulation_impl(
                         let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
                         charge_w = max_power_w.min(max_avail_charge.max(0.0));
                     } else if export_price >= 30.0 {
-                        let reserve = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
+                        let reserve_start = demand_start - chrono::Duration::hours(3);
+                        let reserve = if is_time_in_window(now_time, reserve_start, demand_end) { 5.0 } else { 2.0 };
                         if bat_soc > reserve {
                             let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
                             discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
@@ -2389,12 +2397,12 @@ pub fn run_historical_simulation_impl(
 
                     let r = &records_ref[i];
                     let net_w = r.load_power_w - r.solar_power_w;
-                    let hour = r.dt_local.hour();
+                    let now_time = r.dt_local.time();
                     let month_key = r.dt_local.format("%Y-%m").to_string();
                     let import_price = r.import_price_cents;
                     let export_price = r.export_price_cents;
 
-                    let is_demand = hour >= 15 && hour < 21;
+                    let is_demand = is_time_in_window(now_time, demand_start, demand_end);
 
                     let mut expected_solar = 0.0;
                     let mut demand_needed = 0.0;
@@ -2405,13 +2413,13 @@ pub fn run_historical_simulation_impl(
                         if fr.timestamp - r.timestamp > 86400 {
                             break;
                         }
-                        let fhour = fr.dt_local.hour();
+                        let ftime = fr.dt_local.time();
                         let fnet = fr.load_power_w - fr.solar_power_w;
 
-                        if fhour >= 15 && fhour < 21 && fnet > 0.0 {
+                        if is_time_in_window(ftime, demand_start, demand_end) && fnet > 0.0 {
                             demand_needed += (fnet / 1000.0) * fr.duration_hours;
                         }
-                        if fhour < 15 && fnet < 0.0 {
+                        if ftime < demand_start && fnet < 0.0 {
                             expected_solar += (-fnet / 1000.0) * fr.duration_hours;
                         }
                         cheapest_future.push((j, fr.import_price_cents));
@@ -2510,12 +2518,12 @@ pub fn run_historical_simulation_impl(
 
                 for r in records_ref {
                     let net_w = r.load_power_w - r.solar_power_w;
-                    let hour = r.dt_local.hour();
+                    let now_time = r.dt_local.time();
                     let month_key = r.dt_local.format("%Y-%m").to_string();
                     let import_price = r.import_price_cents;
                     let export_price = r.export_price_cents;
 
-                    let is_demand = hour >= 15 && hour < 21;
+                    let is_demand = is_time_in_window(now_time, demand_start, demand_end);
                     let current_month_peak = *adapt_peaks.get(&month_key).unwrap_or(&0.0);
 
                     let mut charge_w = 0.0;
@@ -2525,7 +2533,8 @@ pub fn run_historical_simulation_impl(
                         let max_avail_charge = ((battery_capacity_kwh * (max_charge_pct as f64 / 100.0) - bat_soc) / 0.95) / r.duration_hours * 1000.0;
                         charge_w = max_power_w.min(max_avail_charge.max(0.0));
                     } else if export_price >= 30.0 {
-                        let reserve = if hour >= 12 && hour < 21 { 5.0 } else { 2.0 };
+                        let reserve_start = demand_start - chrono::Duration::hours(3);
+                        let reserve = if is_time_in_window(now_time, reserve_start, demand_end) { 5.0 } else { 2.0 };
                         if bat_soc > reserve {
                             let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
                             discharge_w = max_power_w.min(max_avail_discharge.max(0.0));
@@ -2621,6 +2630,35 @@ pub fn run_historical_simulation_impl(
         lookahead_mpc: lookahead_mpc_res,
         adaptive_peak: adaptive_peak_res,
     })
+}
+
+fn get_demand_window(config: Option<&SolaxBatteryControlConfig>) -> (NaiveTime, NaiveTime) {
+    let mut demand_start = NaiveTime::from_hms_opt(17, 0, 0).unwrap();
+    let mut demand_end = NaiveTime::from_hms_opt(20, 0, 0).unwrap();
+
+    if let Some(bc) = config {
+        for (name, period) in &bc.period {
+            if name.eq_ignore_ascii_case("demand") {
+                if let (Some(start), Some(end)) = (
+                    parse_time(&period.start),
+                    parse_time(&period.end),
+                ) {
+                    demand_start = start;
+                    demand_end = end;
+                }
+                break;
+            }
+        }
+    }
+    (demand_start, demand_end)
+}
+
+fn is_time_in_window(now_time: NaiveTime, start: NaiveTime, end: NaiveTime) -> bool {
+    if start < end {
+        now_time >= start && now_time < end
+    } else {
+        !(now_time >= end && now_time < start)
+    }
 }
 
 #[cfg(test)]
