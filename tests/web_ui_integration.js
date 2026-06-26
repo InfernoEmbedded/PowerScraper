@@ -221,6 +221,21 @@ async function main() {
         if (!isChargeActive) {
             throw new Error("Expected #mode-charge card to have 'active' class");
         }
+
+        // Click MPC Arbitrage mode card
+        console.log("Clicking 'MPC Arbitrage' mode card...");
+        await page.click('#mode-mpc-arbitrage');
+        await page.waitForTimeout(500);
+
+        // Verify telemetry active mode updates
+        await page.waitForFunction(() => document.getElementById('stat-mode').innerText === 'MpcArbitrage', { timeout: 10000 });
+        console.log("Telemetry active mode updated to 'MpcArbitrage'!");
+
+        const isArbActive = await page.evaluate(() => document.getElementById('mode-mpc-arbitrage').classList.contains('active'));
+        if (!isArbActive) {
+            throw new Error("Expected #mode-mpc-arbitrage card to have 'active' class");
+        }
+
         console.log("Test 3 Passed successfully!");
 
         // Test Case 4: Instant Grid Target Input & Set
@@ -477,7 +492,7 @@ async function main() {
         await page.fill('#battery-source', 'SolaX-Hybrid-Meter');
         await page.fill('#battery-tz', 'Australia/Sydney');
         await page.fill('#battery-grid-target', '150');
-        await page.selectOption('#battery-init-mode', 'Auto');
+        await page.selectOption('#battery-init-mode', 'MpcArbitrage');
         await page.check('#battery-linked');
         
         // Add inverter constraint
@@ -579,7 +594,7 @@ async function main() {
             await page.inputValue('#battery-source') !== 'SolaX-Hybrid-Meter' ||
             await page.inputValue('#battery-tz') !== 'Australia/Sydney' ||
             await page.inputValue('#battery-grid-target') !== '150' ||
-            await page.inputValue('#battery-init-mode') !== 'Auto' ||
+            await page.inputValue('#battery-init-mode') !== 'MpcArbitrage' ||
             await page.isChecked('#battery-linked') !== true) {
             throw new Error("Battery general config did not reload correctly!");
         }

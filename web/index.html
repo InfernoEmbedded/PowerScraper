@@ -131,6 +131,10 @@
                         <h3>Look-Ahead MPC</h3>
                         <p>Predictive model predictive control</p>
                     </div>
+                    <div class="mode-card" id="mode-mpc-arbitrage" onclick="setInstantMode('MpcArbitrage')">
+                        <h3>MPC Arbitrage</h3>
+                        <p>Predictive charging to cover night-time rates</p>
+                    </div>
                 </div>
                 <div class="form-group" style="margin-top: 10px;">
                     <label for="instant-target">Change Grid Target (W)</label>
@@ -244,6 +248,7 @@
                                 <option value="SmartHeuristic">Smart Heuristic</option>
                                 <option value="AdaptivePeakShaving">Adaptive Peak Shaving</option>
                                 <option value="MpcOptimizer">Look-Ahead MPC</option>
+                                <option value="MpcArbitrage">MPC Arbitrage</option>
                             </select>
                         </div>
                     </div>
@@ -572,6 +577,10 @@
                             <div>
                                 <strong style="color: #fff;">Scenario F: Adaptive Peak Shaving</strong><br>
                                 <span class="text-muted">Tracks monthly-to-date peak draw and shaves imports dynamically. Reduces unnecessary shallow cycles, maintaining excellent savings with vastly reduced battery wear.</span>
+                            </div>
+                            <div>
+                                <strong style="color: #fff;">Scenario G: MPC Arbitrage</strong><br>
+                                <span class="text-muted">Predictively pre-charges from grid during cheapest daytime periods to cover nighttime load, if nighttime rates are 10% higher than charging rates.</span>
                             </div>
                         </div>
                     </div>

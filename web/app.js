@@ -94,6 +94,7 @@ async function fetchStatus() {
         if (status.active_mode === "SmartHeuristic") document.getElementById('mode-smart').classList.add('active');
         if (status.active_mode === "AdaptivePeakShaving") document.getElementById('mode-adaptive').classList.add('active');
         if (status.active_mode === "MpcOptimizer") document.getElementById('mode-mpc').classList.add('active');
+        if (status.active_mode === "MpcArbitrage") document.getElementById('mode-mpc-arbitrage').classList.add('active');
 
         // Render inverter lists and calculate total inverter interaction and total solar power
         const list = document.getElementById('dash-inverters-list');
@@ -1831,7 +1832,8 @@ async function runHistoricalSimulation() {
                     { name: "Scenario C: Auto (Period-Aware Regulation)", key: "auto" },
                     { name: "Scenario D: Smart Heuristic", key: "smart_heuristic" },
                     { name: "Scenario E: Look-Ahead MPC", key: "lookahead_mpc" },
-                    { name: "Scenario F: Adaptive Peak Shaving", key: "adaptive_peak" }
+                    { name: "Scenario F: Adaptive Peak Shaving", key: "adaptive_peak" },
+                    { name: "Scenario G: MPC Arbitrage", key: "mpc_arbitrage" }
                 ];
 
                 const noBatteryBill = data.no_battery.net_bill;
