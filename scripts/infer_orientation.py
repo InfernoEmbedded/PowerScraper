@@ -115,13 +115,14 @@ def run_inference(db_path="config.db"):
                 daily_data[day] = []
             daily_data[day].append((ts, val))
 
-        # Find top 5 days by total generation
-        daily_totals = []
+        # Sort by daytime average to select best summer days
+        daily_averages = []
         for day, pts in daily_data.items():
-            total = sum(v for _, v in pts)
-            daily_totals.append((day, total))
-        daily_totals.sort(key=lambda x: x[1], reverse=True)
-        top_days = [day for day, _ in daily_totals[:5]]
+            daytime = [v for _, v in pts if v > 10.0]
+            if len(daytime) >= 5:
+                daily_averages.append((day, sum(daytime) / len(daytime)))
+        daily_averages.sort(key=lambda x: x[1], reverse=True)
+        top_days = [day for day, _ in daily_averages[:5]]
 
         # Gather daytime points
         points = []

@@ -40,15 +40,23 @@ pub async fn handle_infer_orientation(
         return Err((axum::http::StatusCode::BAD_REQUEST, "No historical solar telemetry found for this inverter and PV string.".to_string()));
     }
     
-    let mut daily_totals: Vec<(i64, f64)> = daily_data.iter()
-        .map(|(&day, pts)| {
-            let total: f64 = pts.iter().map(|&(_, v)| v).sum();
-            (day, total)
+    let mut daily_averages: Vec<(i64, f64)> = daily_data.iter()
+        .filter_map(|(&day, pts)| {
+            let daytime_pts: Vec<f64> = pts.iter()
+                .filter(|&&(_, v)| v > 10.0)
+                .map(|&(_, v)| v)
+                .collect();
+            if daytime_pts.len() >= 5 {
+                let sum: f64 = daytime_pts.iter().sum();
+                Some((day, sum / daytime_pts.len() as f64))
+            } else {
+                None
+            }
         })
         .collect();
-    daily_totals.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    daily_averages.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     
-    let top_days: Vec<i64> = daily_totals.iter().take(5).map(|&(day, _)| day).collect();
+    let top_days: Vec<i64> = daily_averages.iter().take(5).map(|&(day, _)| day).collect();
     
     let mut points = Vec::new();
     for day in top_days {
