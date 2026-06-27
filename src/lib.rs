@@ -22,3 +22,4 @@ pub mod simulation;
 pub mod tariff_manager;
 pub mod web_assets;
 pub mod web_server;
+pub mod battery_group;
