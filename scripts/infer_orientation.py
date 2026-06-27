@@ -23,8 +23,6 @@ def calculate_solar_position(lat, lon, dt):
         sin_theta_s = -math.cos(delta) * math.sin(h) / cos_alpha
         sin_theta_s = max(-1.0, min(1.0, sin_theta_s))
         theta_s = math.atan2(sin_theta_s, cos_theta_s)
-        # Convert from South-origin (clockwise) to North-origin (clockwise)
-        theta_s = (theta_s + math.pi) % (2.0 * math.pi)
     else:
         theta_s = 0.0
     return alpha, theta_s
