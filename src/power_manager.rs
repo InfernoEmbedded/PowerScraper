@@ -112,6 +112,10 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
         [],
     )?;
     conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_topic_timestamp ON telemetry_history (topic, timestamp)",
+        [],
+    )?;
+    conn.execute(
         "CREATE TABLE IF NOT EXISTS solar_forecast (
             timestamp INTEGER PRIMARY KEY,
             predicted_solar_w REAL NOT NULL

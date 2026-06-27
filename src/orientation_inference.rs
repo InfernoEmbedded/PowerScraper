@@ -18,13 +18,13 @@ pub async fn handle_infer_orientation(
     let conn = rusqlite::Connection::open(&db_path)
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to open database: {}", e)))?;
         
-    let thirty_days_ago = chrono::Utc::now().timestamp() - (30 * 24 * 3600);
+    let one_year_ago = chrono::Utc::now().timestamp() - (365 * 24 * 3600);
     
     let mut stmt = conn.prepare(
         "SELECT timestamp, value FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2 ORDER BY timestamp ASC"
     ).map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to prepare query: {}", e)))?;
     
-    let rows = stmt.query_map(rusqlite::params![topic, thirty_days_ago], |row| {
+    let rows = stmt.query_map(rusqlite::params![topic, one_year_ago], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
     }).map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Query error: {}", e)))?;
     

@@ -94,13 +94,13 @@ def run_inference(db_path="config.db"):
         sys.exit(0)
 
     print(f"Found active PV strings: {topics}")
-    thirty_days_ago = int(datetime.now().timestamp()) - (30 * 24 * 3600)
+    one_year_ago = int(datetime.now().timestamp()) - (365 * 24 * 3600)
 
     for topic in topics:
         print(f"\nAnalyzing topic: {topic}")
         rows = conn.execute(
             "SELECT timestamp, value FROM telemetry_history WHERE topic = ? AND timestamp >= ? ORDER BY timestamp ASC",
-            (topic, thirty_days_ago)
+            (topic, one_year_ago)
         ).fetchall()
 
         if not rows:
