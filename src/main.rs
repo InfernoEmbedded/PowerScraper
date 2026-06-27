@@ -191,7 +191,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mqtt_clone = mqtt_config.clone();
                 let cancel_clone = cancel_token.clone();
                 tokio::spawn(async move {
-                    drivers::solax_modbus::run_solax_xhybrid_driver(
+                    drivers::solax_xhybrid::run_solax_xhybrid_driver(
                         inv_clone,
                         hostname,
                         cfg_clone,
@@ -212,7 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mqtt_clone = mqtt_config.clone();
                 let cancel_clone = cancel_token.clone();
                 tokio::spawn(async move {
-                    drivers::serial_meters::run_sdm630_driver(
+                    drivers::sdm630::run_sdm630_driver(
                         port_clone,
                         cfg_clone,
                         mqtt_clone,
@@ -232,7 +232,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mqtt_clone = mqtt_config.clone();
                 let cancel_clone = cancel_token.clone();
                 tokio::spawn(async move {
-                    drivers::serial_meters::run_dtsu666_driver(
+                    drivers::dtsu666::run_dtsu666_driver(
                         port_clone,
                         cfg_clone,
                         mqtt_clone,

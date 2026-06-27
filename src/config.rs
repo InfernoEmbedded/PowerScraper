@@ -205,6 +205,8 @@ pub struct BatteryControlInverter {
     pub max_charge_pct: Option<u8>,
     #[serde(default, alias = "min_charge_pct")]
     pub min_charge_pct: Option<u8>,
+    #[serde(default, alias = "no_pv", alias = "no-pv")]
+    pub no_pv: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -276,9 +278,34 @@ pub struct DemandConfig {
 #[serde(rename_all = "kebab-case")]
 pub struct PvArrayConfig {
     pub name: String,
-    pub capacity_w: f64,
     pub tilt: f64,
     pub azimuth: f64,
+    pub brand: Option<String>,
+    pub model: Option<String>,
+    pub installation_date: Option<String>,
+    pub series_modules: Option<u32>,
+    pub parallel_strings: Option<u32>,
+    pub voc: Option<f64>,
+    pub isc: Option<f64>,
+    pub vmp: Option<f64>,
+    pub imp: Option<f64>,
+    pub temp_coeff_isc: Option<f64>,
+    pub temp_coeff_voc: Option<f64>,
+    pub temp_coeff_pmax: Option<f64>,
+}
+
+impl PvArrayConfig {
+    pub fn capacity_w(&self) -> f64 {
+        let series = self.series_modules.unwrap_or(0) as f64;
+        let parallel = self.parallel_strings.unwrap_or(0) as f64;
+        let vmp = self.vmp.unwrap_or(0.0);
+        let imp = self.imp.unwrap_or(0.0);
+        series * parallel * vmp * imp
+    }
+
+    pub fn quantity(&self) -> u32 {
+        self.series_modules.unwrap_or(0) * self.parallel_strings.unwrap_or(0)
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]

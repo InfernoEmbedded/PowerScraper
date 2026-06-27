@@ -7,6 +7,9 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, sleep};
 use tokio_util::sync::CancellationToken;
 
+pub mod emoncms;
+pub mod influx;
+
 pub async fn run_forwarders_task(
     emoncms_config: Option<EmonCMSConfig>,
     influx_config: Option<InfluxConfig>,
@@ -79,105 +82,12 @@ pub async fn run_forwarders_task(
 
                 // 1. Flush to EmonCMS
                 if let Some(ref emon) = emon_clone {
-                    let mut payload = metrics.clone();
-                    payload.remove("Serial");
-                    payload.remove("name");
-
-                    let url = format!("{}/input/post", emon.server);
-                    let mut query_params = HashMap::new();
-                    query_params.insert("apikey", emon.api_key.clone());
-                    query_params.insert("node", device_name.clone());
-                    if let Ok(json_str) = serde_json::to_string(&payload) {
-                        query_params.insert("fulljson", json_str);
-
-                        let emon_url = url.clone();
-                        let client = http_client.clone();
-                        let timeout_sec = emon.timeout;
-                        let cancel_token_emon = cancel_token_flush.clone();
-                        tokio::spawn(async move {
-                            tokio::select! {
-                                _ = cancel_token_emon.cancelled() => {}
-                                res = client
-                                    .get(&emon_url)
-                                    .query(&query_params)
-                                    .timeout(Duration::from_secs_f64(timeout_sec))
-                                    .send() => {
-                                        match res {
-                                            Ok(resp) => {
-                                                if !resp.status().is_success() {
-                                                    println!(
-                                                        "EmonCMS forward failed with status: {}",
-                                                        resp.status()
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                println!("EmonCMS request error: {}", e);
-                                            }
-                                        }
-                                    }
-                            }
-                        });
-                    }
+                    emoncms::forward_to_emoncms(&http_client, emon, &device_name, &metrics, &cancel_token_flush).await;
                 }
 
                 // 2. Flush to InfluxDB v2
                 if let Some(ref influx) = influx_clone {
-                    let mut payload = metrics.clone();
-                    payload.remove("Serial");
-                    payload.remove("name");
-
-                    // Format as line protocol: solax,inverter=dev_name field1=val1,field2=val2
-                    let mut fields = Vec::new();
-                    for (k, v) in payload {
-                        // sanitize key / value
-                        let key = k.replace(' ', "_").replace(',', "\\,").replace('=', "\\=");
-                        if let Ok(num) = v.parse::<f64>() {
-                            fields.push(format!("{}={}", key, num));
-                        } else {
-                            let escaped_val = v.replace('"', "\\\"");
-                            fields.push(format!("{}=\"{}\"", key, escaped_val));
-                        }
-                    }
-
-                    if !fields.is_empty() {
-                        let line = format!("solax,inverter={} {}", device_name, fields.join(","));
-                        let write_url = format!(
-                            "{}/api/v2/write?org=-&bucket={}/{}",
-                            influx.influx_url,
-                            influx.influx_database,
-                            influx.influx_retention_policy
-                        );
-                        let token = format!("{}:{}", influx.influx_user, influx.influx_pass);
-
-                        let client = http_client.clone();
-                        let cancel_token_influx = cancel_token_flush.clone();
-                        tokio::spawn(async move {
-                            tokio::select! {
-                                _ = cancel_token_influx.cancelled() => {}
-                                res = client
-                                    .post(&write_url)
-                                    .header("Authorization", format!("Token {}", token))
-                                    .body(line)
-                                    .send() => {
-                                        match res {
-                                            Ok(resp) => {
-                                                if !resp.status().is_success() {
-                                                    let text = resp.text().await.unwrap_or_default();
-                                                    println!(
-                                                        "InfluxDB forward failed: {} - {}",
-                                                        text, write_url
-                                                    );
-                                                }
-                                            }
-                                            Err(e) => {
-                                                println!("InfluxDB request error: {}", e);
-                                            }
-                                        }
-                                    }
-                            }
-                        });
-                    }
+                    influx::forward_to_influx(&http_client, influx, &device_name, &metrics, &cancel_token_flush).await;
                 }
             }
         }

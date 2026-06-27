@@ -1,0 +1,286 @@
+use crate::config::{MqttBrokerConfig, SerialMeterConfig};
+use crate::mqtt_helper::create_mqtt_client;
+use rumqttc::QoS;
+use std::collections::HashMap;
+use tokio::time::{Duration, sleep};
+use tokio_modbus::client::{Context, Reader, rtu};
+use tokio_modbus::prelude::Slave;
+use tokio_serial::{Parity, SerialStream, StopBits};
+use tokio_util::sync::CancellationToken;
+
+fn float32(registers: &[u16], base: usize, addr: usize) -> f32 {
+    let low = registers[addr - base];
+    let high = registers[addr - base + 1];
+
+    let bytes = [
+        (high & 0xff) as u8,
+        (high >> 8) as u8,
+        (low & 0xff) as u8,
+        (low >> 8) as u8,
+    ];
+    f32::from_le_bytes(bytes)
+}
+
+async fn connect_serial_meter(
+    port_path: &str,
+    config: &SerialMeterConfig,
+) -> Result<Context, std::io::Error> {
+    let serial_parity = match config.parity.as_str() {
+        "E" => Parity::Even,
+        "O" => Parity::Odd,
+        _ => Parity::None,
+    };
+
+    let serial_stopbits = match config.stopbits {
+        2 => StopBits::Two,
+        _ => StopBits::One,
+    };
+
+    let builder = tokio_serial::new(port_path, config.baud)
+        .parity(serial_parity)
+        .stop_bits(serial_stopbits)
+        .timeout(Duration::from_secs_f64(config.timeout));
+
+    let port = SerialStream::open(&builder)?;
+    let ctx = rtu::attach_slave(port, Slave(1));
+    Ok(ctx)
+}
+
+pub async fn run_dtsu666_driver(
+    port_path: String,
+    config: SerialMeterConfig,
+    mqtt_config: MqttBrokerConfig,
+    cancel_token: CancellationToken,
+) {
+    let base_topic = mqtt_config
+        .base_topic
+        .clone()
+        .unwrap_or_else(|| "sensors".to_string());
+    let device_name = port_path.replace("/dev/tty", "");
+    let client_id = format!("powerscraper-dtsu666-{}", device_name);
+    let (mqtt_client, mut eventloop) = create_mqtt_client(&client_id, &mqtt_config);
+
+    // Spawn dummy MQTT loop to keep connection alive
+    let device_name_mqtt = device_name.clone();
+    let cancel_token_clone = cancel_token.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    if let Err(e) = res {
+                        println!("DTSU666 [{}] MQTT error: {}", device_name_mqtt, e);
+                        tokio::select! {
+                            _ = cancel_token_clone.cancelled() => break,
+                            _ = sleep(Duration::from_secs(5)) => {}
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let poll_interval = Duration::from_secs_f64(config.poll_period);
+    let mut ctx_opt = None;
+    let mut discovered_metrics = std::collections::HashSet::new();
+
+    loop {
+        if cancel_token.is_cancelled() {
+            break;
+        }
+        if ctx_opt.is_none() {
+            match connect_serial_meter(&port_path, &config).await {
+                Ok(ctx) => ctx_opt = Some(ctx),
+                Err(e) => {
+                    println!(
+                        "DTSU666 [{}] failed to connect to serial port: {}",
+                        device_name, e
+                    );
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => break,
+                        _ = sleep(poll_interval) => {}
+                    }
+                    continue;
+                }
+            }
+        }
+
+        let ctx = ctx_opt.as_mut().unwrap();
+        let timeout_dur = Duration::from_secs_f64(config.timeout);
+        let read_res = tokio::time::timeout(timeout_dur, async {
+            let reg1 = ctx.read_input_registers(0x2000, 0x52).await?;
+            let reg2 = ctx.read_input_registers(0x401E, 52).await?;
+            Ok::<_, std::io::Error>((reg1, reg2))
+        })
+        .await;
+
+        match read_res {
+            Ok(Ok((reg1, reg2))) => {
+                let mut vals = HashMap::new();
+                vals.insert("name".to_string(), device_name.clone());
+
+                if reg1.len() >= 0x52 {
+                    let base = 0x2000;
+                    vals.insert(
+                        "Line 1 to Line 2 volts".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2000) / 10.0),
+                    );
+                    vals.insert(
+                        "Line 2 to Line 3 volts".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2002) / 10.0),
+                    );
+                    vals.insert(
+                        "Line 3 to Line 1 volts".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2004) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 1 line to neutral volts".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2006) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 2 line to neutral volts".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2008) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 3 line to neutral volts".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x200A) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 1 current".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x200C) / 1000.0),
+                    );
+                    vals.insert(
+                        "Phase 2 current".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x200E) / 1000.0),
+                    );
+                    vals.insert(
+                        "Phase 3 current".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x2010) / 1000.0),
+                    );
+                    vals.insert(
+                        "Phase 1 power".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2014) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 2 power".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2016) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 3 power".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2018) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 1 volt amps reactive".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x201C) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 2 volt amps reactive".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x201E) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 3 volt amps reactive".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2020) / 10.0),
+                    );
+                    vals.insert(
+                        "Phase 1 power factor".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x202C) / 1000.0),
+                    );
+                    vals.insert(
+                        "Phase 2 power factor".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x202E) / 1000.0),
+                    );
+                    vals.insert(
+                        "Phase 3 power factor".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x2030) / 1000.0),
+                    );
+                    vals.insert(
+                        "Total system power".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2012) / 10.0),
+                    );
+                    vals.insert(
+                        "Total system VAr".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x201A) / 10.0),
+                    );
+                    vals.insert(
+                        "Total system power factor".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x202A) / 1000.0),
+                    );
+                    vals.insert(
+                        "Frequency Of supply voltages".to_string(),
+                        format!("{:.2}", float32(&reg1, base, 0x2044) / 100.0),
+                    );
+                    vals.insert(
+                        "Total system power demand".to_string(),
+                        format!("{:.1}", float32(&reg1, base, 0x2044) / 10.0),
+                    );
+                }
+
+                if reg2.len() >= 52 {
+                    let base = 0x401E;
+                    vals.insert(
+                        "Total import kWh".to_string(),
+                        format!("{:.1}", float32(&reg2, base, 0x401E) * 1000.0),
+                    );
+                    vals.insert(
+                        "Total export kWh".to_string(),
+                        format!("{:.1}", float32(&reg2, base, 0x4028) * 1000.0),
+                    );
+                    vals.insert(
+                        "Total Q1 kvarh".to_string(),
+                        format!("{:.1}", float32(&reg2, base, 0x4032) * 1000.0),
+                    );
+                    vals.insert(
+                        "Total Q2 kvarh".to_string(),
+                        format!("{:.1}", float32(&reg2, base, 0x403C) * 1000.0),
+                    );
+                    vals.insert(
+                        "Total Q3 kvarh".to_string(),
+                        format!("{:.1}", float32(&reg2, base, 0x4046) * 1000.0),
+                    );
+                    vals.insert(
+                        "Total Q4 kvarh".to_string(),
+                        format!("{:.1}", float32(&reg2, base, 0x4050) * 1000.0),
+                    );
+                }
+
+                for (metric, val) in vals {
+                    if !discovered_metrics.contains(&metric) {
+                        crate::mqtt_helper::publish_home_assistant_discovery(
+                            &mqtt_client,
+                            &mqtt_config,
+                            &device_name,
+                            &metric,
+                            false,
+                        )
+                        .await;
+                        discovered_metrics.insert(metric.clone());
+                    }
+
+                    let topic = format!("{}/{}/{}", base_topic, device_name, metric);
+                    let _ = mqtt_client
+                        .publish(&topic, QoS::AtMostOnce, false, val)
+                        .await;
+                }
+            }
+            Ok(Err(e)) => {
+                println!(
+                    "DTSU666 [{}] read error: {}, resetting connection",
+                    device_name, e
+                );
+                ctx_opt = None;
+            }
+            Err(_) => {
+                println!(
+                    "DTSU666 [{}] read timeout, resetting connection",
+                    device_name
+                );
+                ctx_opt = None;
+            }
+        }
+
+        tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            _ = sleep(poll_interval) => {}
+        }
+    }
+}

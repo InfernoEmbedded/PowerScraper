@@ -184,6 +184,139 @@ impl BatteryGroup {
             }
         }
     }
+
+    pub fn calculate_and_constrain(
+        &self,
+        target_power_w: f64,
+        inverter_configs: &std::collections::HashMap<String, crate::config::BatteryControlInverter>,
+        inverters_state: &mut std::collections::HashMap<String, crate::power_manager::InverterState>,
+        assist_needed: &mut std::collections::HashMap<String, bool>,
+        commanded_powers: &mut std::collections::HashMap<String, i32>,
+        _mode: crate::power_manager::PowerManagerMode,
+        period: &crate::config::BatteryControlPeriod,
+        divider: f64,
+    ) -> std::collections::HashMap<String, i32> {
+        let allocations = self.apportion_power(target_power_w);
+        let mut final_commands = std::collections::HashMap::new();
+
+        for (name, mut p) in allocations {
+            if let Some(inv_cfg) = inverter_configs.get(&name) {
+                let mut state = inverters_state.get(&name).cloned().unwrap_or_default();
+                let soc = state.battery_capacity;
+                
+                // Apply individual clamps & constraints
+                if p > inv_cfg.max_discharge {
+                    p = inv_cfg.max_discharge;
+                } else if p < -inv_cfg.max_charge {
+                    p = -inv_cfg.max_charge;
+                }
+
+                // BMS Throttling
+                let max_limit = inv_cfg.max_charge_pct.unwrap_or(95);
+                if soc > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
+                    p = 0.0;
+                }
+
+                // Grace Period
+                let grace = period.grace && inv_cfg.grace_capacity > 0 && inv_cfg.grace_charge_power > 0.0;
+                if grace && p < 0.0 && soc > inv_cfg.grace_capacity {
+                    let total_pv = state.pv1_power + state.pv2_power;
+                    if total_pv < inv_cfg.grace_power_threshold {
+                        p = 0.0;
+                    } else if p < -inv_cfg.grace_charge_power {
+                        p = -inv_cfg.grace_charge_power;
+                    }
+                }
+
+                // Update assist_needed
+                let mut assist = *assist_needed.get(&name).unwrap_or(&false);
+                let min_limit = inv_cfg.min_charge_pct.unwrap_or(period.min_charge);
+                if soc <= min_limit && target_power_w > 0.0 {
+                    assist = true;
+                } else if soc <= min_limit && period.prefer_battery {
+                    assist = true;
+                } else {
+                    let lower_limit = inv_cfg.single_phase_discharge_limit / divider;
+                    let upper_limit = -inv_cfg.single_phase_charge_limit / divider;
+
+                    if assist {
+                        if (p >= 0.0 && p < lower_limit) || (p < 0.0 && p > upper_limit) {
+                            assist = false;
+                        }
+                    } else {
+                        if p > inv_cfg.single_phase_discharge_limit || p < -inv_cfg.single_phase_charge_limit {
+                            assist = true;
+                        }
+                    }
+                }
+
+                if soc > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
+                    assist = true;
+                }
+                if grace && p < 0.0 && soc > inv_cfg.grace_capacity {
+                    let total_pv = state.pv1_power + state.pv2_power;
+                    if total_pv < inv_cfg.grace_power_threshold {
+                        assist = true;
+                    }
+                }
+                assist_needed.insert(name.clone(), assist);
+
+                // Save the calculated discharge_power back into the inverter state!
+                state.discharge_power = p;
+                inverters_state.insert(name.clone(), state);
+
+                // Store command
+                let command_power = -p as i32;
+                commanded_powers.insert(name.clone(), command_power);
+
+                // Update web status
+                if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                    let web_inv = status.inverters.entry(name.clone()).or_default();
+                    web_inv.requested_power = Some(command_power);
+                }
+
+                final_commands.insert(name.clone(), command_power);
+            }
+        }
+        final_commands
+    }
+
+    pub async fn command_inverters(
+        &self,
+        target_power_w: f64,
+        mqtt_client: &rumqttc::AsyncClient,
+        base_topic: &str,
+        inverter_configs: &std::collections::HashMap<String, crate::config::BatteryControlInverter>,
+        inverters_state: &mut std::collections::HashMap<String, crate::power_manager::InverterState>,
+        assist_needed: &mut std::collections::HashMap<String, bool>,
+        commanded_powers: &mut std::collections::HashMap<String, i32>,
+        mode: crate::power_manager::PowerManagerMode,
+        period: &crate::config::BatteryControlPeriod,
+        divider: f64,
+    ) {
+        let commands = self.calculate_and_constrain(
+            target_power_w,
+            inverter_configs,
+            inverters_state,
+            assist_needed,
+            commanded_powers,
+            mode,
+            period,
+            divider,
+        );
+
+        for (name, command_power) in commands {
+            let cmd_topic = format!("{}/{}/command/charge_battery", base_topic, name);
+            let _ = mqtt_client
+                .publish(
+                    &cmd_topic,
+                    rumqttc::QoS::AtLeastOnce,
+                    false,
+                    command_power.to_string(),
+                )
+                .await;
+        }
+    }
 }
 
 #[cfg(test)]

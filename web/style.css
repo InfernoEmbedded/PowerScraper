@@ -356,7 +356,7 @@ h1 {
 
 .inverter-item {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     padding: 16px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 10px;

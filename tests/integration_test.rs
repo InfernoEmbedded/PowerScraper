@@ -424,7 +424,7 @@ async fn test_integration_loop() {
                 let mqtt_clone = mqtt_config.clone();
                 let hostname = hybrid_cfg.hostnames.as_ref().and_then(|h| h.first()).cloned().unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
                 tokio::spawn(async move {
-                    drivers::solax_modbus::run_solax_xhybrid_driver(
+                    drivers::solax_xhybrid::run_solax_xhybrid_driver(
                         "solax-xhybrid".to_string(),
                         hostname,
                         hybrid_cfg,

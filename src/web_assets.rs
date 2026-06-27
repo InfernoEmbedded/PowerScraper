@@ -103,6 +103,18 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     <div class="stat-val" id="stat-total-solar" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 W</div>
                 </div>
                 <div class="glass-card">
+                    <div class="card-title">Household Usage</div>
+                    <div class="stat-val" id="stat-usage">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Power Budget</div>
+                    <div class="stat-val" id="stat-power-budget" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Power Budget with charging</div>
+                    <div class="stat-val" id="stat-power-budget-with-charging" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">0 W</div>
+                </div>
+                <div class="glass-card">
                     <div class="card-title">Import Price</div>
                     <div class="stat-val" id="stat-import-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
                 </div>
@@ -275,10 +287,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     </div>
 
                     <div style="margin-top: 30px;">
-                        <div class="card-title">
-                            Inverter Constraint Matrix
-                            <button class="sub-btn" onclick="addInverterConstraint()">Add Inverter</button>
-                        </div>
+                        <div class="card-title">Inverter Constraint Matrix</div>
                         <div id="inverters-constraints-list">
                             <!-- Dynamic inverter constraint cards -->
                         </div>
@@ -514,12 +523,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     </div>
                 </div>
             </div>
-
             <div class="glass-card">
-                <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>PV Solar Arrays Orientation</span>
-                    <button class="sub-btn" onclick="addLocationPvArray()">Add PV Array</button>
-                </div>
+                <div class="card-title">PV Solar Arrays Orientation</div>
                 <p class="text-muted" style="margin-bottom: 20px;">
                     Define the capacity and physical alignment of each solar panel string (array) to enable precise, weather-adjusted solar yield modeling.
                 </p>
@@ -1201,7 +1206,7 @@ h1 {
 
 .inverter-item {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     padding: 16px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 10px;
@@ -1557,6 +1562,26 @@ async function fetchStatus() {
                     batPowerStyle = `color: var(--text-muted);`;
                 }
 
+                let reqPowerStr = "";
+                let reqPowerStyle = "";
+                if (inv.requested_power !== undefined && inv.requested_power !== null) {
+                    const reqVal = inv.requested_power;
+                    const absReqVal = Math.abs(reqVal);
+                    if (reqVal > 0) {
+                        reqPowerStr = `${absReqVal.toFixed(0)} W Charge`;
+                        reqPowerStyle = `color: var(--accent); text-shadow: 0 0 8px var(--accent-glow);`;
+                    } else if (reqVal < 0) {
+                        reqPowerStr = `${absReqVal.toFixed(0)} W Discharge`;
+                        reqPowerStyle = `color: var(--danger); text-shadow: 0 0 8px rgba(239, 68, 68, 0.25);`;
+                    } else {
+                        reqPowerStr = `0 W Idle`;
+                        reqPowerStyle = `color: var(--text-muted);`;
+                    }
+                } else {
+                    reqPowerStr = `--`;
+                    reqPowerStyle = `color: var(--text-muted);`;
+                }
+
                 return `
                     <div class="inverter-item">
                         <div>
@@ -1567,6 +1592,10 @@ async function fetchStatus() {
                         <div>
                             <div class="inverter-field-title">Battery Capacity (SOC)</div>
                             <div class="inverter-field-val">${inv.battery_capacity} %</div>
+                        </div>
+                        <div>
+                            <div class="inverter-field-title">Requested Charge/Discharge</div>
+                            <div class="inverter-field-val" style="${reqPowerStyle}">${reqPowerStr}</div>
                         </div>
                         <div>
                             <div class="inverter-field-title">Charge/Discharge Power</div>
@@ -1604,6 +1633,44 @@ async function fetchStatus() {
         const totalSolarEl = document.getElementById('stat-total-solar');
         if (totalSolarEl) {
             totalSolarEl.innerText = `${totalSolarPower.toFixed(0)} W`;
+        }
+
+        // Update Usage card
+        const usageEl = document.getElementById('stat-usage');
+        if (usageEl) {
+            const usageVal = status.usage !== undefined && status.usage !== null ? status.usage : 0.0;
+            usageEl.innerText = `${usageVal.toFixed(0)} W`;
+        }
+
+        // Update Power Budget card
+        const budgetEl = document.getElementById('stat-power-budget');
+        if (budgetEl) {
+            const budgetVal = status.power_budget !== undefined && status.power_budget !== null ? status.power_budget : 0.0;
+            budgetEl.innerText = `${budgetVal.toFixed(0)} W`;
+            if (budgetVal > 0) {
+                budgetEl.style.color = 'var(--accent)';
+                budgetEl.style.textShadow = '0 0 10px var(--accent-glow)';
+            } else if (budgetVal < 0) {
+                budgetEl.style.color = 'var(--danger)';
+                budgetEl.style.textShadow = '0 0 10px rgba(239, 68, 68, 0.2)';
+            } else {
+                budgetEl.style.color = 'var(--text-muted)';
+                budgetEl.style.textShadow = 'none';
+            }
+        }
+
+        // Update Power Budget with charging card
+        const budgetChargingEl = document.getElementById('stat-power-budget-with-charging');
+        if (budgetChargingEl) {
+            const budgetChargingVal = status.power_budget_with_charging !== undefined && status.power_budget_with_charging !== null ? status.power_budget_with_charging : 0.0;
+            budgetChargingEl.innerText = `${budgetChargingVal.toFixed(0)} W`;
+            if (budgetChargingVal > 0) {
+                budgetChargingEl.style.color = 'var(--primary)';
+                budgetChargingEl.style.textShadow = '0 0 10px var(--primary-glow)';
+            } else {
+                budgetChargingEl.style.color = 'var(--text-muted)';
+                budgetChargingEl.style.textShadow = 'none';
+            }
         }
 
         const mqttStatusEl = document.getElementById('stat-mqtt-status');
@@ -2197,7 +2264,8 @@ async function loadConfig(configData = null) {
         // 1. Load Solax Wifi
         const wifi = config["Solax-Wifi"];
         if (wifi && wifi.inverters) {
-            wifi.inverters.forEach(ip => {
+            const sortedWifi = [...wifi.inverters].sort();
+            sortedWifi.forEach(ip => {
                 renderDriverCard('Solax-Wifi', {
                     inverter: ip,
                     poll_period: wifi["poll-period"] || wifi.poll_period || 10,
@@ -2209,11 +2277,17 @@ async function loadConfig(configData = null) {
         // 2. Load Solax Modbus Standard
         const modbus = config["Solax-Modbus"];
         if (modbus && modbus.inverters) {
-            modbus.inverters.forEach((name, idx) => {
-                const host = (modbus.hostnames && modbus.hostnames[idx]) ? modbus.hostnames[idx] : '';
+            const sortedModbus = modbus.inverters.map((name, idx) => {
+                return {
+                    name: name,
+                    host: (modbus.hostnames && modbus.hostnames[idx]) ? modbus.hostnames[idx] : ''
+                };
+            });
+            sortedModbus.sort((a, b) => a.name.localeCompare(b.name));
+            sortedModbus.forEach(item => {
                 renderDriverCard('Solax-Modbus', {
-                    inverter: name,
-                    hostname: host,
+                    inverter: item.name,
+                    hostname: item.host,
                     poll_period: modbus["poll-period"] || modbus.poll_period || 10,
                     timeout: modbus.timeout || 5,
                     password: modbus["installer-password"] || modbus.installer_password || '',
@@ -2225,11 +2299,17 @@ async function loadConfig(configData = null) {
         // 3. Load Solax XHybrid Modbus
         const hybrid = config["Solax-XHybrid-Modbus"];
         if (hybrid && hybrid.inverters) {
-            hybrid.inverters.forEach((name, idx) => {
-                const host = (hybrid.hostnames && hybrid.hostnames[idx]) ? hybrid.hostnames[idx] : '';
+            const sortedHybrid = hybrid.inverters.map((name, idx) => {
+                return {
+                    name: name,
+                    host: (hybrid.hostnames && hybrid.hostnames[idx]) ? hybrid.hostnames[idx] : ''
+                };
+            });
+            sortedHybrid.sort((a, b) => a.name.localeCompare(b.name));
+            sortedHybrid.forEach(item => {
                 renderDriverCard('Solax-XHybrid-Modbus', {
-                    inverter: name,
-                    hostname: host,
+                    inverter: item.name,
+                    hostname: item.host,
                     poll_period: hybrid["poll-period"] || hybrid.poll_period || 10,
                     timeout: hybrid.timeout || 5,
                     password: hybrid["installer-password"] || hybrid.installer_password || '',
@@ -2241,7 +2321,8 @@ async function loadConfig(configData = null) {
         // 4. Load SDM630
         const sdm = config.SDM630Modbusv2;
         if (sdm && sdm.ports) {
-            sdm.ports.forEach(port => {
+            const sortedSdm = [...sdm.ports].sort();
+            sortedSdm.forEach(port => {
                 renderDriverCard('SDM630Modbusv2', {
                     port: port,
                     poll_period: sdm["poll-period"] || sdm.poll_period || 1,
@@ -2256,7 +2337,8 @@ async function loadConfig(configData = null) {
         // 5. Load DTSU666
         const dtsu = config.DTSU666;
         if (dtsu && dtsu.ports) {
-            dtsu.ports.forEach(port => {
+            const sortedDtsu = [...dtsu.ports].sort();
+            sortedDtsu.forEach(port => {
                 renderDriverCard('DTSU666', {
                     port: port,
                     poll_period: dtsu["poll-period"] || dtsu.poll_period || 1,
@@ -2271,7 +2353,8 @@ async function loadConfig(configData = null) {
         // 6. Load MQTT Custom Power Meter
         const mqMeter = config.MQTTPowerMeter;
         if (mqMeter && mqMeter.meters) {
-            mqMeter.meters.forEach(meterName => {
+            const sortedMeters = [...mqMeter.meters].sort();
+            sortedMeters.forEach(meterName => {
                 const mDev = mqMeter[meterName] || mqMeter.meter_devices?.[meterName] || {};
                 renderDriverCard('MQTTPowerMeter', {
                     meter_name: meterName,
@@ -2291,7 +2374,8 @@ async function loadConfig(configData = null) {
         // 7. Load MQTT Custom Inverters
         const mqInverters = config.MQTTInverter;
         if (mqInverters && mqInverters.inverters) {
-            mqInverters.inverters.forEach(invName => {
+            const sortedMqInverters = [...mqInverters.inverters].sort();
+            sortedMqInverters.forEach(invName => {
                 const iDev = mqInverters[invName] || mqInverters.inverter_devices?.[invName] || {};
                 renderDriverCard('MQTTInverter', {
                     inverter_name: invName,
@@ -2337,10 +2421,24 @@ async function loadConfig(configData = null) {
 
             // Render inverter constraints list
             const listDiv = document.getElementById('inverters-constraints-list');
-            listDiv.innerHTML = '';
-            if (bat.inverter) {
-                Object.keys(bat.inverter).forEach(name => {
-                    const inv = bat.inverter[name];
+            if (listDiv) {
+                listDiv.innerHTML = '';
+                const definedInverters = getDefinedInverters(config);
+                definedInverters.sort(); // Sort alphabetically by inverter name
+                
+                const existingConstraints = bat.inverter || {};
+                definedInverters.forEach(name => {
+                    const inv = existingConstraints[name] || {
+                        phase: 1,
+                        "max-charge": 2000.0,
+                        "max-discharge": 2000.0,
+                        "battery-capacity": 0.0,
+                        "max-charge-pct": 100,
+                        "min-charge-pct": 10,
+                        "use-total-power": false,
+                        "control-grid-power": false,
+                        "no-pv": false
+                    };
                     renderInverterConstraintCard(name, inv);
                 });
             }
@@ -2350,7 +2448,8 @@ async function loadConfig(configData = null) {
         const periodsContainer = document.getElementById('periods-list-container');
         periodsContainer.innerHTML = '';
         if (bat && bat.period) {
-            Object.keys(bat.period).forEach(pName => {
+            const sortedPeriods = Object.keys(bat.period).sort();
+            sortedPeriods.forEach(pName => {
                 const per = bat.period[pName];
                 renderPeriodCard(pName, per);
             });
@@ -2370,7 +2469,9 @@ async function loadConfig(configData = null) {
                 const tariffList = document.getElementById('tariff-tou-periods-list');
                 tariffList.innerHTML = '';
                 if (tariff.periods) {
-                    tariff.periods.forEach(p => {
+                    const sortedTariffPeriods = [...tariff.periods];
+                    sortedTariffPeriods.sort((a, b) => a.name.localeCompare(b.name));
+                    sortedTariffPeriods.forEach(p => {
                         renderTariffTOUPeriodCard(p.name, {
                             start: p.start,
                             end: p.end,
@@ -2440,22 +2541,39 @@ async function loadConfig(configData = null) {
         if (loc) {
             document.getElementById('location-lat').value = loc.latitude !== undefined && loc.latitude !== null ? loc.latitude : '';
             document.getElementById('location-lon').value = loc.longitude !== undefined && loc.longitude !== null ? loc.longitude : '';
-            
-            const arraysContainer = document.getElementById('location-arrays-list');
-            if (arraysContainer) {
-                arraysContainer.innerHTML = '';
-                if (loc.arrays) {
-                    loc.arrays.forEach(arr => {
-                        renderPvArrayCard(arr);
-                    });
-                }
-            }
         } else {
             document.getElementById('location-lat').value = '';
             document.getElementById('location-lon').value = '';
-            const arraysContainer = document.getElementById('location-arrays-list');
-            if (arraysContainer) {
-                arraysContainer.innerHTML = '';
+        }
+        
+        const arraysContainer = document.getElementById('location-arrays-list');
+        if (arraysContainer) {
+            arraysContainer.innerHTML = '';
+            const definedInverters = getDefinedInverters(config);
+            definedInverters.sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+            if (definedInverters.length === 0) {
+                arraysContainer.innerHTML = '<div class="text-muted" style="padding: 20px; text-align: center;">No inverters configured. Please add an inverter under the Battery Control or Hardware Drivers tabs first.</div>';
+            } else {
+                const existingArrays = {};
+                if (loc && loc.arrays) {
+                    loc.arrays.forEach(arr => {
+                        existingArrays[arr.name] = arr;
+                    });
+                }
+                
+                definedInverters.forEach(inv => {
+                    const pv1Name = `${inv} PV1`;
+                    const pv2Name = `${inv} PV2`;
+                    
+                    if (shouldShowPvArray(config, inv, 'PV1')) {
+                        const pv1Data = existingArrays[pv1Name] || { name: pv1Name, "capacity-w": 3000.0, tilt: 20.0, azimuth: 0.0 };
+                        renderPvArrayCard(pv1Data);
+                    }
+                    if (shouldShowPvArray(config, inv, 'PV2')) {
+                        const pv2Data = existingArrays[pv2Name] || { name: pv2Name, "capacity-w": 3000.0, tilt: 20.0, azimuth: 0.0 };
+                        renderPvArrayCard(pv2Data);
+                    }
+                });
             }
         }
 
@@ -2523,6 +2641,10 @@ function renderInverterConstraintCard(name, inv) {
     const listDiv = document.getElementById('inverters-constraints-list');
     const card = document.createElement('div');
     card.className = 'list-item-card inverter-constraint-card';
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.gap = '15px';
+    card.style.marginBottom = '20px';
     
     let calcCapText = "N/A";
     if (typeof lastStatusData !== 'undefined' && lastStatusData && lastStatusData.inverters && lastStatusData.inverters[name]) {
@@ -2533,12 +2655,12 @@ function renderInverterConstraintCard(name, inv) {
     }
 
     card.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px;">
+            <span class="card-subtitle" style="font-weight: bold; font-size: 1.1em; color: var(--accent);">Inverter: ${name}</span>
+            <input type="hidden" class="inv-name" value="${name}">
+        </div>
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
-                <div class="form-group">
-                    <label>Inverter Name</label>
-                    <input type="text" class="inv-name" value="${name}">
-                </div>
                 <div class="form-group">
                     <label>Wiring Phase</label>
                     <input type="number" class="inv-phase" value="${inv.phase || 1}">
@@ -2579,24 +2701,14 @@ function renderInverterConstraintCard(name, inv) {
                     <input type="checkbox" class="inv-grid-control" ${inv["control-grid-power"] ? 'checked' : ''}>
                     <label>Grid Power Control mode</label>
                 </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" class="inv-no-pv" ${inv["no-pv"] || inv.no_pv ? 'checked' : ''}>
+                    <label>Battery only (No PV)</label>
+                </div>
             </div>
         </div>
-        <button class="sub-btn danger" style="margin-left: 20px;" onclick="this.parentElement.remove()">Remove</button>
     `;
     listDiv.appendChild(card);
-}
-
-function addInverterConstraint() {
-    renderInverterConstraintCard('new-inverter', {
-        phase: 1,
-        "max-charge": 2000,
-        "max-discharge": 2000,
-        "use-total-power": false,
-        "control-grid-power": false,
-        "battery-capacity": 0.0,
-        "max-charge-pct": 100,
-        "min-charge-pct": 10
-    });
 }
 
 function renderPeriodCard(pName, per) {
@@ -2715,18 +2827,55 @@ function addTariffTOUPeriod() {
 function renderPvArrayCard(array) {
     const container = document.getElementById('location-arrays-list');
     if (!container) return;
+    
+    const series = parseInt(array["series-modules"] || array.series_modules || 0);
+    const parallel = parseInt(array["parallel-strings"] || array.parallel_strings || 0);
+    const qty = series * parallel;
+    const vmp = parseFloat(array.vmp || 0.0);
+    const imp = parseFloat(array.imp || 0.0);
+    
+    const computedCapacity = qty * vmp * imp;
+    const initialCapacity = computedCapacity > 0 ? Math.round(computedCapacity) : (array["capacity-w"] !== undefined ? array["capacity-w"] : (array.capacity_w !== undefined ? array.capacity_w : 3000.0));
+    const initialQuantity = qty > 0 ? qty : (array.quantity || '');
+
+    const parts = array.name.split(' ');
+    let copyButtonHtml = '';
+    if (parts.length >= 2 && (parts[1] === 'PV1' || parts[1] === 'PV2')) {
+        const otherStr = parts[1] === 'PV1' ? 'PV2' : 'PV1';
+        const hasOther = typeof currentConfig !== 'undefined' && currentConfig && shouldShowPvArray(currentConfig, parts[0], otherStr);
+        if (hasOther) {
+            copyButtonHtml = `<button class="sub-btn" onclick="copyPvArraySpecs(this)">Copy from ${otherStr}</button>`;
+        }
+    }
+
     const card = document.createElement('div');
     card.className = 'list-item-card pv-array-card';
+    card.style.display = 'flex';
+    card.style.flexDirection = 'column';
+    card.style.gap = '15px';
+    card.style.marginBottom = '20px';
+
     card.innerHTML = `
-        <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
-            <div class="form-row">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.1); padding-bottom: 10px; margin-bottom: 10px;">
+            <span class="card-subtitle" style="font-weight: bold; font-size: 1.1em; color: var(--accent);">${array.name}</span>
+            <div style="display: flex; gap: 10px;">
+                <button class="sub-btn" onclick="inferOrientation('${array.name}', this)">Infer Tilt & Azimuth</button>
+                ${copyButtonHtml}
+                <button class="sub-btn danger" onclick="clearPvArraySpecs(this)">Clear Specs</button>
+            </div>
+        </div>
+        
+        <!-- SUB-PANEL 1: Geometry & Output -->
+        <div class="pv-sub-panel" style="background: rgba(255, 255, 255, 0.015); border: 1px solid rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 15px; margin-bottom: 5px;">
+            <div style="font-weight: 600; font-size: 0.95em; color: var(--accent); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">1. Array Geometry & Output</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div class="form-group">
                     <label>Array Name</label>
-                    <input type="text" class="array-name" value="${array.name || ''}" placeholder="e.g. North Roof">
+                    <input type="text" class="array-name" value="${array.name}" readonly style="background: rgba(255,255,255,0.05); color: var(--text-muted);">
                 </div>
                 <div class="form-group">
                     <label>Capacity (W)</label>
-                    <input type="number" step="1" class="array-capacity" value="${array["capacity-w"] !== undefined ? array["capacity-w"] : (array.capacity_w !== undefined ? array.capacity_w : 3000.0)}">
+                    <input type="number" step="1" class="array-capacity" value="${initialCapacity}" readonly style="background: rgba(255,255,255,0.05); color: var(--text-muted);">
                 </div>
                 <div class="form-group">
                     <label>Tilt (°)</label>
@@ -2738,18 +2887,264 @@ function renderPvArrayCard(array) {
                 </div>
             </div>
         </div>
-        <button class="sub-btn danger" style="margin-left: 20px;" onclick="this.parentElement.remove()">Remove</button>
+ 
+        <!-- SUB-PANEL 2: Panel Details -->
+        <div class="pv-sub-panel" style="background: rgba(255, 255, 255, 0.015); border: 1px solid rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 15px; margin-bottom: 5px;">
+            <div style="font-weight: 600; font-size: 0.95em; color: var(--accent); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">2. Panel & Installation Details</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div class="form-group">
+                    <label>Panel Brand</label>
+                    <input type="text" class="array-brand" value="${array.brand || ''}" placeholder="e.g. JinkoSolar">
+                </div>
+                <div class="form-group">
+                    <label>Panel Model</label>
+                    <input type="text" class="array-model" value="${array.model || ''}" placeholder="e.g. Tiger Neo">
+                </div>
+                <div class="form-group">
+                    <label>Installation Date</label>
+                    <input type="date" class="array-install-date" value="${array["installation-date"] || array.installation_date || ''}">
+                </div>
+                <div class="form-group">
+                    <label>Panel Quantity</label>
+                    <input type="number" class="array-quantity" value="${initialQuantity}" placeholder="Calculated" readonly style="background: rgba(255,255,255,0.05); color: var(--text-muted);">
+                </div>
+            </div>
+        </div>
+ 
+        <!-- SUB-PANEL 3: Electrical Specs -->
+        <div class="pv-sub-panel" style="background: rgba(255, 255, 255, 0.015); border: 1px solid rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 15px;">
+            <div style="font-weight: 600; font-size: 0.95em; color: var(--accent); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">3. Electrical Specifications & Temperature Coefficients</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
+                <div class="form-group">
+                    <label>Series Modules (Qty)</label>
+                    <input type="number" class="array-series" value="${array["series-modules"] || array.series_modules || ''}" placeholder="e.g. 10" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
+                </div>
+                <div class="form-group">
+                    <label>Parallel Strings (Qty)</label>
+                    <input type="number" class="array-parallel" value="${array["parallel-strings"] || array.parallel_strings || ''}" placeholder="e.g. 1" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
+                </div>
+                <div class="form-group">
+                    <label>Open Circuit Voltage Voc (V)</label>
+                    <input type="number" step="0.01" class="array-voc" value="${array.voc || ''}" placeholder="e.g. 39.38">
+                </div>
+                <div class="form-group">
+                    <label>Short Circuit Current Isc (A)</label>
+                    <input type="number" step="0.01" class="array-isc" value="${array.isc || ''}" placeholder="e.g. 13.86">
+                </div>
+                <div class="form-group">
+                    <label>Max Power Voltage Vmp (V)</label>
+                    <input type="number" step="0.01" class="array-vmp" value="${array.vmp || ''}" placeholder="e.g. 32.81" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
+                </div>
+                <div class="form-group">
+                    <label>Max Power Current Imp (A)</label>
+                    <input type="number" step="0.01" class="array-imp" value="${array.imp || ''}" placeholder="e.g. 13.41" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
+                </div>
+                <div class="form-group">
+                    <label>Temp Coeff Voc (%/°C)</label>
+                    <input type="number" step="0.001" class="array-coeff-voc" value="${array["temp-coeff-voc"] || array.temp_coeff_voc || ''}" placeholder="e.g. -0.25">
+                </div>
+                <div class="form-group">
+                    <label>Temp Coeff Isc (%/°C)</label>
+                    <input type="number" step="0.001" class="array-coeff-isc" value="${array["temp-coeff-isc"] || array.temp_coeff_isc || ''}" placeholder="e.g. 0.045">
+                </div>
+                <div class="form-group">
+                    <label>Temp Coeff Pmax (%/°C)</label>
+                    <input type="number" step="0.001" class="array-coeff-pmax" value="${array["temp-coeff-pmax"] || array.temp_coeff_pmax || ''}" placeholder="e.g. -0.30">
+                </div>
+                <div class="form-group" style="visibility: hidden; pointer-events: none;">
+                    <label>Spacer</label>
+                    <input type="text">
+                </div>
+            </div>
+        </div>
     `;
     container.appendChild(card);
 }
 
-function addLocationPvArray() {
-    renderPvArrayCard({
-        name: 'PV Array ' + (document.querySelectorAll('.pv-array-card').length + 1),
-        capacity_w: 3000.0,
-        tilt: 20.0,
-        azimuth: 0.0
+function shouldShowPvArray(config, inverterName, pvString) {
+    if (config["Solax-BatteryControl"] && config["Solax-BatteryControl"].inverter) {
+        const inv = config["Solax-BatteryControl"].inverter[inverterName];
+        if (inv && (inv["no-pv"] || inv.no_pv)) {
+            return false;
+        }
+    }
+    
+    // MQTTInverter drivers: check if PV string has no topic configured
+    if (config.MQTTInverter && config.MQTTInverter.inverters_config && config.MQTTInverter.inverters_config[inverterName]) {
+        const inv = config.MQTTInverter.inverters_config[inverterName];
+        if (pvString === 'PV1' && !inv.topic_pv1_power && !inv["topic-pv1-power"]) {
+            return false;
+        }
+        if (pvString === 'PV2' && !inv.topic_pv2_power && !inv["topic-pv2-power"]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function getDefinedInverters(config) {
+    const list = new Set();
+    if (config["Solax-BatteryControl"] && config["Solax-BatteryControl"].inverter) {
+        Object.keys(config["Solax-BatteryControl"].inverter).forEach(k => list.add(k));
+    }
+    if (config.MQTTInverter && config.MQTTInverter.inverters) {
+        config.MQTTInverter.inverters.forEach(k => list.add(k));
+    }
+    if (config["Solax-Modbus"] && config["Solax-Modbus"].inverters) {
+        config["Solax-Modbus"].inverters.forEach(k => list.add(k));
+    }
+    if (config["Solax-XHybrid-Modbus"] && config["Solax-XHybrid-Modbus"].inverters) {
+        config["Solax-XHybrid-Modbus"].inverters.forEach(k => list.add(k));
+    }
+    if (config["Solax-Wifi"] && config["Solax-Wifi"].inverters) {
+        config["Solax-Wifi"].inverters.forEach(k => list.add(k));
+    }
+    return Array.from(list).sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+}
+
+function copyPvArraySpecs(btn) {
+    const card = btn.closest('.pv-array-card');
+    const currentName = card.querySelector('.array-name').value.trim();
+    let otherName = '';
+    if (currentName.endsWith(' PV1')) {
+        otherName = currentName.replace(' PV1', ' PV2');
+    } else if (currentName.endsWith(' PV2')) {
+        otherName = currentName.replace(' PV2', ' PV1');
+    }
+    
+    if (!otherName) return;
+    
+    const cards = document.querySelectorAll('.pv-array-card');
+    let otherCard = null;
+    for (const c of cards) {
+        if (c.querySelector('.array-name').value.trim() === otherName) {
+            otherCard = c;
+            break;
+        }
+    }
+    
+    if (!otherCard) {
+        alert(`Could not find the other channel card (${otherName}) to copy from.`);
+        return;
+    }
+    
+    const fields = [
+        '.array-tilt',
+        '.array-azimuth',
+        '.array-brand',
+        '.array-model',
+        '.array-install-date',
+        '.array-series',
+        '.array-parallel',
+        '.array-voc',
+        '.array-isc',
+        '.array-vmp',
+        '.array-imp',
+        '.array-coeff-voc',
+        '.array-coeff-isc',
+        '.array-coeff-pmax'
+    ];
+    
+    fields.forEach(f => {
+        const src = otherCard.querySelector(f);
+        const dst = card.querySelector(f);
+        if (src && dst) {
+            dst.value = src.value;
+        }
     });
+    
+    updateCalculatedCapacityFromCard(card);
+}
+
+function clearPvArraySpecs(btn) {
+    const card = btn.closest('.pv-array-card');
+    card.querySelector('.array-brand').value = '';
+    card.querySelector('.array-model').value = '';
+    card.querySelector('.array-install-date').value = '';
+    card.querySelector('.array-quantity').value = '';
+    card.querySelector('.array-series').value = '';
+    card.querySelector('.array-parallel').value = '';
+    card.querySelector('.array-voc').value = '';
+    card.querySelector('.array-isc').value = '';
+    card.querySelector('.array-vmp').value = '';
+    card.querySelector('.array-imp').value = '';
+    card.querySelector('.array-coeff-voc').value = '';
+    card.querySelector('.array-coeff-isc').value = '';
+    card.querySelector('.array-coeff-pmax').value = '';
+    card.querySelector('.array-capacity').value = '3000';
+}
+
+function updateCalculatedCapacityFromCard(card) {
+    const series = parseInt(card.querySelector('.array-series').value) || 0;
+    const parallel = parseInt(card.querySelector('.array-parallel').value) || 0;
+    const qty = series * parallel;
+    
+    const qtyInput = card.querySelector('.array-quantity');
+    if (qtyInput) {
+        qtyInput.value = qty > 0 ? qty : '';
+    }
+    
+    const vmp = parseFloat(card.querySelector('.array-vmp').value) || 0.0;
+    const imp = parseFloat(card.querySelector('.array-imp').value) || 0.0;
+    const capInput = card.querySelector('.array-capacity');
+    if (capInput) {
+        if (qty > 0 && vmp > 0 && imp > 0) {
+            capInput.value = Math.round(qty * vmp * imp);
+        } else {
+            capInput.value = '';
+        }
+    }
+}
+
+
+async function inferOrientation(name, btn) {
+    const originalText = btn.innerText;
+    btn.innerText = "Calculating...";
+    btn.disabled = true;
+    const parts = name.split(' ');
+    if (parts.length < 2) {
+        alert("Invalid array name format.");
+        btn.innerText = originalText;
+        btn.disabled = false;
+        return;
+    }
+    const inverter = parts[0];
+    const pvString = parts[1];
+    const lat = parseFloat(document.getElementById('location-lat').value);
+    const lon = parseFloat(document.getElementById('location-lon').value);
+    if (isNaN(lat) || isNaN(lon)) {
+        alert("Please configure Latitude and Longitude coordinates before running orientation inference.");
+        btn.innerText = originalText;
+        btn.disabled = false;
+        return;
+    }
+    try {
+        const resp = await fetch('/api/location/infer-orientation', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                inverter: inverter,
+                string: pvString,
+                latitude: lat,
+                longitude: lon
+            })
+        });
+        if (resp.ok) {
+            const result = await resp.json();
+            const card = btn.closest('.pv-array-card');
+            card.querySelector('.array-tilt').value = result.tilt;
+            card.querySelector('.array-azimuth').value = result.azimuth;
+            alert(`Inference completed!\nEstimated Tilt: ${result.tilt}°\nEstimated Azimuth: ${result.azimuth}°\nCorrelation score: ${result.correlation.toFixed(3)}`);
+        } else {
+            const err = await resp.text();
+            alert(`Inference failed: ${err}`);
+        }
+    } catch (e) {
+        alert(`Network error running inference: ${e}`);
+    } finally {
+        btn.innerText = originalText;
+        btn.disabled = false;
+    }
 }
 
 // Parsing comma lists
@@ -2996,7 +3391,8 @@ async function saveConfiguration() {
                     "max-charge-pct": parseInt(card.querySelector('.inv-max-charge-pct').value) || 100,
                     "min-charge-pct": parseInt(card.querySelector('.inv-min-charge-pct').value) || 10,
                     "use-total-power": card.querySelector('.inv-use-total').checked,
-                    "control-grid-power": card.querySelector('.inv-grid-control').checked
+                    "control-grid-power": card.querySelector('.inv-grid-control').checked,
+                    "no-pv": card.querySelector('.inv-no-pv').checked
                 };
             }
         });
@@ -3112,11 +3508,40 @@ async function saveConfiguration() {
             latitude: parseFloat(latVal) || 0.0,
             longitude: parseFloat(lonVal) || 0.0,
             arrays: Array.from(document.querySelectorAll('.pv-array-card')).map(card => {
+                const getFloat = (cls) => {
+                    const el = card.querySelector(cls);
+                    if (!el) return null;
+                    const val = parseFloat(el.value);
+                    return isNaN(val) ? null : val;
+                };
+                const getInt = (cls) => {
+                    const el = card.querySelector(cls);
+                    if (!el) return null;
+                    const val = parseInt(el.value);
+                    return isNaN(val) ? null : val;
+                };
+                const getString = (cls) => {
+                    const el = card.querySelector(cls);
+                    if (!el) return null;
+                    const val = el.value.trim();
+                    return val === "" ? null : val;
+                };
                 return {
                     name: card.querySelector('.array-name').value.trim(),
-                    "capacity-w": parseFloat(card.querySelector('.array-capacity').value) || 0.0,
                     tilt: parseFloat(card.querySelector('.array-tilt').value) || 0.0,
-                    azimuth: parseFloat(card.querySelector('.array-azimuth').value) || 0.0
+                    azimuth: parseFloat(card.querySelector('.array-azimuth').value) || 0.0,
+                    brand: getString('.array-brand'),
+                    model: getString('.array-model'),
+                    "installation-date": getString('.array-install-date'),
+                    "series-modules": getInt('.array-series'),
+                    "parallel-strings": getInt('.array-parallel'),
+                    voc: getFloat('.array-voc'),
+                    isc: getFloat('.array-isc'),
+                    vmp: getFloat('.array-vmp'),
+                    imp: getFloat('.array-imp'),
+                    "temp-coeff-voc": getFloat('.array-coeff-voc'),
+                    "temp-coeff-isc": getFloat('.array-coeff-isc'),
+                    "temp-coeff-pmax": getFloat('.array-coeff-pmax')
                 };
             }).filter(a => a.name)
         };

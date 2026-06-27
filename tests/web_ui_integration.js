@@ -485,7 +485,7 @@ async function main() {
         const modbusPollInput = page.locator('.driver-card[data-driver-type="Solax-Modbus"] .driver-modbus-poll').first();
         await modbusPollInput.fill('5');
 
-        // 3. Battery Control (General options & Add Inverter constraint)
+        // 3. Battery Control (General options & Inverter constraints)
         console.log("Filling Battery Control tab...");
         await page.click('.nav-btn:has-text("Battery Control")');
         await page.check('#battery-enable');
@@ -495,15 +495,13 @@ async function main() {
         await page.selectOption('#battery-init-mode', 'MpcArbitrage');
         await page.check('#battery-linked');
         
-        // Add inverter constraint
-        await page.click('button:has-text("Add Inverter")');
-        await page.waitForSelector('.inverter-constraint-card');
-        await page.fill('.inverter-constraint-card .inv-name', 'solax-inverter-1');
-        await page.fill('.inverter-constraint-card .inv-phase', '1');
-        await page.fill('.inverter-constraint-card .inv-max-charge', '3000');
-        await page.fill('.inverter-constraint-card .inv-max-discharge', '3000');
-        await page.check('.inverter-constraint-card .inv-use-total');
-        await page.check('.inverter-constraint-card .inv-grid-control');
+        // Configure solax-modbus inverter constraint
+        const invCard = page.locator('.inverter-constraint-card:has(.inv-name[value="solax-modbus"])');
+        await invCard.locator('.inv-phase').fill('1');
+        await invCard.locator('.inv-max-charge').fill('3000');
+        await invCard.locator('.inv-max-discharge').fill('3000');
+        await invCard.locator('.inv-use-total').check();
+        await invCard.locator('.inv-grid-control').check();
 
         // 4. TOU Periods (Add a battery control period)
         console.log("Filling TOU Periods tab...");
@@ -558,12 +556,15 @@ async function main() {
         await page.click('.nav-btn:has-text("Location")');
         await page.fill('#location-lat', '-33.8688');
         await page.fill('#location-lon', '151.2093');
-        await page.click('button:has-text("Add PV Array")');
-        await page.waitForSelector('.pv-array-card');
-        await page.fill('.pv-array-card .array-name', 'East Roof');
-        await page.fill('.pv-array-card .array-capacity', '4500');
-        await page.fill('.pv-array-card .array-tilt', '22.5');
-        await page.fill('.pv-array-card .array-azimuth', '-90');
+        
+        // Configure solax-modbus PV1 array
+        const arrayCard = page.locator('.pv-array-card:has(.array-name[value="solax-modbus PV1"])');
+        await arrayCard.locator('.array-series').fill('10');
+        await arrayCard.locator('.array-parallel').fill('1');
+        await arrayCard.locator('.array-vmp').fill('37.5');
+        await arrayCard.locator('.array-imp').fill('12.0');
+        await arrayCard.locator('.array-tilt').fill('22.5');
+        await arrayCard.locator('.array-azimuth').fill('-90');
 
         // Save and Apply Changes
         console.log("Applying complete valid configuration...");
@@ -615,7 +616,7 @@ async function main() {
         let inverterFound = false;
         for (const card of cards) {
             const name = await card.$eval('.inv-name', el => el.value);
-            if (name === 'solax-inverter-1') {
+            if (name === 'solax-modbus') {
                 inverterFound = true;
                 const phase = await card.$eval('.inv-phase', el => el.value);
                 const maxCharge = await card.$eval('.inv-max-charge', el => el.value);
@@ -624,13 +625,13 @@ async function main() {
                 const gridControl = await card.$eval('.inv-grid-control', el => el.checked);
 
                 if (phase !== '1' || maxCharge !== '3000' || maxDischarge !== '3000' || useTotal !== true || gridControl !== true) {
-                    throw new Error(`Inverter constraint values incorrect for solax-inverter-1: phase=${phase}, charge=${maxCharge}, discharge=${maxDischarge}, useTotal=${useTotal}, gridControl=${gridControl}`);
+                    throw new Error(`Inverter constraint values incorrect for solax-modbus: phase=${phase}, charge=${maxCharge}, discharge=${maxDischarge}, useTotal=${useTotal}, gridControl=${gridControl}`);
                 }
                 break;
             }
         }
         if (!inverterFound) {
-            throw new Error("Could not find saved inverter constraint 'solax-inverter-1'");
+            throw new Error("Could not find saved inverter constraint 'solax-modbus'");
         }
 
         // Verify TOU Period Card
@@ -702,19 +703,19 @@ async function main() {
         let arrayFound = false;
         for (const card of arrayCards) {
             const name = await card.$eval('.array-name', el => el.value);
-            if (name === 'East Roof') {
+            if (name === 'solax-modbus PV1') {
                 arrayFound = true;
                 const capacity = await card.$eval('.array-capacity', el => el.value);
                 const tilt = await card.$eval('.array-tilt', el => el.value);
                 const azimuth = await card.$eval('.array-azimuth', el => el.value);
                 if (capacity !== '4500' || tilt !== '22.5' || azimuth !== '-90') {
-                    throw new Error(`PV Array values incorrect for East Roof: capacity=${capacity}, tilt=${tilt}, azimuth=${azimuth}`);
+                    throw new Error(`PV Array values incorrect for solax-modbus PV1: capacity=${capacity}, tilt=${tilt}, azimuth=${azimuth}`);
                 }
                 break;
             }
         }
         if (!arrayFound) {
-            throw new Error("Could not find saved PV Array 'East Roof'");
+            throw new Error("Could not find saved PV Array 'solax-modbus PV1'");
         }
 
         console.log("Test 8 Passed successfully!");

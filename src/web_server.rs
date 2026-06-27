@@ -18,6 +18,7 @@ pub struct InverterStatus {
     pub run_mode: u32,
     pub last_updated: Option<u64>,
     pub calculated_battery_capacity: Option<f64>,
+    pub requested_power: Option<i32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)]
@@ -39,6 +40,9 @@ pub struct SystemStatus {
     pub import_price: Option<f64>,
     pub export_price: Option<f64>,
     pub price_thresholds: Option<PriceThresholds>,
+    pub usage: Option<f64>,
+    pub power_budget: Option<f64>,
+    pub power_budget_with_charging: Option<f64>,
     pub version: String,
 }
 
@@ -54,6 +58,9 @@ impl Default for SystemStatus {
             import_price: None,
             export_price: None,
             price_thresholds: None,
+            usage: None,
+            power_budget: None,
+            power_budget_with_charging: None,
             version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
@@ -83,6 +90,7 @@ pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String
     let db_path_sim = db_path.clone();
     let db_path_train = db_path.clone();
     let db_path_apply = db_path.clone();
+    let db_path_infer = db_path.clone();
     let reload_tx_apply = reload_tx.clone();
     let state = Arc::new(reload_tx);
 
@@ -176,6 +184,15 @@ pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String
             get(|| async {
                 let lock = get_system_status().lock().unwrap();
                 Json(lock.clone())
+            }),
+        )
+        .route(
+            "/api/location/infer-orientation",
+            post({
+                let db_path_clone = db_path_infer.clone();
+                move |body: Json<crate::orientation_inference::InferRequest>| async move {
+                    crate::orientation_inference::handle_infer_orientation(db_path_clone, body).await
+                }
             }),
         )
         .route(
@@ -860,3 +877,5 @@ async fn handle_mqtt_test(
         ha_discovery,
     })
 }
+
+

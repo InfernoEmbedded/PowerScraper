@@ -100,6 +100,18 @@
                     <div class="stat-val" id="stat-total-solar" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 W</div>
                 </div>
                 <div class="glass-card">
+                    <div class="card-title">Household Usage</div>
+                    <div class="stat-val" id="stat-usage">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Power Budget</div>
+                    <div class="stat-val" id="stat-power-budget" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 W</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Power Budget with charging</div>
+                    <div class="stat-val" id="stat-power-budget-with-charging" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">0 W</div>
+                </div>
+                <div class="glass-card">
                     <div class="card-title">Import Price</div>
                     <div class="stat-val" id="stat-import-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
                 </div>
@@ -272,10 +284,7 @@
                     </div>
 
                     <div style="margin-top: 30px;">
-                        <div class="card-title">
-                            Inverter Constraint Matrix
-                            <button class="sub-btn" onclick="addInverterConstraint()">Add Inverter</button>
-                        </div>
+                        <div class="card-title">Inverter Constraint Matrix</div>
                         <div id="inverters-constraints-list">
                             <!-- Dynamic inverter constraint cards -->
                         </div>
@@ -511,12 +520,8 @@
                     </div>
                 </div>
             </div>
-
             <div class="glass-card">
-                <div class="card-title" style="display: flex; justify-content: space-between; align-items: center;">
-                    <span>PV Solar Arrays Orientation</span>
-                    <button class="sub-btn" onclick="addLocationPvArray()">Add PV Array</button>
-                </div>
+                <div class="card-title">PV Solar Arrays Orientation</div>
                 <p class="text-muted" style="margin-bottom: 20px;">
                     Define the capacity and physical alignment of each solar panel string (array) to enable precise, weather-adjusted solar yield modeling.
                 </p>

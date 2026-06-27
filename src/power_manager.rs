@@ -80,13 +80,13 @@ pub fn get_timezone_offset(tz_str: Option<&str>) -> chrono::FixedOffset {
 }
 
 #[derive(Debug, Clone, Default)]
-struct InverterState {
-    battery_capacity: u8,
-    battery_power: f64,
-    pv1_power: f64,
-    pv2_power: f64,
-    measured_power: f64,
-    discharge_power: f64,
+pub struct InverterState {
+    pub battery_capacity: u8,
+    pub battery_power: f64,
+    pub pv1_power: f64,
+    pub pv2_power: f64,
+    pub measured_power: f64,
+    pub discharge_power: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -996,80 +996,17 @@ impl PowerManager {
                 }
             };
 
-            let allocations = global_group.apportion_power(target_power);
-            
-            // Post-process constraints and set commands
-            for (name, mut p) in allocations {
-                if let Some(inv_cfg) = self.config.inverter.get(&name) {
-                    let mut state = self.inverters.get(&name).cloned().unwrap_or_default();
-                    let soc = state.battery_capacity;
-                    
-                    // Apply individual clamps & constraints
-                    if p > inv_cfg.max_discharge {
-                        p = inv_cfg.max_discharge;
-                    } else if p < -inv_cfg.max_charge {
-                        p = -inv_cfg.max_charge;
-                    }
-
-                    // BMS Throttling
-                    let max_limit = inv_cfg.max_charge_pct.unwrap_or(95);
-                    if soc > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
-                        p = 0.0;
-                    }
-
-                    // Grace Period
-                    let grace = period.grace && inv_cfg.grace_capacity > 0 && inv_cfg.grace_charge_power > 0.0;
-                    if grace && p < 0.0 && soc > inv_cfg.grace_capacity {
-                        let total_pv = state.pv1_power + state.pv2_power;
-                        if total_pv < inv_cfg.grace_power_threshold {
-                            p = 0.0;
-                        } else if p < -inv_cfg.grace_charge_power {
-                            p = -inv_cfg.grace_charge_power;
-                        }
-                    }
-
-                    // Update assist_needed
-                    let mut assist = *self.assist_needed.get(&name).unwrap_or(&false);
-                    let min_limit = inv_cfg.min_charge_pct.unwrap_or(period.min_charge);
-                    if state.battery_capacity <= min_limit && target_power > 0.0 {
-                        assist = true;
-                    } else if state.battery_capacity <= min_limit && period.prefer_battery {
-                        assist = true;
-                    } else {
-                        let num_inverters = self.config_inverters_count as f64;
-                        let lower_limit = inv_cfg.single_phase_discharge_limit / num_inverters;
-                        let upper_limit = -inv_cfg.single_phase_charge_limit / num_inverters;
-
-                        if assist {
-                            if (p >= 0.0 && p < lower_limit) || (p < 0.0 && p > upper_limit) {
-                                assist = false;
-                            }
-                        } else {
-                            if p > inv_cfg.single_phase_discharge_limit || p < -inv_cfg.single_phase_charge_limit {
-                                assist = true;
-                            }
-                        }
-                    }
-
-                    if state.battery_capacity > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
-                        assist = true;
-                    }
-                    if grace && p < 0.0 && state.battery_capacity > inv_cfg.grace_capacity {
-                        let total_pv = state.pv1_power + state.pv2_power;
-                        if total_pv < inv_cfg.grace_power_threshold {
-                            assist = true;
-                        }
-                    }
-                    self.assist_needed.insert(name.clone(), assist);
-
-                    // Save the calculated discharge_power back into the inverter state!
-                    state.discharge_power = p;
-                    self.inverters.insert(name.clone(), state);
-
-                    // Store command
-                    self.commanded_powers.insert(name.clone(), -p as i32);
-                }
-            }
+            let num_inverters = self.config_inverters_count as f64;
+            global_group.calculate_and_constrain(
+                target_power,
+                &self.config.inverter,
+                &mut self.inverters,
+                &mut self.assist_needed,
+                &mut self.commanded_powers,
+                self.mode,
+                &period,
+                num_inverters,
+            );
 
             let now = std::time::Instant::now();
             if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
@@ -1374,79 +1311,16 @@ impl PowerManager {
                     }
                 };
 
-                let allocations = phase_group.apportion_power(target_power);
-                
-                // Post-process constraints and set commands
-                for (name, mut p) in allocations {
-                    if let Some(inv_cfg) = self.config.inverter.get(&name) {
-                        let mut state = self.inverters.get(&name).cloned().unwrap_or_default();
-                        let soc = state.battery_capacity;
-                        
-                        // Apply individual clamps & constraints
-                        if p > inv_cfg.max_discharge {
-                            p = inv_cfg.max_discharge;
-                        } else if p < -inv_cfg.max_charge {
-                            p = -inv_cfg.max_charge;
-                        }
-
-                        // BMS Throttling
-                        let max_limit = inv_cfg.max_charge_pct.unwrap_or(95);
-                        if soc > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
-                            p = 0.0;
-                        }
-
-                        // Grace Period
-                        let grace = period.grace && inv_cfg.grace_capacity > 0 && inv_cfg.grace_charge_power > 0.0;
-                        if grace && p < 0.0 && soc > inv_cfg.grace_capacity {
-                            let total_pv = state.pv1_power + state.pv2_power;
-                            if total_pv < inv_cfg.grace_power_threshold {
-                                p = 0.0;
-                            } else if p < -inv_cfg.grace_charge_power {
-                                p = -inv_cfg.grace_charge_power;
-                            }
-                        }
-
-                        // Update assist_needed
-                        let mut assist = *self.assist_needed.get(&name).unwrap_or(&false);
-                        let min_limit = inv_cfg.min_charge_pct.unwrap_or(period.min_charge);
-                        if state.battery_capacity <= min_limit && target_power > 0.0 {
-                            assist = true;
-                        } else if state.battery_capacity <= min_limit && period.prefer_battery {
-                            assist = true;
-                        } else {
-                            let lower_limit = inv_cfg.single_phase_discharge_limit / phase_count;
-                            let upper_limit = -inv_cfg.single_phase_charge_limit / phase_count;
-
-                            if assist {
-                                if (p >= 0.0 && p < lower_limit) || (p < 0.0 && p > upper_limit) {
-                                    assist = false;
-                                }
-                            } else {
-                                if p > inv_cfg.single_phase_discharge_limit || p < -inv_cfg.single_phase_charge_limit {
-                                    assist = true;
-                                }
-                            }
-                        }
-
-                        if state.battery_capacity > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
-                            assist = true;
-                        }
-                        if grace && p < 0.0 && state.battery_capacity > inv_cfg.grace_capacity {
-                            let total_pv = state.pv1_power + state.pv2_power;
-                            if total_pv < inv_cfg.grace_power_threshold {
-                                assist = true;
-                            }
-                        }
-                        self.assist_needed.insert(name.clone(), assist);
-
-                        // Save the calculated discharge_power back into the inverter state!
-                        state.discharge_power = p;
-                        self.inverters.insert(name.clone(), state);
-
-                        // Store command
-                        self.commanded_powers.insert(name.clone(), -p as i32);
-                    }
-                }
+                phase_group.calculate_and_constrain(
+                    target_power,
+                    &self.config.inverter,
+                    &mut self.inverters,
+                    &mut self.assist_needed,
+                    &mut self.commanded_powers,
+                    self.mode,
+                    &period,
+                    phase_count,
+                );
             }
 
             let now = std::time::Instant::now();
@@ -1458,6 +1332,158 @@ impl PowerManager {
         self.commanded_powers.get(inverter_name).copied()
     }
 
+    pub async fn command_group(
+        &mut self,
+        device_name: &str,
+        mqtt_client: &rumqttc::AsyncClient,
+        base_topic: &str,
+    ) {
+        // Run control logic to update state/commands
+        self.evaluate_and_command(device_name);
+
+        let period_opt = self.get_period().cloned();
+        let min_charge = self.config.period.values()
+            .map(|p| p.min_charge)
+            .min()
+            .unwrap_or(10);
+        let default_period = BatteryControlPeriod {
+            start: "00:00:00".to_string(),
+            end: "23:59:59".to_string(),
+            min_charge,
+            grid_charge: false,
+            force_discharge: None,
+            grace: false,
+            prefer_battery: false,
+        };
+        let period = period_opt.unwrap_or(default_period);
+
+        if self.linked_batteries {
+            // Build global group
+            let mut batteries = Vec::new();
+            for (name, inv_cfg) in &self.config.inverter {
+                let state = self.inverters.get(name).cloned().unwrap_or_default();
+                let calc_cap = if let Ok(status) = crate::web_server::get_system_status().lock() {
+                    status.inverters.get(name).and_then(|i| i.calculated_battery_capacity)
+                } else {
+                    None
+                };
+                let cap_kwh = calc_cap.unwrap_or_else(|| inv_cfg.battery_capacity.unwrap_or(13.8));
+                let soc = state.battery_capacity as f64;
+                let min_pct = inv_cfg.min_charge_pct.unwrap_or(period.min_charge) as f64;
+                let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
+
+                let battery = crate::battery_group::Battery {
+                    name: name.clone(),
+                    capacity_wh: cap_kwh * 1000.0,
+                    current_soc_pct: soc,
+                    min_soc_pct: min_pct,
+                    max_soc_pct: max_pct,
+                    max_charge_power_w: inv_cfg.max_charge,
+                    max_discharge_power_w: inv_cfg.max_discharge,
+                };
+                batteries.push(battery);
+            }
+            let global_group = crate::battery_group::BatteryGroup::new(batteries);
+
+            // Re-calculate target power
+            let max_total_charge = self.max_total_charge_power;
+            let max_total_discharge = self.max_total_discharge_power;
+            let total_pv: f64 = self.inverters.values().map(|inv| inv.pv1_power + inv.pv2_power).sum();
+            let any_low_capacity = global_group.batteries.iter().any(|b| b.current_soc_pct < b.min_soc_pct);
+
+            let target_power = match self.mode {
+                PowerManagerMode::ChargeBatteries => -max_total_charge,
+                PowerManagerMode::MaximumFeedin => max_total_discharge,
+                PowerManagerMode::Auto => {
+                    if period.grid_charge && any_low_capacity {
+                        -max_total_charge
+                    } else if any_low_capacity && period.prefer_battery {
+                        (-total_pv).max(-max_total_charge)
+                    } else {
+                        self.total_discharge_power
+                    }
+                }
+                _ => self.total_discharge_power,
+            };
+
+            let num_inverters = self.config_inverters_count as f64;
+            global_group.command_inverters(
+                target_power,
+                mqtt_client,
+                base_topic,
+                &self.config.inverter,
+                &mut self.inverters,
+                &mut self.assist_needed,
+                &mut self.commanded_powers,
+                self.mode,
+                &period,
+                num_inverters,
+            ).await;
+        } else {
+            // Unlinked
+            if let Some(inv_cfg) = self.config.inverter.get(device_name) {
+                let phase = inv_cfg.phase;
+                let phase_inverters: Vec<String> = self.config.inverter.iter()
+                    .filter(|(_, cfg)| cfg.phase == phase)
+                    .map(|(name, _)| name.clone())
+                    .collect();
+
+                let mut phase_batteries = Vec::new();
+                for name in &phase_inverters {
+                    if let Some(cfg) = self.config.inverter.get(name) {
+                        let state = self.inverters.get(name).cloned().unwrap_or_default();
+                        let calc_cap = if let Ok(status) = crate::web_server::get_system_status().lock() {
+                            status.inverters.get(name).and_then(|i| i.calculated_battery_capacity)
+                        } else {
+                            None
+                        };
+                        let cap_kwh = calc_cap.unwrap_or_else(|| cfg.battery_capacity.unwrap_or(13.8));
+                        let soc = state.battery_capacity as f64;
+                        let min_pct = cfg.min_charge_pct.unwrap_or(period.min_charge) as f64;
+                        let max_pct = cfg.max_charge_pct.unwrap_or(95) as f64;
+
+                        let battery = crate::battery_group::Battery {
+                            name: name.clone(),
+                            capacity_wh: cap_kwh * 1000.0,
+                            current_soc_pct: soc,
+                            min_soc_pct: min_pct,
+                            max_soc_pct: max_pct,
+                            max_charge_power_w: cfg.max_charge,
+                            max_discharge_power_w: cfg.max_discharge,
+                        };
+                        phase_batteries.push(battery);
+                    }
+                }
+                let phase_group = crate::battery_group::BatteryGroup::new(phase_batteries);
+
+                // Re-calculate target power
+                let max_phase_charge = inv_cfg.max_charge;
+                let max_phase_discharge = inv_cfg.max_discharge;
+
+                let target_power = match self.mode {
+                    PowerManagerMode::ChargeBatteries => -max_phase_charge,
+                    PowerManagerMode::MaximumFeedin => max_phase_discharge,
+                    _ => self.phase_discharge_power[phase],
+                };
+
+                let phase_count = phase_inverters.len() as f64;
+                phase_group.command_inverters(
+                    target_power,
+                    mqtt_client,
+                    base_topic,
+                    &self.config.inverter,
+                    &mut self.inverters,
+                    &mut self.assist_needed,
+                    &mut self.commanded_powers,
+                    self.mode,
+                    &period,
+                    phase_count,
+                ).await;
+            }
+        }
+    }
+
+    #[allow(dead_code)]
     fn discharge_at(
         in_cfg: &BatteryControlInverter,
         period: &BatteryControlPeriod,
@@ -1545,6 +1571,21 @@ impl PowerManager {
         aggregates.insert("Total Consumption".to_string(), total_consumption);
         aggregates.insert("Total Charging".to_string(), total_charging);
         aggregates.insert("Total Discharging".to_string(), total_discharging);
+        aggregates.insert("Usage".to_string(), total_consumption);
+
+        // Power Budget Calculations
+        let power_budget = crate::power_budget::calculate_power_budget(total_solar_production, total_consumption);
+        aggregates.insert("Power Budget".to_string(), power_budget);
+
+        // Power Budget with Charging Calculations
+        let power_budget_with_charging = crate::power_budget::calculate_power_budget_with_charging(
+            &self.db_path,
+            self.config.timezone.as_deref(),
+            total_consumption,
+            &self.config.inverter,
+            &self.inverters,
+        );
+        aggregates.insert("Power Budget with charging".to_string(), power_budget_with_charging);
 
         aggregates
     }
@@ -2055,22 +2096,7 @@ pub async fn run_power_manager_task(
                                                 let inverter_names: Vec<String> =
                                                     pm_lock.config.inverter.keys().cloned().collect();
                                                 for inv_name in inverter_names {
-                                                    if let Some(command_power) =
-                                                        pm_lock.evaluate_and_command(&inv_name)
-                                                    {
-                                                        let cmd_topic = format!(
-                                                            "{}/{}/command/charge_battery",
-                                                            base_topic, inv_name
-                                                        );
-                                                        let _ = mqtt_client
-                                                            .publish(
-                                                                &cmd_topic,
-                                                                QoS::AtLeastOnce,
-                                                                false,
-                                                                command_power.to_string(),
-                                                            )
-                                                            .await;
-                                                    }
+                                                    pm_lock.command_group(&inv_name, &mqtt_client, &base_topic).await;
                                                 }
                                             }
                                         } else if metric == "command/grid_target" {
@@ -2113,22 +2139,7 @@ pub async fn run_power_manager_task(
                                                 let inverter_names: Vec<String> =
                                                     pm_lock.config.inverter.keys().cloned().collect();
                                                 for inv_name in inverter_names {
-                                                    if let Some(command_power) =
-                                                        pm_lock.evaluate_and_command(&inv_name)
-                                                    {
-                                                        let cmd_topic = format!(
-                                                            "{}/{}/command/charge_battery",
-                                                            base_topic, inv_name
-                                                        );
-                                                        let _ = mqtt_client
-                                                            .publish(
-                                                                &cmd_topic,
-                                                                QoS::AtLeastOnce,
-                                                                false,
-                                                                command_power.to_string(),
-                                                            )
-                                                            .await;
-                                                    }
+                                                    pm_lock.command_group(&inv_name, &mqtt_client, &base_topic).await;
                                                 }
                                             }
                                         }
@@ -2216,34 +2227,22 @@ pub async fn run_power_manager_task(
                                                     }
                                                 }
                                             }
-
                                             if updated {
                                                 pm_lock.inverters.insert(device_name.to_string(), state);
                                                 state_changed = true;
 
-                                                // Recalculate control and command
-                                                if let Some(command_power) =
-                                                    pm_lock.evaluate_and_command(device_name)
-                                                {
-                                                    let cmd_topic = format!(
-                                                        "{}/{}/command/charge_battery",
-                                                        base_topic, device_name
-                                                    );
-                                                    let payload_str = command_power.to_string();
-                                                    let _ = mqtt_client
-                                                        .publish(
-                                                            &cmd_topic,
-                                                            QoS::AtLeastOnce,
-                                                            false,
-                                                            payload_str,
-                                                        )
-                                                        .await;
-                                                }
+                                                // Recalculate control and command via BatteryGroup
+                                                pm_lock.command_group(device_name, &mqtt_client, &base_topic).await;
                                             }
                                         }
 
                                         if state_changed {
                                             let aggregates = pm_lock.calculate_aggregates();
+                                            if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                                status.usage = aggregates.get("Usage").copied();
+                                                status.power_budget = aggregates.get("Power Budget").copied();
+                                                status.power_budget_with_charging = aggregates.get("Power Budget with charging").copied();
+                                            }
                                             drop(pm_lock);
 
                                             for (metric_name, value) in aggregates {
@@ -2830,7 +2829,7 @@ pub async fn run_weather_fetcher_task(db_path: String, cancel_token: tokio_util:
                                     
                                     for array in &loc.arrays {
                                         let poa = calculate_poa_irradiance(dni, dhi, el, az, array.tilt, array.azimuth);
-                                        hourly_w += array.capacity_w * (poa / 1000.0) * 0.85;
+                                        hourly_w += array.capacity_w() * (poa / 1000.0) * 0.85;
                                     }
                                     
                                     predictions.push((utc_dt.timestamp(), hourly_w));
@@ -2979,6 +2978,7 @@ mod tests {
             battery_capacity: None,
             max_charge_pct: None,
             min_charge_pct: None,
+            no_pv: None,
         }
     }
 
@@ -4126,6 +4126,48 @@ mod tests {
         assert_eq!(agg_c.get("Total Discharging"), Some(&1500.0));
         assert_eq!(agg_c.get("Total Consumption"), Some(&2500.0)); // 0 + 1000 + 1500 = 2500
         assert_eq!(agg_c.get("Total Grid Power Used for Charging"), Some(&0.0));
+    }
+
+    #[test]
+    fn test_calculate_aggregates_scenarios_budget_and_usage() {
+        let mut periods = HashMap::new();
+        periods.insert(
+            "Always".to_string(),
+            mock_period("00:00:00", "23:59:59", 10, false, false),
+        );
+
+        let mut inverters = HashMap::new();
+        let mut inv_cfg = mock_inverter(1, 2000.0, 3000.0);
+        inv_cfg.max_discharge = 3000.0;
+        inv_cfg.max_charge = 3000.0;
+        inv_cfg.min_charge_pct = Some(15);
+        inv_cfg.battery_capacity = Some(10.0);
+        inverters.insert("solax1".to_string(), inv_cfg);
+
+        let config = SolaxBatteryControlConfig {
+            source: None,
+            linked_batteries: false,
+            timezone: None,
+            inverter: inverters,
+            period: periods,
+            ..Default::default()
+        };
+
+        let mut pm = PowerManager::new(config, "sensors".to_string());
+
+        let state = InverterState {
+            battery_capacity: 50,
+            pv1_power: 2000.0,
+            pv2_power: 1500.0,
+            battery_power: -1200.0, // charging
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state);
+        pm.total_power = -2000.0; // grid exporting
+
+        let agg = pm.calculate_aggregates();
+        assert_eq!(agg.get("Usage"), Some(&300.0));
+        assert_eq!(agg.get("Power Budget"), Some(&3200.0));
     }
 
     #[test]

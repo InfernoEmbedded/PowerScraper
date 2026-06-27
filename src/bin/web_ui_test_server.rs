@@ -18,6 +18,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         status.mqtt_connected = true;
         status.import_price = Some(28.5);
         status.export_price = Some(8.2);
+        status.usage = Some(4250.0);
+        status.power_budget = Some(6450.0);
+        status.power_budget_with_charging = Some(1500.0);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -32,6 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_mode: 2,
             last_updated: Some(now - 15),
             calculated_battery_capacity: Some(13.82),
+            requested_power: Some(-1000),
         });
         invs.insert("solax-xhybrid".to_string(), PowerScraper::web_server::InverterStatus {
             battery_capacity: 90,
@@ -40,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             run_mode: 2,
             last_updated: Some(now - 45),
             calculated_battery_capacity: Some(13.82),
+            requested_power: Some(500),
         });
         status.inverters = invs;
     }
