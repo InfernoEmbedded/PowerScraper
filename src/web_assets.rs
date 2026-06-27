@@ -4414,7 +4414,7 @@ async function startTuning() {
     document.getElementById('tune-stat-gen').innerText = `-- / ${generations}`;
     document.getElementById('tune-stat-cost').innerText = "--";
     document.getElementById('tune-stat-bill').innerText = "--";
-    consoleEl.innerText = "Spawning python optimizer child process...\n";
+    consoleEl.innerText = "Initializing native Rust Genetic Algorithm optimizer...\n";
 
     try {
         const res = await fetch('/api/train/start', {
@@ -4434,7 +4434,7 @@ async function startTuning() {
             throw new Error(err || `Status code ${res.status}`);
         }
 
-        appendTuneLog("Process successfully spawned. Connecting to live progress stream...");
+        appendTuneLog("Native optimizer successfully started. Connecting to live progress stream...");
         initTuningProgressStream();
     } catch (e) {
         btnStart.disabled = false;
