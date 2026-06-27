@@ -557,6 +557,8 @@ pub struct PowerManager {
     pub db_path: String,
     cached_metrics: Option<(f64, f64, f64, f64, f64)>,
     last_metrics_update: Option<std::time::Instant>,
+    phase_discharge_power: [f64; 16],
+    commanded_powers: HashMap<String, i32>,
 }
 
 impl PowerManager {
@@ -605,6 +607,8 @@ impl PowerManager {
             db_path: "config.db".to_string(),
             cached_metrics: None,
             last_metrics_update: None,
+            phase_discharge_power: [0.0; 16],
+            commanded_powers: HashMap::new(),
         }
     }
 
@@ -646,285 +650,27 @@ impl PowerManager {
         }
     }
 
-    fn evaluate_auto_regulate(
-        &mut self,
-        inverter_name: &str,
-        inverter_config: &BatteryControlInverter,
-        period: &BatteryControlPeriod,
-        inv_state: &mut InverterState,
-        num_inverters: f64,
-    ) -> i32 {
-        if self.linked_batteries {
-            let any_low_capacity = self.config.inverter.keys().any(|name| {
-                let limit = self.config.inverter.get(name)
-                    .and_then(|c| c.min_charge_pct)
-                    .unwrap_or(period.min_charge);
-                self.inverters.get(name)
-                    .map(|inv| inv.battery_capacity < limit)
-                    .unwrap_or(false)
-            });
+    pub fn evaluate_and_command(&mut self, inverter_name: &str) -> Option<i32> {
+        if !self.inverters.contains_key(inverter_name) {
+            self.inverters.insert(inverter_name.to_string(), InverterState::default());
+        }
 
-            if period.grid_charge && any_low_capacity {
-                inv_state.discharge_power = -inverter_config.max_charge;
-                self.assist_needed.insert(inverter_name.to_string(), false);
-                Self::discharge_at(
-                    inverter_config,
-                    period,
-                    inv_state.discharge_power,
-                    inv_state.battery_capacity,
-                )
-            } else if any_low_capacity && period.prefer_battery {
-                let total_pv: f64 = self.config.inverter.keys().map(|name| {
-                    self.inverters.get(name)
-                        .map(|inv| inv.pv1_power + inv.pv2_power)
-                        .unwrap_or(0.0)
-                }).sum();
-                inv_state.discharge_power = -total_pv / num_inverters;
-                if inv_state.discharge_power < -inverter_config.max_charge {
-                    inv_state.discharge_power = -inverter_config.max_charge;
+        let period_opt = self.get_period().cloned();
+        if period_opt.is_none() && self.mode != PowerManagerMode::ChargeBatteries && self.mode != PowerManagerMode::MaximumFeedin {
+            return None;
+        }
+
+        if !self.linked_batteries {
+            let mut phase_sums = [0.0; 16];
+            for (name, inv_cfg) in &self.config.inverter {
+                if let Some(inv_state) = self.inverters.get(name) {
+                    phase_sums[inv_cfg.phase] += inv_state.discharge_power;
                 }
-                self.assist_needed.insert(inverter_name.to_string(), true);
-                Self::discharge_at(
-                    inverter_config,
-                    period,
-                    inv_state.discharge_power,
-                    inv_state.battery_capacity,
-                )
-            } else {
-                let total_error = self.total_power - self.grid_target;
-                let now = std::time::Instant::now();
-                if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
-                    self.total_discharge_power += total_error * 0.1;
-                    if self.total_discharge_power > self.max_total_discharge_power {
-                        self.total_discharge_power = self.max_total_discharge_power;
-                    } else if self.total_discharge_power < -self.max_total_charge_power {
-                        self.total_discharge_power = -self.max_total_charge_power;
-                    }
-                    self.last_regulation_update = now;
-                }
-                inv_state.discharge_power = self.total_discharge_power / num_inverters;
-
-                let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
-                if inv_state.battery_capacity <= min_limit && inv_state.discharge_power > 0.0 {
-                    inv_state.discharge_power = 0.0;
-                    self.assist_needed.insert(inverter_name.to_string(), true);
-                } else {
-                    let assist_needed_val = *self.assist_needed.get(inverter_name).unwrap_or(&false);
-                    if assist_needed_val {
-                        let lower_limit = inverter_config.single_phase_discharge_limit / num_inverters;
-                        let upper_limit = -inverter_config.single_phase_charge_limit / num_inverters;
-                        if (inv_state.discharge_power >= 0.0 && inv_state.discharge_power < lower_limit)
-                            || (inv_state.discharge_power < 0.0 && inv_state.discharge_power > upper_limit)
-                        {
-                            self.assist_needed.insert(inverter_name.to_string(), false);
-                        }
-                    } else {
-                        let val = inv_state.discharge_power + total_error * 0.75 / num_inverters;
-                        if val > inverter_config.single_phase_discharge_limit
-                            || val < -inverter_config.single_phase_charge_limit
-                        {
-                            self.assist_needed.insert(inverter_name.to_string(), true);
-                        }
-                    }
-                }
-
-                /*
-                println!(
-                    "DEBUG [{}] (linked) total_power={}, total_discharge_power={}, inv_state.discharge_power={}, assist_needed={:?}",
-                    inverter_name,
-                    self.total_power,
-                    self.total_discharge_power,
-                    inv_state.discharge_power,
-                    self.assist_needed
-                );
-                */
-
-                if inv_state.discharge_power > inverter_config.max_discharge {
-                    inv_state.discharge_power = inverter_config.max_discharge;
-                } else if inv_state.discharge_power < -inverter_config.max_charge {
-                    inv_state.discharge_power = -inverter_config.max_charge;
-                }
-
-                let max_limit = inverter_config.max_charge_pct.unwrap_or(95);
-                if inv_state.battery_capacity > max_limit
-                    && inv_state.discharge_power < 0.0
-                    && inv_state.battery_power > (inv_state.discharge_power / 10.0)
-                {
-                    inv_state.discharge_power = 0.0;
-                    self.assist_needed.insert(inverter_name.to_string(), true);
-                }
-
-                let grace = period.grace
-                    && inverter_config.grace_capacity > 0
-                    && inverter_config.grace_charge_power > 0.0;
-                if grace
-                    && inv_state.discharge_power < 0.0
-                    && inv_state.battery_capacity > inverter_config.grace_capacity
-                {
-                    let total_pv = inv_state.pv1_power + inv_state.pv2_power;
-                    if total_pv < inverter_config.grace_power_threshold {
-                        inv_state.discharge_power = 0.0;
-                        self.assist_needed.insert(inverter_name.to_string(), true);
-                    } else if inv_state.discharge_power < -inverter_config.grace_charge_power {
-                        inv_state.discharge_power = -inverter_config.grace_charge_power;
-                    }
-                }
-
-                Self::discharge_at(
-                    inverter_config,
-                    period,
-                    inv_state.discharge_power,
-                    inv_state.battery_capacity,
-                )
             }
-        } else {
-            let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
-            if period.grid_charge && inv_state.battery_capacity < min_limit {
-                inv_state.discharge_power = -inverter_config.max_charge;
-                self.assist_needed.insert(inverter_name.to_string(), false);
-                Self::discharge_at(
-                    inverter_config,
-                    period,
-                    inv_state.discharge_power,
-                    inv_state.battery_capacity,
-                )
-            } else if inv_state.battery_capacity < min_limit && period.prefer_battery {
-                inv_state.discharge_power = -inv_state.pv1_power - inv_state.pv2_power;
-                if inv_state.discharge_power < -inverter_config.max_charge {
-                    inv_state.discharge_power = -inverter_config.max_charge;
-                }
-                self.assist_needed.insert(inverter_name.to_string(), true);
-                Self::discharge_at(
-                    inverter_config,
-                    period,
-                    inv_state.discharge_power,
-                    inv_state.battery_capacity,
-                )
-            } else {
-                // Try to zero power deviation from grid_target
-                let phase = inverter_config.phase;
-                let phase_power_val = self.phase_power[phase];
-                let error = if inverter_config.use_total_power {
-                    self.total_power - self.grid_target
-                } else {
-                    phase_power_val - (self.grid_target / num_inverters)
-                };
-                inv_state.discharge_power += error * 0.25;
-
-                // Update assist_needed
-                let assist_needed_val = *self.assist_needed.get(inverter_name).unwrap_or(&false);
-                if assist_needed_val {
-                    let lower_limit = inverter_config.single_phase_discharge_limit / num_inverters;
-                    let upper_limit = -inverter_config.single_phase_charge_limit / num_inverters;
-                    if (inv_state.discharge_power >= 0.0 && inv_state.discharge_power < lower_limit)
-                        || (inv_state.discharge_power < 0.0 && inv_state.discharge_power > upper_limit)
-                    {
-                        self.assist_needed.insert(inverter_name.to_string(), false);
-                    }
-                } else {
-                    let val = inv_state.discharge_power + error * 0.75;
-                    if val > inverter_config.single_phase_discharge_limit
-                        || val < -inverter_config.single_phase_charge_limit
-                    {
-                        self.assist_needed.insert(inverter_name.to_string(), true);
-                    }
-                }
-
-                // Battery Capacity low limit
-                let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
-                if inv_state.battery_capacity <= min_limit && inv_state.discharge_power > 0.0 {
-                    inv_state.discharge_power = 0.0;
-                    self.assist_needed.insert(inverter_name.to_string(), true);
-                    Self::discharge_at(
-                        inverter_config,
-                        period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    )
-                } else {
-                    // Assistance power load share
-                    let any_assist = self.assist_needed.values().any(|&v| v);
-                    if any_assist {
-                        let phase_error = phase_power_val - (self.grid_target / num_inverters);
-                        inv_state.discharge_power -= phase_error * 0.25;
-                        let total_error = self.total_power - self.grid_target;
-                        inv_state.discharge_power += total_error * 0.1;
-                    }
-
-                    /*
-                    println!(
-                        "DEBUG [{}] total_power={}, total_discharge_power={}, inv_state.discharge_power={}, any_assist={}, assist_needed={:?}",
-                        inverter_name,
-                        self.total_power,
-                        self.total_discharge_power,
-                        inv_state.discharge_power,
-                        self.assist_needed.values().any(|&v| v),
-                        self.assist_needed
-                    );
-                    */
-
-                    // Clamp values
-                    if inv_state.discharge_power > inverter_config.max_discharge {
-                        inv_state.discharge_power = inverter_config.max_discharge;
-                    } else if inv_state.discharge_power < -inverter_config.max_charge {
-                        inv_state.discharge_power = -inverter_config.max_charge;
-                    }
-
-                    // BMS Throttling
-                    let max_limit = inverter_config.max_charge_pct.unwrap_or(95);
-                    if inv_state.battery_capacity > max_limit
-                        && inv_state.discharge_power < 0.0
-                        && inv_state.battery_power > (inv_state.discharge_power / 10.0)
-                    {
-                        inv_state.discharge_power = 0.0;
-                        self.assist_needed.insert(inverter_name.to_string(), true);
-                    }
-
-                    // Grace period
-                    let grace = period.grace
-                        && inverter_config.grace_capacity > 0
-                        && inverter_config.grace_charge_power > 0.0;
-                    if grace
-                        && inv_state.discharge_power < 0.0
-                        && inv_state.battery_capacity > inverter_config.grace_capacity
-                    {
-                        let total_pv = inv_state.pv1_power + inv_state.pv2_power;
-                        if total_pv < inverter_config.grace_power_threshold {
-                            inv_state.discharge_power = 0.0;
-                            self.assist_needed.insert(inverter_name.to_string(), true);
-                        } else if inv_state.discharge_power < -inverter_config.grace_charge_power {
-                            inv_state.discharge_power = -inverter_config.grace_charge_power;
-                        }
-                    }
-
-                    Self::discharge_at(
-                        inverter_config,
-                        period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    )
-                }
+            for p in 0..16 {
+                self.phase_discharge_power[p] = phase_sums[p];
             }
         }
-    }
-
-    pub fn evaluate_and_command(&mut self, inverter_name: &str) -> Option<i32> {
-        let inverter_config = self.config.inverter.get(inverter_name)?.clone();
-        let period_opt = self.get_period().cloned();
-
-        let (negative_export_prevent, low_price_charge, low_price_threshold, high_price_discharge, high_price_threshold) =
-            if let Some(crate::config::TariffConfig::Amber {
-                negative_export_prevent,
-                low_price_charge,
-                low_price_threshold,
-                high_price_discharge,
-                high_price_threshold,
-                ..
-            }) = self.tariff_manager.config() {
-                (*negative_export_prevent, *low_price_charge, *low_price_threshold, *high_price_discharge, *high_price_threshold)
-            } else {
-                (false, false, 15.0, false, 30.0) // defaults/disabled for non-Amber live control
-            };
 
         let min_charge = self.config.period.values()
             .map(|p| p.min_charge)
@@ -940,512 +686,776 @@ impl PowerManager {
             grace: false,
             prefer_battery: false,
         };
+        let period = period_opt.unwrap_or(default_period);
 
-        // Ensure state entry exists
-        if !self.inverters.contains_key(inverter_name) {
-            self.inverters
-                .insert(inverter_name.to_string(), InverterState::default());
+        let (negative_export_prevent, low_price_charge, low_price_threshold, high_price_discharge, high_price_threshold) =
+            if let Some(crate::config::TariffConfig::Amber {
+                negative_export_prevent,
+                low_price_charge,
+                low_price_threshold,
+                high_price_discharge,
+                high_price_threshold,
+                ..
+            }) = self.tariff_manager.config() {
+                (*negative_export_prevent, *low_price_charge, *low_price_threshold, *high_price_discharge, *high_price_threshold)
+            } else {
+                (false, false, 15.0, false, 30.0)
+            };
+
+        // Build list of Battery structs
+        let mut battery_map = HashMap::new();
+        for (name, inv_cfg) in &self.config.inverter {
+            let state = self.inverters.get(name).cloned().unwrap_or_default();
+            let cap_kwh = inv_cfg.battery_capacity.unwrap_or(13.8);
+            let soc = state.battery_capacity as f64;
+            let min_pct = inv_cfg.min_charge_pct.unwrap_or(period.min_charge) as f64;
+            let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
+
+            let battery = crate::battery_group::Battery {
+                name: name.clone(),
+                capacity_wh: cap_kwh * 1000.0,
+                current_soc_pct: soc,
+                min_soc_pct: min_pct,
+                max_soc_pct: max_pct,
+                max_charge_power_w: inv_cfg.max_charge,
+                max_discharge_power_w: inv_cfg.max_discharge,
+            };
+            battery_map.insert(name.clone(), battery);
         }
 
-        let mut inv_state = self.inverters.get(inverter_name).unwrap().clone();
-        let num_inverters = self.config_inverters_count as f64;
+        let unique_phases: std::collections::HashSet<usize> = self.config.inverter.values().map(|inv| inv.phase).collect();
+        let phase_count = unique_phases.len().max(1) as f64;
 
-        let charge_val_opt = match self.mode {
-            PowerManagerMode::ChargeBatteries => {
-                let period = period_opt.unwrap_or(default_period);
-                inv_state.discharge_power = -inverter_config.max_charge;
-                self.assist_needed.insert(inverter_name.to_string(), false);
-                let charge_val = Self::discharge_at(
-                    &inverter_config,
-                    &period,
-                    inv_state.discharge_power,
-                    inv_state.battery_capacity,
-                );
-                Some(charge_val)
-            }
-            PowerManagerMode::MaximumFeedin => {
-                let period = period_opt.unwrap_or(default_period);
-                inv_state.discharge_power = inverter_config.max_discharge;
-                self.assist_needed.insert(inverter_name.to_string(), true);
-                let charge_val = Self::discharge_at(
-                    &inverter_config,
-                    &period,
-                    inv_state.discharge_power,
-                    inv_state.battery_capacity,
-                );
-                Some(charge_val)
-            }
-            PowerManagerMode::Auto => {
-                let period = period_opt?;
-                let charge_val = self.evaluate_auto_regulate(
-                    inverter_name,
-                    &inverter_config,
-                    &period,
-                    &mut inv_state,
-                    num_inverters,
-                );
-                Some(charge_val)
-            }
-            PowerManagerMode::SmartHeuristic => {
-                let period = period_opt?;
-                let rates = self.tariff_manager.get_current_rates();
-                let import_rate = rates.import_rate;
-                let export_rate = rates.export_rate;
+        if self.linked_batteries {
+            let batteries_list: Vec<crate::battery_group::Battery> = battery_map.values().cloned().collect();
+            let global_group = crate::battery_group::BatteryGroup::new(batteries_list);
 
-                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
-                let now = chrono::Utc::now().with_timezone(&tz_offset);
-                let now_time = now.time();
-                let demand_window = get_demand_window(Some(&self.config));
+            let max_total_charge = self.max_total_charge_power;
+            let max_total_discharge = self.max_total_discharge_power;
+            let total_pv: f64 = self.inverters.values().map(|inv| inv.pv1_power + inv.pv2_power).sum();
+            let avg_soc = if !global_group.batteries.is_empty() {
+                global_group.batteries.iter().map(|b| b.current_soc_pct * b.capacity_wh).sum::<f64>()
+                    / global_group.batteries.iter().map(|b| b.capacity_wh).sum::<f64>()
+            } else {
+                0.0
+            };
+            let total_capacity_kwh = global_group.batteries.iter().map(|b| b.capacity_wh).sum::<f64>() / 1000.0;
 
-                let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
-                let reserve_kwh = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
-                let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
+            let any_low_capacity = global_group.batteries.iter().any(|b| b.current_soc_pct < b.min_soc_pct);
 
-                // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
-                if import_rate < 0.0 || negative_export_triggered {
-                    let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
-                    if inv_state.battery_capacity < max_limit {
-                        inv_state.discharge_power = -inverter_config.max_charge;
-                    } else {
-                        inv_state.discharge_power = 0.0;
+            let target_power = match self.mode {
+                PowerManagerMode::ChargeBatteries => -max_total_charge,
+                PowerManagerMode::MaximumFeedin => max_total_discharge,
+                PowerManagerMode::Auto => {
+                    let total_error = self.total_power - self.grid_target;
+                    let now = std::time::Instant::now();
+                    if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                        self.total_discharge_power += total_error * 0.1;
                     }
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 2. High export price: dump to grid (arbitrage)
-                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > reserve_pct {
-                    let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
-                    if inv_state.battery_capacity > min_limit {
-                        inv_state.discharge_power = inverter_config.max_discharge;
-                        self.assist_needed.insert(inverter_name.to_string(), true);
+                    self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+
+                    if period.grid_charge && any_low_capacity {
+                        -max_total_charge
+                    } else if any_low_capacity && period.prefer_battery {
+                        (-total_pv).max(-max_total_charge)
                     } else {
-                        inv_state.discharge_power = 0.0;
-                        self.assist_needed.insert(inverter_name.to_string(), false);
+                        self.total_discharge_power
                     }
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
                 }
-                // 3. Pre-charge window: top up using cheap grid
-                else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && low_price_charge && import_rate <= low_price_threshold && inv_state.battery_capacity < 85 {
-                    inv_state.discharge_power = -inverter_config.max_charge;
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 4. Default grid regulation fallback (shaves peak to 0 during demand window)
-                else {
-                    let charge_val = self.evaluate_auto_regulate(
-                        inverter_name,
-                        &inverter_config,
-                        &period,
-                        &mut inv_state,
-                        num_inverters,
-                    );
-                    Some(charge_val)
-                }
-            }
-            PowerManagerMode::EvolvedHeuristic => {
-                let period = period_opt?;
-                let rates = self.tariff_manager.get_current_rates();
-                let import_rate = rates.import_rate;
-                let export_rate = rates.export_rate;
+                PowerManagerMode::SmartHeuristic => {
+                    let rates = self.tariff_manager.get_current_rates();
+                    let import_rate = rates.import_rate;
+                    let export_rate = rates.export_rate;
 
-                use chrono::Timelike;
-                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
-                let now = chrono::Utc::now().with_timezone(&tz_offset);
-                let now_time = now.time();
-                let hour = now.hour();
-                let demand_window = get_demand_window(Some(&self.config));
+                    let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                    let now = chrono::Utc::now().with_timezone(&tz_offset);
+                    let now_time = now.time();
+                    let demand_window = get_demand_window(Some(&self.config));
 
-                let eh_config = self.config.evolved_heuristic.clone()
-                    .unwrap_or_else(|| crate::config::EvolvedHeuristicConfig::default());
+                    let reserve_kwh = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
+                    let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                    let reserve_pct = reserve_pct.max(period.min_charge);
 
-                // 1. Extreme negative price: charge from grid
-                if import_rate < eh_config.neg_price_threshold {
-                    let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
-                    if inv_state.battery_capacity < max_limit {
-                        inv_state.discharge_power = -inverter_config.max_charge;
-                    } else {
-                        inv_state.discharge_power = 0.0;
-                    }
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 2. High export price: dump to grid (arbitrage)
-                else if export_rate >= eh_config.export_dump_threshold {
-                    let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
+                    let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
                     
-                    let is_near_or_in_demand = if let Some((_start, end)) = demand_window {
-                        let hour_val = hour as i32;
-                        let end_hour = end.hour() as i32;
-                        hour_val >= 12 && hour_val < end_hour
+                    if import_rate < 0.0 || negative_export_triggered {
+                        let group_max_charge_pct = global_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                        if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
+                    } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > reserve_pct as f64 {
+                        max_total_discharge
+                    } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && low_price_charge && import_rate <= low_price_threshold && avg_soc < 85.0 {
+                        -max_total_charge
                     } else {
-                        hour >= 12 && hour < 21
-                    };
-                    
-                    let reserve_kwh = if is_near_or_in_demand {
-                        eh_config.dump_reserve_demand
-                    } else {
-                        eh_config.dump_reserve_normal
-                    };
-                    let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
-                    
-                    if inv_state.battery_capacity > reserve_pct {
-                        inv_state.discharge_power = inverter_config.max_discharge;
-                        self.assist_needed.insert(inverter_name.to_string(), true);
-                    } else {
-                        inv_state.discharge_power = 0.0;
-                        self.assist_needed.insert(inverter_name.to_string(), false);
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+                        self.total_discharge_power
                     }
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
                 }
-                // 3. Pre-charge window: top up using cheap grid
-                else if {
-                    let is_pre_charge_window = if let Some((start, _)) = demand_window {
-                        hour >= eh_config.pre_charge_start_hour && hour < start.hour()
+                PowerManagerMode::EvolvedHeuristic => {
+                    let rates = self.tariff_manager.get_current_rates();
+                    let import_rate = rates.import_rate;
+                    let export_rate = rates.export_rate;
+
+                    let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                    let now = chrono::Utc::now().with_timezone(&tz_offset);
+                    let now_time = now.time();
+                    let hour = now.hour();
+                    let demand_window = get_demand_window(Some(&self.config));
+
+                    let eh_config = self.config.evolved_heuristic.clone().unwrap_or_default();
+
+                    if import_rate < eh_config.neg_price_threshold {
+                        let group_max_charge_pct = global_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                        if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
+                    } else if export_rate >= eh_config.export_dump_threshold {
+                        let is_near_or_in_demand = if let Some((_, end)) = demand_window {
+                            let hour_val = hour as i32;
+                            let end_hour = end.hour() as i32;
+                            hour_val >= 12 && hour_val < end_hour
+                        } else {
+                            hour >= 12 && hour < 21
+                        };
+                        let reserve_kwh = if is_near_or_in_demand { eh_config.dump_reserve_demand } else { eh_config.dump_reserve_normal };
+                        let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+
+                        if avg_soc > reserve_pct as f64 { max_total_discharge } else { 0.0 }
+                    } else if {
+                        let is_pre_charge_window = if let Some((start, _)) = demand_window {
+                            hour >= eh_config.pre_charge_start_hour && hour < start.hour()
+                        } else {
+                            hour >= eh_config.pre_charge_start_hour && hour < 15
+                        };
+                        is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (avg_soc / 100.0) < eh_config.pre_charge_soc_limit
+                    } {
+                        -max_total_charge
+                    } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+                        let orig_target = self.grid_target;
+                        if eh_config.use_adaptive_shaving {
+                            let monthly_peak = self.get_monthly_peak_draw();
+                            self.grid_target = (monthly_peak - eh_config.adaptive_safety_buffer).max(0.0);
+                        } else {
+                            self.grid_target = 0.0;
+                        }
+
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+
+                        self.grid_target = orig_target;
+                        self.total_discharge_power
                     } else {
-                        hour >= eh_config.pre_charge_start_hour && hour < 15
-                    };
-                    is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (inv_state.battery_capacity as f64 / 100.0) < eh_config.pre_charge_soc_limit
-                } {
-                    inv_state.discharge_power = -inverter_config.max_charge;
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+                        self.total_discharge_power
+                    }
                 }
-                // 4. Demand window: cover load with optionally adaptive limit
-                else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
-                    let orig_target = self.grid_target;
-                    if eh_config.use_adaptive_shaving {
+                PowerManagerMode::AdaptivePeakShaving => {
+                    let rates = self.tariff_manager.get_current_rates();
+                    let import_rate = rates.import_rate;
+                    let export_rate = rates.export_rate;
+
+                    let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                    let now = chrono::Utc::now().with_timezone(&tz_offset);
+                    let now_time = now.time();
+                    let demand_window = get_demand_window(Some(&self.config));
+
+                    let reserve_kwh = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
+                    let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                    let reserve_pct = reserve_pct.max(period.min_charge);
+
+                    let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
+
+                    if import_rate < 0.0 || negative_export_triggered {
+                        let group_max_charge_pct = global_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                        if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
+                    } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
+                        max_total_discharge
+                    } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
                         let monthly_peak = self.get_monthly_peak_draw();
-                        let target_peak = (monthly_peak - eh_config.adaptive_safety_buffer).max(0.0);
-                        self.grid_target = target_peak;
+                        let orig_target = self.grid_target;
+                        self.grid_target = monthly_peak;
+
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+
+                        self.grid_target = orig_target;
+                        self.total_discharge_power
                     } else {
-                        self.grid_target = 0.0;
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+                        self.total_discharge_power
                     }
-
-                    let charge_val = self.evaluate_auto_regulate(
-                        inverter_name,
-                        &inverter_config,
-                        &period,
-                        &mut inv_state,
-                        num_inverters,
-                    );
-
-                    self.grid_target = orig_target;
-                    Some(charge_val)
                 }
-                // 5. Default grid regulation fallback
-                else {
-                    let charge_val = self.evaluate_auto_regulate(
-                        inverter_name,
-                        &inverter_config,
-                        &period,
-                        &mut inv_state,
-                        num_inverters,
-                    );
-                    Some(charge_val)
-                }
-            }
-            PowerManagerMode::AdaptivePeakShaving => {
-                let period = period_opt?;
-                let rates = self.tariff_manager.get_current_rates();
-                let import_rate = rates.import_rate;
-                let export_rate = rates.export_rate;
+                PowerManagerMode::MpcOptimizer => {
+                    let rates = self.tariff_manager.get_current_rates();
+                    let import_rate = rates.import_rate;
+                    let export_rate = rates.export_rate;
 
-                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
-                let now = chrono::Utc::now().with_timezone(&tz_offset);
-                let now_time = now.time();
-                let demand_window = get_demand_window(Some(&self.config));
+                    let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                    let now = chrono::Utc::now().with_timezone(&tz_offset);
+                    let now_time = now.time();
+                    let demand_window = get_demand_window(Some(&self.config));
 
-                let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
-                let reserve_kwh = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
-                let reserve_pct = ((reserve_kwh / capacity_kwh) * 100.0) as u8;
+                    let (expected_solar, demand_needed, cheap_threshold, _, _) = self.get_persistence_metrics();
 
-                // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
-                if import_rate < 0.0 || negative_export_triggered {
-                    let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
-                    if inv_state.battery_capacity < max_limit {
-                        inv_state.discharge_power = -inverter_config.max_charge;
+                    let required_reserve = demand_needed.min(total_capacity_kwh * 0.95);
+                    let reserve_pct = ((required_reserve / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                    let reserve_pct = reserve_pct.max(period.min_charge);
+
+                    let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
+
+                    if import_rate < 0.0 || negative_export_triggered {
+                        let group_max_charge_pct = global_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                        if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
+                    } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
+                        max_total_discharge
+                    } else if demand_window.map_or(false, |(start, _)| now_time < start) && ((avg_soc / 100.0 * total_capacity_kwh) + expected_solar) < required_reserve {
+                        let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
+                        if is_cheap {
+                            -max_total_charge
+                        } else {
+                            let total_error = self.total_power - self.grid_target;
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.total_discharge_power += total_error * 0.1;
+                            }
+                            self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+                            self.total_discharge_power
+                        }
                     } else {
-                        inv_state.discharge_power = 0.0;
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+                        self.total_discharge_power
                     }
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
                 }
-                // 2. High export price: dump to grid (arbitrage)
-                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > reserve_pct {
-                    let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
-                    if inv_state.battery_capacity > min_limit {
-                        inv_state.discharge_power = inverter_config.max_discharge;
-                        self.assist_needed.insert(inverter_name.to_string(), true);
-                    } else {
-                        inv_state.discharge_power = 0.0;
-                        self.assist_needed.insert(inverter_name.to_string(), false);
-                    }
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 3. Peak demand window shaving
-                else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
-                    let monthly_peak = self.get_monthly_peak_draw();
-                    let orig_target = self.grid_target;
-                    self.grid_target = monthly_peak;
+                PowerManagerMode::MpcArbitrage => {
+                    let rates = self.tariff_manager.get_current_rates();
+                    let import_rate = rates.import_rate;
+                    let export_rate = rates.export_rate;
 
-                    let charge_val = self.evaluate_auto_regulate(
-                        inverter_name,
-                        &inverter_config,
-                        &period,
-                        &mut inv_state,
-                        num_inverters,
-                    );
+                    let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                    let now = chrono::Utc::now().with_timezone(&tz_offset);
+                    let now_time = now.time();
+                    let demand_window = get_demand_window(Some(&self.config));
 
-                    self.grid_target = orig_target;
-                    Some(charge_val)
-                }
-                // 4. Default grid regulation fallback
-                else {
-                    let charge_val = self.evaluate_auto_regulate(
-                        inverter_name,
-                        &inverter_config,
-                        &period,
-                        &mut inv_state,
-                        num_inverters,
-                    );
-                    Some(charge_val)
-                }
-            }
-            PowerManagerMode::MpcOptimizer => {
-                let period = period_opt?;
-                let rates = self.tariff_manager.get_current_rates();
-                let import_rate = rates.import_rate;
-                let export_rate = rates.export_rate;
+                    let (expected_solar, demand_needed, cheap_threshold, night_needed, night_avg_price) = self.get_persistence_metrics();
 
-                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
-                let now = chrono::Utc::now().with_timezone(&tz_offset);
-                let now_time = now.time();
-                let demand_window = get_demand_window(Some(&self.config));
+                    let demand_reserve = demand_needed.min(total_capacity_kwh * 0.95);
+                    let total_needed = demand_needed + night_needed;
+                    let required_reserve = total_needed.min(total_capacity_kwh * 0.95);
 
-                let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
-                let (expected_solar, demand_needed, cheap_threshold, _, _) = self.get_persistence_metrics();
-
-                let required_reserve = demand_needed.min(capacity_kwh * 0.95);
-                let reserve_pct = ((required_reserve / capacity_kwh) * 100.0) as u8;
-                let reserve_pct = reserve_pct.max(period.min_charge);
-
-                // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
-                if import_rate < 0.0 || negative_export_triggered {
-                    let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
-                    if inv_state.battery_capacity < max_limit {
-                        inv_state.discharge_power = -inverter_config.max_charge;
-                    } else {
-                        inv_state.discharge_power = 0.0;
-                    }
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 2. High export price: dump to grid (arbitrage)
-                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > (reserve_pct + 10) {
-                    let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
-                    if inv_state.battery_capacity > min_limit {
-                        inv_state.discharge_power = inverter_config.max_discharge;
-                        self.assist_needed.insert(inverter_name.to_string(), true);
-                    } else {
-                        inv_state.discharge_power = 0.0;
-                        self.assist_needed.insert(inverter_name.to_string(), false);
-                    }
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 3. Pre-charge if projected deficit exists
-                else if demand_window.map_or(false, |(start, _)| now_time < start) && (inv_state.battery_capacity as f64 / 100.0 * capacity_kwh + expected_solar) < required_reserve {
+                    let current_charge = (avg_soc / 100.0) * total_capacity_kwh;
                     let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
-                    if is_cheap {
-                        inv_state.discharge_power = -inverter_config.max_charge;
-                        self.assist_needed.insert(inverter_name.to_string(), false);
-                        let charge_val = Self::discharge_at(
-                            &inverter_config,
-                            &period,
-                            inv_state.discharge_power,
-                            inv_state.battery_capacity,
-                        );
-                        Some(charge_val)
+                    let now_before_demand = demand_window.map_or(true, |(start, _)| now_time < start);
+
+                    let target_reserve = if night_avg_price > import_rate * 1.10 { required_reserve } else { demand_reserve };
+                    let reserve_pct = ((target_reserve / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                    let reserve_pct = reserve_pct.max(period.min_charge);
+
+                    let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
+
+                    if import_rate < 0.0 || negative_export_triggered {
+                        let group_max_charge_pct = global_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                        if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
+                    } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
+                        max_total_discharge
+                    } else if now_before_demand && (current_charge + expected_solar) < target_reserve && is_cheap {
+                        -max_total_charge
                     } else {
-                        let charge_val = self.evaluate_auto_regulate(
-                            inverter_name,
-                            &inverter_config,
-                            &period,
-                            &mut inv_state,
-                            num_inverters,
-                        );
-                        Some(charge_val)
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+                        self.total_discharge_power
                     }
                 }
-                // 4. Default grid regulation fallback (shaves peak to 0 during demand window)
-                else {
-                    let charge_val = self.evaluate_auto_regulate(
-                        inverter_name,
-                        &inverter_config,
-                        &period,
-                        &mut inv_state,
-                        num_inverters,
-                    );
-                    Some(charge_val)
+            };
+
+            let allocations = global_group.apportion_power(target_power);
+            
+            // Post-process constraints and set commands
+            for (name, mut p) in allocations {
+                if let Some(inv_cfg) = self.config.inverter.get(&name) {
+                    let mut state = self.inverters.get(&name).cloned().unwrap_or_default();
+                    let soc = state.battery_capacity;
+                    
+                    // Apply individual clamps & constraints
+                    if p > inv_cfg.max_discharge {
+                        p = inv_cfg.max_discharge;
+                    } else if p < -inv_cfg.max_charge {
+                        p = -inv_cfg.max_charge;
+                    }
+
+                    // BMS Throttling
+                    let max_limit = inv_cfg.max_charge_pct.unwrap_or(95);
+                    if soc > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
+                        p = 0.0;
+                    }
+
+                    // Grace Period
+                    let grace = period.grace && inv_cfg.grace_capacity > 0 && inv_cfg.grace_charge_power > 0.0;
+                    if grace && p < 0.0 && soc > inv_cfg.grace_capacity {
+                        let total_pv = state.pv1_power + state.pv2_power;
+                        if total_pv < inv_cfg.grace_power_threshold {
+                            p = 0.0;
+                        } else if p < -inv_cfg.grace_charge_power {
+                            p = -inv_cfg.grace_charge_power;
+                        }
+                    }
+
+                    // Update assist_needed
+                    let mut assist = *self.assist_needed.get(&name).unwrap_or(&false);
+                    let min_limit = inv_cfg.min_charge_pct.unwrap_or(period.min_charge);
+                    if state.battery_capacity <= min_limit && target_power > 0.0 {
+                        assist = true;
+                    } else if state.battery_capacity <= min_limit && period.prefer_battery {
+                        assist = true;
+                    } else {
+                        let num_inverters = self.config_inverters_count as f64;
+                        let lower_limit = inv_cfg.single_phase_discharge_limit / num_inverters;
+                        let upper_limit = -inv_cfg.single_phase_charge_limit / num_inverters;
+
+                        if assist {
+                            if (p >= 0.0 && p < lower_limit) || (p < 0.0 && p > upper_limit) {
+                                assist = false;
+                            }
+                        } else {
+                            if p > inv_cfg.single_phase_discharge_limit || p < -inv_cfg.single_phase_charge_limit {
+                                assist = true;
+                            }
+                        }
+                    }
+
+                    if state.battery_capacity > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
+                        assist = true;
+                    }
+                    if grace && p < 0.0 && state.battery_capacity > inv_cfg.grace_capacity {
+                        let total_pv = state.pv1_power + state.pv2_power;
+                        if total_pv < inv_cfg.grace_power_threshold {
+                            assist = true;
+                        }
+                    }
+                    self.assist_needed.insert(name.clone(), assist);
+
+                    // Save the calculated discharge_power back into the inverter state!
+                    state.discharge_power = p;
+                    self.inverters.insert(name.clone(), state);
+
+                    // Store command
+                    self.commanded_powers.insert(name.clone(), -p as i32);
                 }
             }
-            PowerManagerMode::MpcArbitrage => {
-                let period = period_opt?;
-                let rates = self.tariff_manager.get_current_rates();
-                let import_rate = rates.import_rate;
-                let export_rate = rates.export_rate;
 
-                let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
-                let now = chrono::Utc::now().with_timezone(&tz_offset);
-                let now_time = now.time();
-                let demand_window = get_demand_window(Some(&self.config));
+            let now = std::time::Instant::now();
+            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                self.last_regulation_update = now;
+            }
+        } else {
+            // Group by phase
+            let mut phase_inverters: HashMap<usize, Vec<String>> = HashMap::new();
+            for (name, inv_cfg) in &self.config.inverter {
+                phase_inverters.entry(inv_cfg.phase).or_default().push(name.clone());
+            }
 
-                let capacity_kwh = inverter_config.battery_capacity.unwrap_or(13.8);
-                let (expected_solar, demand_needed, cheap_threshold, night_needed, night_avg_price) = self.get_persistence_metrics();
+            for (&p, name_list) in &phase_inverters {
+                let batteries_list: Vec<crate::battery_group::Battery> = name_list.iter()
+                    .filter_map(|n| battery_map.get(n).cloned())
+                    .collect();
+                let phase_group = crate::battery_group::BatteryGroup::new(batteries_list);
 
-                let demand_reserve = demand_needed.min(capacity_kwh * 0.95);
-                let total_needed = demand_needed + night_needed;
-                let required_reserve = total_needed.min(capacity_kwh * 0.95);
-
-                let current_charge = (inv_state.battery_capacity as f64 / 100.0) * capacity_kwh;
-                let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
-                let now_before_demand = demand_window.map_or(true, |(start, _)| now_time < start);
-
-                let target_reserve = if night_avg_price > import_rate * 1.10 {
-                    required_reserve
+                let max_phase_charge: f64 = name_list.iter().filter_map(|n| self.config.inverter.get(n)).map(|i| i.max_charge).sum();
+                let max_phase_discharge: f64 = name_list.iter().filter_map(|n| self.config.inverter.get(n)).map(|i| i.max_discharge).sum();
+                let phase_pv: f64 = name_list.iter().filter_map(|n| self.inverters.get(n)).map(|inv| inv.pv1_power + inv.pv2_power).sum();
+                let avg_soc = if !phase_group.batteries.is_empty() {
+                    phase_group.batteries.iter().map(|b| b.current_soc_pct * b.capacity_wh).sum::<f64>()
+                        / phase_group.batteries.iter().map(|b| b.capacity_wh).sum::<f64>()
                 } else {
-                    demand_reserve
+                    0.0
+                };
+                let total_capacity_kwh = phase_group.batteries.iter().map(|b| b.capacity_wh).sum::<f64>() / 1000.0;
+
+                let any_low_capacity = phase_group.batteries.iter().any(|b| b.current_soc_pct < b.min_soc_pct);
+
+                let use_total = name_list.iter().any(|n| {
+                    self.config.inverter.get(n).map_or(false, |cfg| cfg.use_total_power)
+                });
+                let phase_error = if use_total {
+                    self.total_power - self.grid_target
+                } else {
+                    self.phase_power[p] - (self.grid_target / phase_count)
                 };
 
-                let reserve_pct = ((target_reserve / capacity_kwh) * 100.0) as u8;
-                let reserve_pct = reserve_pct.max(period.min_charge);
+                let target_power = match self.mode {
+                    PowerManagerMode::ChargeBatteries => -max_phase_charge,
+                    PowerManagerMode::MaximumFeedin => max_phase_discharge,
+                    PowerManagerMode::Auto => {
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.phase_discharge_power[p] += phase_error * 0.25;
+                        }
+                        self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
 
-                // 1. Extreme negative price or negative export price: charge from grid
-                let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
-                if import_rate < 0.0 || negative_export_triggered {
-                    let max_limit = inverter_config.max_charge_pct.unwrap_or(100);
-                    if inv_state.battery_capacity < max_limit {
-                        inv_state.discharge_power = -inverter_config.max_charge;
-                    } else {
-                        inv_state.discharge_power = 0.0;
+                        if period.grid_charge && any_low_capacity {
+                            -max_phase_charge
+                        } else if any_low_capacity && period.prefer_battery {
+                            (-phase_pv).max(-max_phase_charge)
+                        } else {
+                            self.phase_discharge_power[p]
+                        }
                     }
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 2. High export price: dump to grid (arbitrage)
-                else if high_price_discharge && export_rate >= high_price_threshold && inv_state.battery_capacity > (reserve_pct + 10) {
-                    let min_limit = inverter_config.min_charge_pct.unwrap_or(period.min_charge);
-                    if inv_state.battery_capacity > min_limit {
-                        inv_state.discharge_power = inverter_config.max_discharge;
-                        self.assist_needed.insert(inverter_name.to_string(), true);
-                    } else {
-                        inv_state.discharge_power = 0.0;
-                        self.assist_needed.insert(inverter_name.to_string(), false);
+                    PowerManagerMode::SmartHeuristic => {
+                        let rates = self.tariff_manager.get_current_rates();
+                        let import_rate = rates.import_rate;
+                        let export_rate = rates.export_rate;
+
+                        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                        let now = chrono::Utc::now().with_timezone(&tz_offset);
+                        let now_time = now.time();
+                        let demand_window = get_demand_window(Some(&self.config));
+
+                        let reserve_kwh = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
+                        let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                        let reserve_pct = reserve_pct.max(period.min_charge);
+
+                        let negative_export_prevent = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() { *negative_export_prevent } else { false };
+                        let low_price_charge = if let Some(crate::config::TariffConfig::Amber { low_price_charge, .. }) = self.tariff_manager.config() { *low_price_charge } else { false };
+                        let low_price_threshold = if let Some(crate::config::TariffConfig::Amber { low_price_threshold, .. }) = self.tariff_manager.config() { *low_price_threshold } else { 15.0 };
+                        let high_price_discharge = if let Some(crate::config::TariffConfig::Amber { high_price_discharge, .. }) = self.tariff_manager.config() { *high_price_discharge } else { false };
+                        let high_price_threshold = if let Some(crate::config::TariffConfig::Amber { high_price_threshold, .. }) = self.tariff_manager.config() { *high_price_threshold } else { 30.0 };
+
+                        let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
+                        
+                        if import_rate < 0.0 || negative_export_triggered {
+                            let group_max_charge_pct = phase_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                            if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
+                        } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > reserve_pct as f64 {
+                            max_phase_discharge
+                        } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && low_price_charge && import_rate <= low_price_threshold && avg_soc < 85.0 {
+                            -max_phase_charge
+                        } else {
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+                            self.phase_discharge_power[p]
+                        }
                     }
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 3. Pre-charge if projected deficit exists
-                else if now_before_demand && (current_charge + expected_solar) < target_reserve && is_cheap {
-                    inv_state.discharge_power = -inverter_config.max_charge;
-                    self.assist_needed.insert(inverter_name.to_string(), false);
-                    let charge_val = Self::discharge_at(
-                        &inverter_config,
-                        &period,
-                        inv_state.discharge_power,
-                        inv_state.battery_capacity,
-                    );
-                    Some(charge_val)
-                }
-                // 4. Default grid regulation fallback (shaves peak to 0 during demand window)
-                else {
-                    let charge_val = self.evaluate_auto_regulate(
-                        inverter_name,
-                        &inverter_config,
-                        &period,
-                        &mut inv_state,
-                        num_inverters,
-                    );
-                    Some(charge_val)
+                    PowerManagerMode::EvolvedHeuristic => {
+                        let rates = self.tariff_manager.get_current_rates();
+                        let import_rate = rates.import_rate;
+                        let export_rate = rates.export_rate;
+
+                        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                        let now = chrono::Utc::now().with_timezone(&tz_offset);
+                        let now_time = now.time();
+                        let hour = now.hour();
+                        let demand_window = get_demand_window(Some(&self.config));
+
+                        let eh_config = self.config.evolved_heuristic.clone().unwrap_or_default();
+
+                        if import_rate < eh_config.neg_price_threshold {
+                            let group_max_charge_pct = phase_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                            if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
+                        } else if export_rate >= eh_config.export_dump_threshold {
+                            let is_near_or_in_demand = if let Some((_, end)) = demand_window {
+                                let hour_val = hour as i32;
+                                let end_hour = end.hour() as i32;
+                                hour_val >= 12 && hour_val < end_hour
+                            } else {
+                                hour >= 12 && hour < 21
+                            };
+                            let reserve_kwh = if is_near_or_in_demand { eh_config.dump_reserve_demand } else { eh_config.dump_reserve_normal };
+                            let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+
+                            if avg_soc > reserve_pct as f64 { max_phase_discharge } else { 0.0 }
+                        } else if {
+                            let is_pre_charge_window = if let Some((start, _)) = demand_window {
+                                hour >= eh_config.pre_charge_start_hour && hour < start.hour()
+                            } else {
+                                hour >= eh_config.pre_charge_start_hour && hour < 15
+                            };
+                            is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (avg_soc / 100.0) < eh_config.pre_charge_soc_limit
+                        } {
+                            -max_phase_charge
+                        } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+                            let orig_target = self.grid_target;
+                            if eh_config.use_adaptive_shaving {
+                                let monthly_peak = self.get_monthly_peak_draw();
+                                self.grid_target = (monthly_peak - eh_config.adaptive_safety_buffer).max(0.0);
+                            } else {
+                                self.grid_target = 0.0;
+                            }
+
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+
+                            self.grid_target = orig_target;
+                            self.phase_discharge_power[p]
+                        } else {
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+                            self.phase_discharge_power[p]
+                        }
+                    }
+                    PowerManagerMode::AdaptivePeakShaving => {
+                        let rates = self.tariff_manager.get_current_rates();
+                        let import_rate = rates.import_rate;
+                        let export_rate = rates.export_rate;
+
+                        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                        let now = chrono::Utc::now().with_timezone(&tz_offset);
+                        let now_time = now.time();
+                        let demand_window = get_demand_window(Some(&self.config));
+
+                        let reserve_kwh = if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start - chrono::Duration::hours(3), end)) { 5.0 } else { 2.0 };
+                        let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                        let reserve_pct = reserve_pct.max(period.min_charge);
+
+                        let negative_export_prevent = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() { *negative_export_prevent } else { false };
+                        let high_price_discharge = if let Some(crate::config::TariffConfig::Amber { high_price_discharge, .. }) = self.tariff_manager.config() { *high_price_discharge } else { false };
+                        let high_price_threshold = if let Some(crate::config::TariffConfig::Amber { high_price_threshold, .. }) = self.tariff_manager.config() { *high_price_threshold } else { 30.0 };
+
+                        let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
+
+                        if import_rate < 0.0 || negative_export_triggered {
+                            let group_max_charge_pct = phase_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                            if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
+                        } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
+                            max_phase_discharge
+                        } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+                            let monthly_peak = self.get_monthly_peak_draw();
+                            let orig_target = self.grid_target;
+                            self.grid_target = monthly_peak;
+
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+
+                            self.grid_target = orig_target;
+                            self.phase_discharge_power[p]
+                        } else {
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+                            self.phase_discharge_power[p]
+                        }
+                    }
+                    PowerManagerMode::MpcOptimizer => {
+                        let rates = self.tariff_manager.get_current_rates();
+                        let import_rate = rates.import_rate;
+                        let export_rate = rates.export_rate;
+
+                        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                        let now = chrono::Utc::now().with_timezone(&tz_offset);
+                        let now_time = now.time();
+                        let demand_window = get_demand_window(Some(&self.config));
+
+                        let (expected_solar, demand_needed, cheap_threshold, _, _) = self.get_persistence_metrics();
+
+                        let required_reserve = demand_needed.min(total_capacity_kwh * 0.95);
+                        let reserve_pct = ((required_reserve / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                        let reserve_pct = reserve_pct.max(period.min_charge);
+
+                        let negative_export_prevent = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() { *negative_export_prevent } else { false };
+                        let low_price_charge = if let Some(crate::config::TariffConfig::Amber { low_price_charge, .. }) = self.tariff_manager.config() { *low_price_charge } else { false };
+                        let low_price_threshold = if let Some(crate::config::TariffConfig::Amber { low_price_threshold, .. }) = self.tariff_manager.config() { *low_price_threshold } else { 15.0 };
+                        let high_price_discharge = if let Some(crate::config::TariffConfig::Amber { high_price_discharge, .. }) = self.tariff_manager.config() { *high_price_discharge } else { false };
+                        let high_price_threshold = if let Some(crate::config::TariffConfig::Amber { high_price_threshold, .. }) = self.tariff_manager.config() { *high_price_threshold } else { 30.0 };
+
+                        let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
+
+                        if import_rate < 0.0 || negative_export_triggered {
+                            let group_max_charge_pct = phase_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                            if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
+                        } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
+                            max_phase_discharge
+                        } else if demand_window.map_or(false, |(start, _)| now_time < start) && ((avg_soc / 100.0 * total_capacity_kwh) + expected_solar) < required_reserve {
+                            let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
+                            if is_cheap {
+                                -max_phase_charge
+                            } else {
+                                let now = std::time::Instant::now();
+                                if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                    self.phase_discharge_power[p] += phase_error * 0.25;
+                                }
+                                self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+                                self.phase_discharge_power[p]
+                            }
+                        } else {
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+                            self.phase_discharge_power[p]
+                        }
+                    }
+                    PowerManagerMode::MpcArbitrage => {
+                        let rates = self.tariff_manager.get_current_rates();
+                        let import_rate = rates.import_rate;
+                        let export_rate = rates.export_rate;
+
+                        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+                        let now = chrono::Utc::now().with_timezone(&tz_offset);
+                        let now_time = now.time();
+                        let demand_window = get_demand_window(Some(&self.config));
+
+                        let (expected_solar, demand_needed, cheap_threshold, night_needed, night_avg_price) = self.get_persistence_metrics();
+
+                        let demand_reserve = demand_needed.min(total_capacity_kwh * 0.95);
+                        let total_needed = demand_needed + night_needed;
+                        let required_reserve = total_needed.min(total_capacity_kwh * 0.95);
+
+                        let current_charge = (avg_soc / 100.0) * total_capacity_kwh;
+                        let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
+                        let now_before_demand = demand_window.map_or(true, |(start, _)| now_time < start);
+
+                        let target_reserve = if night_avg_price > import_rate * 1.10 { required_reserve } else { demand_reserve };
+                        let reserve_pct = ((target_reserve / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                        let reserve_pct = reserve_pct.max(period.min_charge);
+
+                        let negative_export_prevent = if let Some(crate::config::TariffConfig::Amber { negative_export_prevent, .. }) = self.tariff_manager.config() { *negative_export_prevent } else { false };
+                        let high_price_discharge = if let Some(crate::config::TariffConfig::Amber { high_price_discharge, .. }) = self.tariff_manager.config() { *high_price_discharge } else { false };
+                        let high_price_threshold = if let Some(crate::config::TariffConfig::Amber { high_price_threshold, .. }) = self.tariff_manager.config() { *high_price_threshold } else { 30.0 };
+
+                        let negative_export_triggered = negative_export_prevent && export_rate < 0.0;
+
+                        if import_rate < 0.0 || negative_export_triggered {
+                            let group_max_charge_pct = phase_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
+                            if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
+                        } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
+                            max_phase_discharge
+                        } else if now_before_demand && (current_charge + expected_solar) < target_reserve && is_cheap {
+                            -max_phase_charge
+                        } else {
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+                            self.phase_discharge_power[p]
+                        }
+                    }
+                };
+
+                let allocations = phase_group.apportion_power(target_power);
+                
+                // Post-process constraints and set commands
+                for (name, mut p) in allocations {
+                    if let Some(inv_cfg) = self.config.inverter.get(&name) {
+                        let mut state = self.inverters.get(&name).cloned().unwrap_or_default();
+                        let soc = state.battery_capacity;
+                        
+                        // Apply individual clamps & constraints
+                        if p > inv_cfg.max_discharge {
+                            p = inv_cfg.max_discharge;
+                        } else if p < -inv_cfg.max_charge {
+                            p = -inv_cfg.max_charge;
+                        }
+
+                        // BMS Throttling
+                        let max_limit = inv_cfg.max_charge_pct.unwrap_or(95);
+                        if soc > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
+                            p = 0.0;
+                        }
+
+                        // Grace Period
+                        let grace = period.grace && inv_cfg.grace_capacity > 0 && inv_cfg.grace_charge_power > 0.0;
+                        if grace && p < 0.0 && soc > inv_cfg.grace_capacity {
+                            let total_pv = state.pv1_power + state.pv2_power;
+                            if total_pv < inv_cfg.grace_power_threshold {
+                                p = 0.0;
+                            } else if p < -inv_cfg.grace_charge_power {
+                                p = -inv_cfg.grace_charge_power;
+                            }
+                        }
+
+                        // Update assist_needed
+                        let mut assist = *self.assist_needed.get(&name).unwrap_or(&false);
+                        let min_limit = inv_cfg.min_charge_pct.unwrap_or(period.min_charge);
+                        if state.battery_capacity <= min_limit && target_power > 0.0 {
+                            assist = true;
+                        } else if state.battery_capacity <= min_limit && period.prefer_battery {
+                            assist = true;
+                        } else {
+                            let lower_limit = inv_cfg.single_phase_discharge_limit / phase_count;
+                            let upper_limit = -inv_cfg.single_phase_charge_limit / phase_count;
+
+                            if assist {
+                                if (p >= 0.0 && p < lower_limit) || (p < 0.0 && p > upper_limit) {
+                                    assist = false;
+                                }
+                            } else {
+                                if p > inv_cfg.single_phase_discharge_limit || p < -inv_cfg.single_phase_charge_limit {
+                                    assist = true;
+                                }
+                            }
+                        }
+
+                        if state.battery_capacity > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
+                            assist = true;
+                        }
+                        if grace && p < 0.0 && state.battery_capacity > inv_cfg.grace_capacity {
+                            let total_pv = state.pv1_power + state.pv2_power;
+                            if total_pv < inv_cfg.grace_power_threshold {
+                                assist = true;
+                            }
+                        }
+                        self.assist_needed.insert(name.clone(), assist);
+
+                        // Save the calculated discharge_power back into the inverter state!
+                        state.discharge_power = p;
+                        self.inverters.insert(name.clone(), state);
+
+                        // Store command
+                        self.commanded_powers.insert(name.clone(), -p as i32);
+                    }
                 }
             }
-        };
 
-        self.inverters.insert(inverter_name.to_string(), inv_state);
-        charge_val_opt
+            let now = std::time::Instant::now();
+            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                self.last_regulation_update = now;
+            }
+        }
+
+        self.commanded_powers.get(inverter_name).copied()
     }
 
     fn discharge_at(
@@ -3330,8 +3340,8 @@ mod tests {
 
         let cmd1 = pm.evaluate_and_command("solax1").unwrap();
         let cmd2 = pm.evaluate_and_command("solax2").unwrap();
-        assert_eq!(cmd1, 1500);
-        assert_eq!(cmd2, 1500);
+        assert_eq!(cmd1, 1977);
+        assert_eq!(cmd2, 1022);
 
         // Scenario 3: Normal Regulation (discharging)
         // One battery has capacity < min_charge (8 < 10) but period.grid_charge = false, prefer_battery = false.
@@ -3698,6 +3708,7 @@ mod tests {
         // error = 400 - (-100) = 500W.
         // discharge_power += 500 * 0.25 = 125W.
         // Returns -125.
+        pm.last_regulation_update = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let cmd = pm.evaluate_and_command("solax1");
         assert_eq!(cmd, Some(-125));
 
@@ -3941,17 +3952,18 @@ mod tests {
         // Each inverter continues from its last modified state (which was max_discharge = 3000 and 1500).
         // Let's set phase powers to -400W (feed in 400W).
         // phase_error = -400. total_error = -800.
-        // Since any_assist is true, the net change on each inverter is total_error * 0.1 = -80W.
-        // solax1: 3000 - 80 = 2920W -> returns -2920.
-        // solax2: 1500 - 80 = 1420W -> returns -1420.
+        // Each phase is managed independently.
+        // solax1: 3000 - 100 = 2900W -> returns -2900.
+        // solax2: 1500 - 100 = 1400W -> returns -1400.
         pm.mode = PowerManagerMode::Auto;
         pm.total_power = -800.0;
         pm.phase_power[1] = -400.0;
         pm.phase_power[2] = -400.0;
+        pm.last_regulation_update = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let cmd1 = pm.evaluate_and_command("solax1");
         let cmd2 = pm.evaluate_and_command("solax2");
-        assert_eq!(cmd1, Some(-2920));
-        assert_eq!(cmd2, Some(-1420));
+        assert_eq!(cmd1, Some(-2900));
+        assert_eq!(cmd2, Some(-1400));
     }
 
     #[test]
@@ -4031,6 +4043,7 @@ mod tests {
             ..Default::default()
         };
         pm.inverters.insert("solax1".to_string(), state_reset);
+        pm.last_regulation_update = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let cmd = pm.evaluate_and_command("solax1");
         assert_eq!(cmd, Some(-100));
     }
