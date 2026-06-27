@@ -3112,8 +3112,11 @@ function renderTunedParametersComparison() {
     ];
 
     body.innerHTML = paramMeta.map(p => {
-        const curVal = currentEvolved[p.key] !== undefined ? currentEvolved[p.key] : "-";
-        const val = currentEvolvedParams[p.key];
+        const keyKebab = p.key.replace(/_/g, '-');
+        const curVal = currentEvolved[p.key] !== undefined ? currentEvolved[p.key] : 
+                      (currentEvolved[keyKebab] !== undefined ? currentEvolved[keyKebab] : "-");
+        const val = currentEvolvedParams[p.key] !== undefined ? currentEvolvedParams[p.key] : 
+                   (currentEvolvedParams[keyKebab] !== undefined ? currentEvolvedParams[keyKebab] : "-");
         
         const fmt = (v) => {
             if (v === "-") return "-";
