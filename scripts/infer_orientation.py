@@ -115,14 +115,28 @@ def run_inference(db_path="config.db"):
                 daily_data[day] = []
             daily_data[day].append((ts, val))
 
-        # Sort by daytime average to select best summer days
-        daily_averages = []
+        # Sort by daytime average to select best summer and winter days
+        summer_days = []
+        winter_days = []
         for day, pts in daily_data.items():
             daytime = [v for _, v in pts if v > 10.0]
             if len(daytime) >= 5:
-                daily_averages.append((day, sum(daytime) / len(daytime)))
-        daily_averages.sort(key=lambda x: x[1], reverse=True)
-        top_days = [day for day, _ in daily_averages[:5]]
+                avg = sum(daytime) / len(daytime)
+                ts = pts[0][0]
+                dt = datetime.fromtimestamp(ts, tz=timezone.utc)
+                if dt.month in [10, 11, 12, 1, 2, 3]:
+                    summer_days.append((day, avg))
+                else:
+                    winter_days.append((day, avg))
+
+        summer_days.sort(key=lambda x: x[1], reverse=True)
+        winter_days.sort(key=lambda x: x[1], reverse=True)
+        
+        top_days = [day for day, _ in summer_days[:3]] + [day for day, _ in winter_days[:3]]
+        if not top_days:
+            all_days = summer_days + winter_days
+            all_days.sort(key=lambda x: x[1], reverse=True)
+            top_days = [day for day, _ in all_days[:5]]
 
         # Gather daytime points
         points = []
@@ -152,7 +166,11 @@ def run_inference(db_path="config.db"):
                 t = float(t_deg)
                 a = float(a_deg)
                 actual_vals = [p[0] for p in precomputed]
-                modeled_vals = [calculate_poa_irradiance(800.0, 100.0, p[1], p[2], t, a) for p in precomputed]
+                modeled_vals = []
+                for _, el, az in precomputed:
+                    dni = 900.0 * math.sin(max(0.0, el))
+                    dhi = 120.0 * math.sin(max(0.0, el))
+                    modeled_vals.append(calculate_poa_irradiance(dni, dhi, el, az, t, a))
                 r = pearson_correlation(actual_vals, modeled_vals)
                 if r > best_r:
                     best_r = r; best_tilt = t; best_azimuth = a
@@ -169,7 +187,11 @@ def run_inference(db_path="config.db"):
             for a_diff in range(-10, 11):
                 a = (coarse_azimuth + (a_diff * 0.5) + 360.0) % 360.0
                 actual_vals = [p[0] for p in precomputed]
-                modeled_vals = [calculate_poa_irradiance(800.0, 100.0, p[1], p[2], t, a) for p in precomputed]
+                modeled_vals = []
+                for _, el, az in precomputed:
+                    dni = 900.0 * math.sin(max(0.0, el))
+                    dhi = 120.0 * math.sin(max(0.0, el))
+                    modeled_vals.append(calculate_poa_irradiance(dni, dhi, el, az, t, a))
                 r = pearson_correlation(actual_vals, modeled_vals)
                 if r > fine_best_r:
                     fine_best_r = r; best_tilt = t; best_azimuth = a

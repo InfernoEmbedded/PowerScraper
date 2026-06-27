@@ -40,23 +40,50 @@ pub async fn handle_infer_orientation(
         return Err((axum::http::StatusCode::BAD_REQUEST, "No historical solar telemetry found for this inverter and PV string.".to_string()));
     }
     
-    let mut daily_averages: Vec<(i64, f64)> = daily_data.iter()
-        .filter_map(|(&day, pts)| {
-            let daytime_pts: Vec<f64> = pts.iter()
-                .filter(|&&(_, v)| v > 10.0)
-                .map(|&(_, v)| v)
-                .collect();
-            if daytime_pts.len() >= 5 {
-                let sum: f64 = daytime_pts.iter().sum();
-                Some((day, sum / daytime_pts.len() as f64))
-            } else {
-                None
-            }
-        })
-        .collect();
-    daily_averages.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let mut summer_days = Vec::new();
+    let mut winter_days = Vec::new();
     
-    let top_days: Vec<i64> = daily_averages.iter().take(5).map(|&(day, _)| day).collect();
+    for (&day, pts) in &daily_data {
+        let daytime_pts: Vec<f64> = pts.iter()
+            .filter(|&&(_, v)| v > 10.0)
+            .map(|&(_, v)| v)
+            .collect();
+        if daytime_pts.len() >= 5 {
+            let sum: f64 = daytime_pts.iter().sum();
+            let avg = sum / daytime_pts.len() as f64;
+            
+            if let Some(&(ts, _)) = pts.first() {
+                if let Some(dt) = chrono::DateTime::from_timestamp(ts, 0) {
+                    use chrono::Datelike;
+                    let month = dt.month();
+                    // Southern hemisphere summer: Oct (10) to Mar (3)
+                    if month >= 10 || month <= 3 {
+                        summer_days.push((day, avg));
+                    } else {
+                        winter_days.push((day, avg));
+                    }
+                } else {
+                    winter_days.push((day, avg));
+                }
+            }
+        }
+    }
+    
+    summer_days.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    winter_days.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    
+    let mut top_days: Vec<i64> = summer_days.iter().take(3).map(|&(day, _)| day).collect();
+    for &(day, _) in winter_days.iter().take(3) {
+        top_days.push(day);
+    }
+    
+    if top_days.is_empty() {
+        let mut all_days = Vec::new();
+        all_days.extend(summer_days);
+        all_days.extend(winter_days);
+        all_days.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        top_days = all_days.iter().take(5).map(|&(day, _)| day).collect();
+    }
     
     let mut points = Vec::new();
     for day in top_days {
@@ -98,7 +125,9 @@ pub async fn handle_infer_orientation(
             let n = precomputed_solar.len() as f64;
             
             for &(actual_w, el, az) in &precomputed_solar {
-                let modeled_poa = crate::power_manager::calculate_poa_irradiance(800.0, 100.0, el, az, t, a);
+                let dni = 900.0 * el.sin().max(0.0);
+                let dhi = 120.0 * el.sin().max(0.0);
+                let modeled_poa = crate::power_manager::calculate_poa_irradiance(dni, dhi, el, az, t, a);
                 sum_x += actual_w;
                 sum_y += modeled_poa;
                 sum_x2 += actual_w * actual_w;
@@ -139,7 +168,9 @@ pub async fn handle_infer_orientation(
             let n = precomputed_solar.len() as f64;
             
             for &(actual_w, el, az) in &precomputed_solar {
-                let modeled_poa = crate::power_manager::calculate_poa_irradiance(800.0, 100.0, el, az, t, a);
+                let dni = 900.0 * el.sin().max(0.0);
+                let dhi = 120.0 * el.sin().max(0.0);
+                let modeled_poa = crate::power_manager::calculate_poa_irradiance(dni, dhi, el, az, t, a);
                 sum_x += actual_w;
                 sum_y += modeled_poa;
                 sum_x2 += actual_w * actual_w;
@@ -253,7 +284,9 @@ mod tests {
                 let ts = day_start + (hour * 3600);
                 let utc_time = chrono::DateTime::from_timestamp(ts, 0).unwrap();
                 let (el, az) = crate::power_manager::calculate_solar_position(0.0, 0.0, utc_time);
-                let poa = crate::power_manager::calculate_poa_irradiance(800.0, 100.0, el, az, 20.0, 180.0);
+                let dni = 900.0 * el.sin().max(0.0);
+                let dhi = 120.0 * el.sin().max(0.0);
+                let poa = crate::power_manager::calculate_poa_irradiance(dni, dhi, el, az, 20.0, 180.0);
                 let pv_power = poa * 3.0;
                 
                 conn.execute(
