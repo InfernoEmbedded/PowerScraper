@@ -99,7 +99,9 @@ pub async fn handle_infer_orientation(
             }
             
             let num = n * sum_xy - sum_x * sum_y;
-            let den = ((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y)).sqrt();
+            let term1 = (n * sum_x2 - sum_x * sum_x).max(0.0);
+            let term2 = (n * sum_y2 - sum_y * sum_y).max(0.0);
+            let den = (term1 * term2).sqrt();
             let r = if den > 1e-9 { num / den } else { -1.0 };
             
             if r > best_r {
@@ -138,7 +140,9 @@ pub async fn handle_infer_orientation(
             }
             
             let num = n * sum_xy - sum_x * sum_y;
-            let den = ((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y)).sqrt();
+            let term1 = (n * sum_x2 - sum_x * sum_x).max(0.0);
+            let term2 = (n * sum_y2 - sum_y * sum_y).max(0.0);
+            let den = (term1 * term2).sqrt();
             let r = if den > 1e-9 { num / den } else { -1.0 };
             
             if r > fine_best_r {

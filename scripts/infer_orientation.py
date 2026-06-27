@@ -23,6 +23,8 @@ def calculate_solar_position(lat, lon, dt):
         sin_theta_s = -math.cos(delta) * math.sin(h) / cos_alpha
         sin_theta_s = max(-1.0, min(1.0, sin_theta_s))
         theta_s = math.atan2(sin_theta_s, cos_theta_s)
+        # Convert from South-origin (clockwise) to North-origin (clockwise)
+        theta_s = (theta_s + math.pi) % (2.0 * math.pi)
     else:
         theta_s = 0.0
     return alpha, theta_s
@@ -48,7 +50,9 @@ def pearson_correlation(x, y):
     sum_y2 = sum(yi * yi for yi in y)
     sum_xy = sum(xi * yi for xi, yi in zip(x, y))
     num = n * sum_xy - sum_x * sum_y
-    den = math.sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y))
+    term1 = max(0.0, n * sum_x2 - sum_x * sum_x)
+    term2 = max(0.0, n * sum_y2 - sum_y * sum_y)
+    den = math.sqrt(term1 * term2)
     return num / den if den > 1e-9 else -1.0
 
 def run_inference(db_path="config.db"):

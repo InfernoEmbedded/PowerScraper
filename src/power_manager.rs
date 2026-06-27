@@ -2746,8 +2746,10 @@ pub fn calculate_solar_position(lat: f64, lon: f64, utc_time: chrono::DateTime<c
         0.0
     };
     let theta_s = sin_theta_s.atan2(cos_theta_s);
+    // Convert from South-origin (clockwise) to North-origin (clockwise)
+    let theta_s_north = (theta_s + std::f64::consts::PI) % (2.0 * std::f64::consts::PI);
     
-    (alpha, theta_s)
+    (alpha, theta_s_north)
 }
 
 pub fn calculate_poa_irradiance(
