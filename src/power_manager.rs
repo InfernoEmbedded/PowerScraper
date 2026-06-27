@@ -2338,11 +2338,10 @@ pub fn run_historical_simulation(db_path: &str, range: &str) -> Result<Simulatio
     run_historical_simulation_impl(db_path, range, None)
 }
 
-pub fn run_historical_simulation_impl(
+pub fn load_sim_records(
     db_path: &str,
     range: &str,
-    progress_cb: Option<&(dyn Fn(f64, f64) + Send + Sync)>,
-) -> Result<SimulationResponse, String> {
+) -> Result<(Vec<crate::simulation::SimRecord>, crate::simulation::SimConfig), String> {
     let config = crate::config::Config::load_from_db(db_path).unwrap_or_else(|_| crate::config::Config::default_empty());
     let evolved_heuristic_config = config.battery_control.as_ref()
         .and_then(|bc| bc.evolved_heuristic.clone())
@@ -2536,10 +2535,6 @@ pub fn run_historical_simulation_impl(
         r.export_price_cents = last_exp;
     }
 
-    let start_date = records.first().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
-    let end_date = records.last().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
-    let records_simulated = records.len();
-
     let periods_list = if let Some(ref bc) = config.battery_control {
         bc.period.values().cloned().collect()
     } else {
@@ -2561,6 +2556,20 @@ pub fn run_historical_simulation_impl(
         periods: periods_list,
         evolved_heuristic: evolved_heuristic_config,
     };
+
+    Ok((records, sim_config))
+}
+
+pub fn run_historical_simulation_impl(
+    db_path: &str,
+    range: &str,
+    progress_cb: Option<&(dyn Fn(f64, f64) + Send + Sync)>,
+) -> Result<SimulationResponse, String> {
+    let (records, sim_config) = load_sim_records(db_path, range)?;
+
+    let start_date = records.first().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
+    let end_date = records.last().unwrap().dt_local.format("%Y-%m-%d %H:%M:%S").to_string();
+    let records_simulated = records.len();
 
     let sim_config_ref = &sim_config;
     let records_ref = &records;

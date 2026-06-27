@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post},
 };
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
 use tokio::sync::mpsc::Sender;
 use tower_http::cors::CorsLayer;
 
@@ -298,6 +298,8 @@ pub struct StartTrainingRequest {
     pub cores: Option<u32>,
 }
 
+pub static CANCEL_TUNING: AtomicBool = AtomicBool::new(false);
+
 pub async fn handle_start_training(
     db_path: String,
     req: StartTrainingRequest,
@@ -307,280 +309,154 @@ pub async fn handle_start_training(
         return Err((axum::http::StatusCode::CONFLICT, "Training is already running".to_string()));
     }
 
-    // Check if script exists
-    let script_paths = [
-        "scripts/evolutionary_optimizer.py",
-        "/usr/share/powerscraper/scripts/evolutionary_optimizer.py",
-    ];
-    let mut script_path = None;
-    for path in &script_paths {
-        if std::path::Path::new(path).exists() {
-            script_path = Some(path.to_string());
-            break;
-        }
-    }
-
-    let script_path = match script_path {
-        Some(p) => p,
-        None => return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, "Tuning script (evolutionary_optimizer.py) not found on system.".to_string())),
-    };
-
     // Parse seed if requested
-    let mut seed_arg = None;
+    let mut seed_config = None;
     if req.seed {
         if let Ok(cfg) = Config::load_from_db(&db_path) {
             if let Some(bc) = cfg.battery_control {
-                if let Some(eh) = bc.evolved_heuristic {
-                    seed_arg = Some(format!(
-                        "{},{},{},{},{},{},{},{},{}",
-                        eh.neg_price_threshold,
-                        eh.export_dump_threshold,
-                        eh.dump_reserve_demand,
-                        eh.dump_reserve_normal,
-                        eh.pre_charge_price_threshold,
-                        eh.pre_charge_soc_limit,
-                        eh.pre_charge_start_hour,
-                        if eh.use_adaptive_shaving { 1 } else { 0 },
-                        eh.adaptive_safety_buffer
-                    ));
-                }
+                seed_config = bc.evolved_heuristic.clone();
             }
         }
     }
 
-    // Spawn child process
-    let mut cmd = std::process::Command::new("python3");
-    cmd.arg(&script_path)
-       .arg("--db").arg(&db_path)
-       .arg("--generations").arg(req.generations.to_string())
-       .arg("--pop-size").arg(req.population_size.to_string())
-       .arg("--penalty").arg(req.cycle_penalty.to_string());
+    // Reset cancellation flag
+    CANCEL_TUNING.store(false, Ordering::Relaxed);
 
-    if let Some(c) = req.cores {
-        cmd.arg("--cores").arg(c.to_string());
-    }
-
-    // Find MainsMeter name from config source to pass to --mains-source
-    let mains_source = if let Ok(cfg) = Config::load_from_db(&db_path) {
-        cfg.battery_control.as_ref().and_then(|bc| bc.source.clone()).unwrap_or_else(|| "MainsMeter".to_string())
-    } else {
-        "MainsMeter".to_string()
-    };
-    cmd.arg("--mains-source").arg(mains_source);
-
-    if let Some(ref s) = seed_arg {
-        cmd.arg("--seed").arg(s);
-    }
-
-    cmd.stdout(std::process::Stdio::piped());
-    cmd.stderr(std::process::Stdio::piped());
-
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to spawn python optimizer: {}", e))),
-    };
-
-    let stdout = child.stdout.take().unwrap();
-    let stderr = child.stderr.take().unwrap();
+    let db_path_clone = db_path.clone();
+    let req_generations = req.generations;
+    let req_population_size = req.population_size;
+    let req_cycle_penalty = req.cycle_penalty;
 
     // Reset progress state
     *progress = TuningProgress {
         is_running: true,
-        total_generations: req.generations,
+        total_generations: req_generations,
         ..Default::default()
     };
 
-    *get_active_child().lock().unwrap() = Some(child);
-
     let tx = get_tuning_channel().clone();
-    
-    // Spawn task to read outputs in background
-    tokio::task::spawn_blocking(move || {
-        use std::io::{BufRead, BufReader};
-        
-        let stdout_reader = BufReader::new(stdout);
-        let stderr_reader = BufReader::new(stderr);
 
-        // Spawn a thread to log stderr
-        let tx_err = tx.clone();
-        std::thread::spawn(move || {
-            for line_res in stderr_reader.lines() {
-                if let Ok(line) = line_res {
-                    let _ = tx_err.send(TuningLogEvent {
-                        percent: 0.0,
-                        gen_num: 0,
-                        total_gens: 0,
-                        best_cost: 0.0,
-                        bill: 0.0,
-                        cycles: 0.0,
-                        log_line: format!("[stderr] {}", line),
-                        done: false,
-                        error: None,
-                        best_params: None,
-                    });
-                    if let Ok(mut prog) = get_tuning_progress().lock() {
-                        prog.logs.push(format!("[stderr] {}", line));
-                    }
+    // Spawn tuning thread
+    tokio::task::spawn_blocking(move || {
+        let (records, sim_config) = match crate::power_manager::load_sim_records(&db_path_clone, "all") {
+            Ok(res) => res,
+            Err(e) => {
+                let mut progress = get_tuning_progress().lock().unwrap();
+                progress.is_running = false;
+                progress.error = Some(e.clone());
+                let _ = tx.send(TuningLogEvent {
+                    percent: 0.0,
+                    gen_num: 0,
+                    total_gens: req_generations,
+                    best_cost: 0.0,
+                    bill: 0.0,
+                    cycles: 0.0,
+                    log_line: format!("Error loading data: {}", e),
+                    done: true,
+                    error: Some(e),
+                    best_params: None,
+                });
+                return;
+            }
+        };
+
+        let progress_tx = tx.clone();
+        let progress_cb = move |event: crate::simulation::tuning::TuningProgressEvent| -> bool {
+            if CANCEL_TUNING.load(Ordering::Relaxed) {
+                return false;
+            }
+
+            let log_event = TuningLogEvent {
+                percent: event.percent,
+                gen_num: event.gen_num,
+                total_gens: event.total_gens,
+                best_cost: event.best_cost,
+                bill: event.bill,
+                cycles: event.cycles,
+                log_line: event.log_line.clone(),
+                done: event.done,
+                error: None,
+                best_params: event.best_params.clone(),
+            };
+
+            if let Ok(mut prog) = get_tuning_progress().lock() {
+                prog.last_generation = event.gen_num;
+                prog.percent = event.percent;
+                prog.best_cost = event.best_cost;
+                prog.bill = event.bill;
+                prog.cycles = event.cycles;
+                prog.logs.push(event.log_line);
+                if event.done {
+                    prog.is_running = false;
+                    prog.best_params = event.best_params.clone();
                 }
             }
-        });
 
-        let mut in_json = false;
-        let mut json_str = String::new();
+            let _ = progress_tx.send(log_event);
+            true
+        };
 
-        for line_res in stdout_reader.lines() {
-            if let Ok(line) = line_res {
-                let mut percent = 0.0;
-                let mut gen_num = 0;
-                let mut best_cost = 0.0;
-                let mut bill = 0.0;
-                let mut cycles = 0.0;
-                let mut event_params = None;
-
-                if line.contains("GEN_PROGRESS:") {
-                    // GEN_PROGRESS: 45/100 | BEST_COST: 123.45 | BILL: 99.12 | CYCLES: 1.2 | PERCENT: 45.0
-                    let parts: Vec<&str> = line.split('|').collect();
-                    for part in parts {
-                        let p = part.trim();
-                        if p.starts_with("GEN_PROGRESS:") {
-                            let val_parts: Vec<&str> = p.split_whitespace().collect();
-                            if val_parts.len() == 2 {
-                                let ratio_parts: Vec<&str> = val_parts[1].split('/').collect();
-                                if ratio_parts.len() == 2 {
-                                    gen_num = ratio_parts[0].parse().unwrap_or(0);
-                                }
-                            }
-                        } else if p.starts_with("BEST_COST:") {
-                            best_cost = p.replace("BEST_COST:", "").trim().parse().unwrap_or(0.0);
-                        } else if p.starts_with("BILL:") {
-                            bill = p.replace("BILL:", "").trim().parse().unwrap_or(0.0);
-                        } else if p.starts_with("CYCLES:") {
-                            cycles = p.replace("CYCLES:", "").trim().parse().unwrap_or(0.0);
-                        } else if p.starts_with("PERCENT:") {
-                            percent = p.replace("PERCENT:", "").trim().parse().unwrap_or(0.0);
-                        }
-                    }
-
-                    if let Ok(mut prog) = get_tuning_progress().lock() {
-                        prog.last_generation = gen_num;
-                        prog.percent = percent;
-                        prog.best_cost = best_cost;
-                        prog.bill = bill;
-                        prog.cycles = cycles;
-                    }
+        match crate::simulation::tuning::run_tuning(
+            &records,
+            &sim_config,
+            req_generations,
+            req_population_size,
+            req_cycle_penalty,
+            seed_config,
+            Some(&progress_cb),
+        ) {
+            Ok(best_params) => {
+                if CANCEL_TUNING.load(Ordering::Relaxed) {
+                    return;
                 }
+                
+                let mut progress = get_tuning_progress().lock().unwrap();
+                progress.is_running = false;
+                progress.best_params = Some(best_params.clone());
 
-                if line.contains("--- JSON RESULT ---") {
-                    in_json = true;
-                    json_str.clear();
-                } else if line.contains("-------------------") && in_json {
-                    in_json = false;
-                    
-                    #[derive(serde::Deserialize)]
-                    struct BestParamsJson {
-                        neg_price_threshold: f64,
-                        export_dump_threshold: f64,
-                        dump_reserve_demand: f64,
-                        dump_reserve_normal: f64,
-                        pre_charge_price_threshold: f64,
-                        pre_charge_soc_limit: f64,
-                        pre_charge_start_hour: u32,
-                        use_adaptive_shaving: bool,
-                        adaptive_safety_buffer: f64,
-                    }
-
-                    #[derive(serde::Deserialize)]
-                    #[allow(dead_code)]
-                    struct EvolvedTuningResult {
-                        status: String,
-                        best_params: BestParamsJson,
-                    }
-
-                    if let Ok(res) = serde_json::from_str::<EvolvedTuningResult>(&json_str) {
-                        let parsed_params = EvolvedHeuristicConfig {
-                            neg_price_threshold: res.best_params.neg_price_threshold,
-                            export_dump_threshold: res.best_params.export_dump_threshold,
-                            dump_reserve_demand: res.best_params.dump_reserve_demand,
-                            dump_reserve_normal: res.best_params.dump_reserve_normal,
-                            pre_charge_price_threshold: res.best_params.pre_charge_price_threshold,
-                            pre_charge_soc_limit: res.best_params.pre_charge_soc_limit,
-                            pre_charge_start_hour: res.best_params.pre_charge_start_hour,
-                            use_adaptive_shaving: res.best_params.use_adaptive_shaving,
-                            adaptive_safety_buffer: res.best_params.adaptive_safety_buffer,
-                        };
-                        event_params = Some(parsed_params.clone());
-                        if let Ok(mut prog) = get_tuning_progress().lock() {
-                            prog.best_params = Some(parsed_params);
-                        }
-                    }
-                } else if in_json {
-                    json_str.push_str(&line);
-                    json_str.push('\n');
-                }
-
-                if let Ok(mut prog) = get_tuning_progress().lock() {
-                    prog.logs.push(line.clone());
+                let _ = tx.send(TuningLogEvent {
+                    percent: 100.0,
+                    gen_num: req_generations,
+                    total_gens: req_generations,
+                    best_cost: progress.best_cost,
+                    bill: progress.bill,
+                    cycles: progress.cycles,
+                    log_line: "Tuning successfully completed in Rust.".to_string(),
+                    done: true,
+                    error: None,
+                    best_params: Some(best_params),
+                });
+            }
+            Err(e) => {
+                let mut progress = get_tuning_progress().lock().unwrap();
+                progress.is_running = false;
+                if e == "Tuning cancelled by user" {
+                    progress.error = Some("Cancelled by user".to_string());
+                } else {
+                    progress.error = Some(e.clone());
                 }
 
                 let _ = tx.send(TuningLogEvent {
-                    percent,
-                    gen_num,
-                    total_gens: req.generations,
-                    best_cost,
-                    bill,
-                    cycles,
-                    log_line: line,
-                    done: false,
-                    error: None,
-                    best_params: event_params,
+                    percent: progress.percent,
+                    gen_num: progress.last_generation,
+                    total_gens: req_generations,
+                    best_cost: progress.best_cost,
+                    bill: progress.bill,
+                    cycles: progress.cycles,
+                    log_line: format!("Error during tuning: {}", e),
+                    done: true,
+                    error: Some(e),
+                    best_params: None,
                 });
             }
         }
-
-        // Wait for child process exit
-        let mut child_lock = get_active_child().lock().unwrap();
-        let status = if let Some(mut c) = child_lock.take() {
-            c.wait()
-        } else {
-            Ok(std::process::ExitStatus::default())
-        };
-
-        let mut progress_lock = get_tuning_progress().lock().unwrap();
-        progress_lock.is_running = false;
-
-        let (done_ok, err_msg) = match status {
-            Ok(s) if s.success() => (true, None),
-            Ok(s) => (false, Some(format!("Python optimizer script exited with status: {}", s))),
-            Err(e) => (false, Some(format!("Failed to await Python script: {}", e))),
-        };
-
-        if !done_ok {
-            progress_lock.error = err_msg.clone();
-        }
-
-        let _ = tx.send(TuningLogEvent {
-            percent: progress_lock.percent,
-            gen_num: progress_lock.last_generation,
-            total_gens: progress_lock.total_generations,
-            best_cost: progress_lock.best_cost,
-            bill: progress_lock.bill,
-            cycles: progress_lock.cycles,
-            log_line: if done_ok { "Tuning successfully completed.".to_string() } else { format!("Error: {}", err_msg.as_ref().unwrap()) },
-            done: true,
-            error: err_msg,
-            best_params: progress_lock.best_params.clone(),
-        });
     });
 
     Ok(Json(serde_json::json!({ "status": "started" })))
 }
 
 pub async fn handle_cancel_training() -> impl IntoResponse {
-    let mut child_lock = get_active_child().lock().unwrap();
-    if let Some(mut child) = child_lock.take() {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
+    CANCEL_TUNING.store(true, Ordering::Relaxed);
 
     let mut prog = get_tuning_progress().lock().unwrap();
     prog.is_running = false;

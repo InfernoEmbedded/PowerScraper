@@ -114,3 +114,4 @@ pub mod lookahead_mpc;
 pub mod adaptive_peak;
 pub mod mpc_arbitrage;
 pub mod evolved_heuristic;
+pub mod tuning;
