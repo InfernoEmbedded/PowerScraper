@@ -1,4 +1,4 @@
-use crate::config::{Config, EvolvedHeuristicConfig};
+use crate::config::Config;
 use axum::{
     Json, Router,
     http::header,
@@ -216,7 +216,7 @@ pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String
             post({
                 let db_path = db_path_apply.clone();
                 let reload_tx = reload_tx_apply.clone();
-                move |Json(params): Json<EvolvedHeuristicConfig>| {
+                move |Json(params): Json<ApplyParamsRequest>| {
                     let db_path = db_path.clone();
                     let reload_tx = reload_tx.clone();
                     async move {
@@ -252,6 +252,7 @@ pub struct TuningProgress {
     pub cycles: f64,
     pub logs: Vec<String>,
     pub best_params: Option<crate::config::EvolvedHeuristicConfig>,
+    pub best_params_monthly: Option<HashMap<String, crate::config::EvolvedHeuristicConfig>>,
     pub error: Option<String>,
 }
 
@@ -268,6 +269,7 @@ pub struct TuningLogEvent {
     pub done: bool,
     pub error: Option<String>,
     pub best_params: Option<crate::config::EvolvedHeuristicConfig>,
+    pub best_params_monthly: Option<HashMap<String, crate::config::EvolvedHeuristicConfig>>,
 }
 
 pub static TUNING_PROGRESS: OnceLock<Mutex<TuningProgress>> = OnceLock::new();
@@ -298,6 +300,13 @@ pub struct StartTrainingRequest {
     pub cores: Option<u32>,
 }
 
+#[derive(serde::Deserialize)]
+#[serde(untagged)]
+pub enum ApplyParamsRequest {
+    Single(crate::config::EvolvedHeuristicConfig),
+    Monthly(HashMap<String, crate::config::EvolvedHeuristicConfig>),
+}
+
 pub static CANCEL_TUNING: AtomicBool = AtomicBool::new(false);
 
 pub async fn handle_start_training(
@@ -311,10 +320,12 @@ pub async fn handle_start_training(
 
     // Parse seed if requested
     let mut seed_config = None;
+    let mut seed_config_monthly = None;
     if req.seed {
         if let Ok(cfg) = Config::load_from_db(&db_path) {
             if let Some(bc) = cfg.battery_control {
                 seed_config = bc.evolved_heuristic.clone();
+                seed_config_monthly = bc.evolved_heuristic_monthly.clone();
             }
         }
     }
@@ -355,6 +366,7 @@ pub async fn handle_start_training(
                     done: true,
                     error: Some(e),
                     best_params: None,
+                    best_params_monthly: None,
                 });
                 return;
             }
@@ -377,6 +389,7 @@ pub async fn handle_start_training(
                 done: event.done,
                 error: None,
                 best_params: event.best_params.clone(),
+                best_params_monthly: event.best_params_monthly.clone(),
             };
 
             if let Ok(mut prog) = get_tuning_progress().lock() {
@@ -389,6 +402,7 @@ pub async fn handle_start_training(
                 if event.done {
                     prog.is_running = false;
                     prog.best_params = event.best_params.clone();
+                    prog.best_params_monthly = event.best_params_monthly.clone();
                 }
             }
 
@@ -403,28 +417,30 @@ pub async fn handle_start_training(
             req_population_size,
             req_cycle_penalty,
             seed_config,
+            seed_config_monthly,
             Some(&progress_cb),
         ) {
-            Ok(best_params) => {
+            Ok(best_params_monthly) => {
                 if CANCEL_TUNING.load(Ordering::Relaxed) {
                     return;
                 }
                 
                 let mut progress = get_tuning_progress().lock().unwrap();
                 progress.is_running = false;
-                progress.best_params = Some(best_params.clone());
+                progress.best_params_monthly = Some(best_params_monthly.clone());
 
                 let _ = tx.send(TuningLogEvent {
                     percent: 100.0,
-                    gen_num: req_generations,
-                    total_gens: req_generations,
+                    gen_num: progress.last_generation,
+                    total_gens: progress.total_generations,
                     best_cost: progress.best_cost,
                     bill: progress.bill,
                     cycles: progress.cycles,
-                    log_line: "Tuning successfully completed in Rust.".to_string(),
+                    log_line: "Tuning successfully completed in Rust for all months.".to_string(),
                     done: true,
                     error: None,
-                    best_params: Some(best_params),
+                    best_params: None,
+                    best_params_monthly: Some(best_params_monthly),
                 });
             }
             Err(e) => {
@@ -439,7 +455,7 @@ pub async fn handle_start_training(
                 let _ = tx.send(TuningLogEvent {
                     percent: progress.percent,
                     gen_num: progress.last_generation,
-                    total_gens: req_generations,
+                    total_gens: progress.total_generations,
                     best_cost: progress.best_cost,
                     bill: progress.bill,
                     cycles: progress.cycles,
@@ -447,6 +463,7 @@ pub async fn handle_start_training(
                     done: true,
                     error: Some(e),
                     best_params: None,
+                    best_params_monthly: None,
                 });
             }
         }
@@ -473,6 +490,7 @@ pub async fn handle_cancel_training() -> impl IntoResponse {
         done: true,
         error: Some("Cancelled by user".to_string()),
         best_params: None,
+        best_params_monthly: None,
     });
 
     Json(serde_json::json!({ "status": "cancelled" }))
@@ -481,7 +499,7 @@ pub async fn handle_cancel_training() -> impl IntoResponse {
 pub async fn handle_apply_training(
     reload_tx: Sender<()>,
     db_path: String,
-    params: EvolvedHeuristicConfig,
+    params: ApplyParamsRequest,
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let mut cfg = match Config::load_from_db(&db_path) {
         Ok(c) => c,
@@ -489,7 +507,14 @@ pub async fn handle_apply_training(
     };
 
     if let Some(ref mut bc) = cfg.battery_control {
-        bc.evolved_heuristic = Some(params);
+        match params {
+            ApplyParamsRequest::Single(single) => {
+                bc.evolved_heuristic = Some(single);
+            }
+            ApplyParamsRequest::Monthly(monthly) => {
+                bc.evolved_heuristic_monthly = Some(monthly);
+            }
+        }
     } else {
         return Err((axum::http::StatusCode::BAD_REQUEST, "Battery control config not initialized in database settings.".to_string()));
     }
@@ -524,6 +549,7 @@ pub async fn handle_training_progress() -> impl IntoResponse {
                 done: false,
                 error: None,
                 best_params: None,
+                best_params_monthly: None,
             };
             sent_logs_idx += 1;
             return Some((Ok::<axum::response::sse::Event, std::convert::Infallible>(

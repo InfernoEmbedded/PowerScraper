@@ -1,5 +1,7 @@
 use crate::config::EvolvedHeuristicConfig;
 use super::{SimRecord, SimConfig};
+use std::collections::HashMap;
+use chrono::Datelike;
 
 pub struct SimpleRng {
     state: u64,
@@ -49,20 +51,26 @@ pub struct Bounds {
     pub pre_charge_start_hour: (f64, f64),
     pub use_adaptive_shaving: (f64, f64),
     pub adaptive_safety_buffer: (f64, f64),
+    pub forecast_solar_weight: (f64, f64),
+    pub tier2_export_dump_threshold: (f64, f64),
+    pub tier2_dump_reserve: (f64, f64),
 }
 
 impl Bounds {
     pub fn new(battery_capacity: f64) -> Self {
         Self {
             neg_price_threshold: (-15.0, 5.0),
-            export_dump_threshold: (10.0, 60.0),
+            export_dump_threshold: (10.0, 100.0),
             dump_reserve_demand: (0.0, battery_capacity),
             dump_reserve_normal: (0.0, battery_capacity),
-            pre_charge_price_threshold: (0.0, 30.0),
+            pre_charge_price_threshold: (0.0, 100.0),
             pre_charge_soc_limit: (0.0, 1.0),
-            pre_charge_start_hour: (0.0, 15.0),
+            pre_charge_start_hour: (0.0, 24.0),
             use_adaptive_shaving: (0.0, 1.0),
             adaptive_safety_buffer: (-500.0, 1500.0),
+            forecast_solar_weight: (0.0, 1.0),
+            tier2_export_dump_threshold: (10.0, 100.0),
+            tier2_dump_reserve: (0.0, battery_capacity),
         }
     }
 }
@@ -78,6 +86,9 @@ pub struct Individual {
     pub pre_charge_start_hour: f64,
     pub use_adaptive_shaving: f64,
     pub adaptive_safety_buffer: f64,
+    pub forecast_solar_weight: f64,
+    pub tier2_export_dump_threshold: f64,
+    pub tier2_dump_reserve: f64,
 }
 
 impl Individual {
@@ -92,6 +103,9 @@ impl Individual {
             pre_charge_start_hour: rng.range(bounds.pre_charge_start_hour.0, bounds.pre_charge_start_hour.1),
             use_adaptive_shaving: rng.range(bounds.use_adaptive_shaving.0, bounds.use_adaptive_shaving.1),
             adaptive_safety_buffer: rng.range(bounds.adaptive_safety_buffer.0, bounds.adaptive_safety_buffer.1),
+            forecast_solar_weight: rng.range(bounds.forecast_solar_weight.0, bounds.forecast_solar_weight.1),
+            tier2_export_dump_threshold: rng.range(bounds.tier2_export_dump_threshold.0, bounds.tier2_export_dump_threshold.1),
+            tier2_dump_reserve: rng.range(bounds.tier2_dump_reserve.0, bounds.tier2_dump_reserve.1),
         }
     }
 
@@ -105,6 +119,9 @@ impl Individual {
         self.pre_charge_start_hour = self.pre_charge_start_hour.clamp(bounds.pre_charge_start_hour.0, bounds.pre_charge_start_hour.1);
         self.use_adaptive_shaving = self.use_adaptive_shaving.clamp(bounds.use_adaptive_shaving.0, bounds.use_adaptive_shaving.1);
         self.adaptive_safety_buffer = self.adaptive_safety_buffer.clamp(bounds.adaptive_safety_buffer.0, bounds.adaptive_safety_buffer.1);
+        self.forecast_solar_weight = self.forecast_solar_weight.clamp(bounds.forecast_solar_weight.0, bounds.forecast_solar_weight.1);
+        self.tier2_export_dump_threshold = self.tier2_export_dump_threshold.clamp(bounds.tier2_export_dump_threshold.0, bounds.tier2_export_dump_threshold.1);
+        self.tier2_dump_reserve = self.tier2_dump_reserve.clamp(bounds.tier2_dump_reserve.0, bounds.tier2_dump_reserve.1);
     }
 
     pub fn mutate(&mut self, rng: &mut SimpleRng, bounds: &Bounds, rate: f64) {
@@ -124,6 +141,9 @@ impl Individual {
         mutate_param(&mut self.pre_charge_start_hour, bounds.pre_charge_start_hour, rng);
         mutate_param(&mut self.use_adaptive_shaving, bounds.use_adaptive_shaving, rng);
         mutate_param(&mut self.adaptive_safety_buffer, bounds.adaptive_safety_buffer, rng);
+        mutate_param(&mut self.forecast_solar_weight, bounds.forecast_solar_weight, rng);
+        mutate_param(&mut self.tier2_export_dump_threshold, bounds.tier2_export_dump_threshold, rng);
+        mutate_param(&mut self.tier2_dump_reserve, bounds.tier2_dump_reserve, rng);
 
         self.clamp(bounds);
     }
@@ -148,6 +168,9 @@ impl Individual {
             pre_charge_start_hour: crossover_param(parent1.pre_charge_start_hour, parent2.pre_charge_start_hour, bounds.pre_charge_start_hour, rng),
             use_adaptive_shaving: crossover_param(parent1.use_adaptive_shaving, parent2.use_adaptive_shaving, bounds.use_adaptive_shaving, rng),
             adaptive_safety_buffer: crossover_param(parent1.adaptive_safety_buffer, parent2.adaptive_safety_buffer, bounds.adaptive_safety_buffer, rng),
+            forecast_solar_weight: crossover_param(parent1.forecast_solar_weight, parent2.forecast_solar_weight, bounds.forecast_solar_weight, rng),
+            tier2_export_dump_threshold: crossover_param(parent1.tier2_export_dump_threshold, parent2.tier2_export_dump_threshold, bounds.tier2_export_dump_threshold, rng),
+            tier2_dump_reserve: crossover_param(parent1.tier2_dump_reserve, parent2.tier2_dump_reserve, bounds.tier2_dump_reserve, rng),
         }
     }
 
@@ -162,6 +185,9 @@ impl Individual {
             pre_charge_start_hour: self.pre_charge_start_hour.round() as u32,
             use_adaptive_shaving: self.use_adaptive_shaving.round() >= 0.5,
             adaptive_safety_buffer: (self.adaptive_safety_buffer * 100.0).round() / 100.0,
+            forecast_solar_weight: (self.forecast_solar_weight * 1000.0).round() / 1000.0,
+            tier2_export_dump_threshold: (self.tier2_export_dump_threshold * 100.0).round() / 100.0,
+            tier2_dump_reserve: (self.tier2_dump_reserve * 100.0).round() / 100.0,
         }
     }
 
@@ -176,6 +202,9 @@ impl Individual {
             pre_charge_start_hour: cfg.pre_charge_start_hour as f64,
             use_adaptive_shaving: if cfg.use_adaptive_shaving { 1.0 } else { 0.0 },
             adaptive_safety_buffer: cfg.adaptive_safety_buffer,
+            forecast_solar_weight: cfg.forecast_solar_weight,
+            tier2_export_dump_threshold: cfg.tier2_export_dump_threshold,
+            tier2_dump_reserve: cfg.tier2_dump_reserve,
         }
     }
 }
@@ -190,6 +219,7 @@ pub struct TuningProgressEvent {
     pub log_line: String,
     pub done: bool,
     pub best_params: Option<EvolvedHeuristicConfig>,
+    pub best_params_monthly: Option<HashMap<String, EvolvedHeuristicConfig>>,
 }
 
 pub fn run_tuning(
@@ -199,174 +229,218 @@ pub fn run_tuning(
     population_size: u32,
     cycle_penalty: f64,
     seed_config: Option<EvolvedHeuristicConfig>,
+    seed_config_monthly: Option<HashMap<String, EvolvedHeuristicConfig>>,
     progress_cb: Option<&(dyn Fn(TuningProgressEvent) -> bool + Send + Sync)>,
-) -> Result<EvolvedHeuristicConfig, String> {
+) -> Result<HashMap<String, EvolvedHeuristicConfig>, String> {
     if records.is_empty() {
         return Err("No telemetry records found for tuning".to_string());
     }
 
-    let _total_days = if records.len() >= 2 {
-        let first = records.first().unwrap();
-        let last = records.last().unwrap();
-        ((last.timestamp - first.timestamp) as f64 / 86400.0).max(1.0)
-    } else {
-        30.0
-    };
+    use std::collections::BTreeMap;
+    let mut monthly_records: BTreeMap<u32, Vec<SimRecord>> = BTreeMap::new();
+    for r in records {
+        let m = r.dt_local.month();
+        monthly_records.entry(m).or_default().push(r.clone());
+    }
+
+    let active_months: Vec<u32> = monthly_records.iter()
+        .filter(|(_, recs)| recs.len() >= 24)
+        .map(|(&m, _)| m)
+        .collect();
+
+    if active_months.is_empty() {
+        return Err("No months found with sufficient telemetry data (>= 24 points) to train.".to_string());
+    }
+
+    let total_months = active_months.len();
+    let mut tuned_monthly_params = HashMap::new();
+    let mut accumulated_best_bill = 0.0;
+    let mut accumulated_best_cycles = 0.0;
+    let mut accumulated_best_cost = 0.0;
 
     let bounds = Bounds::new(sim_config_template.battery_capacity_kwh);
     let mut rng = SimpleRng::new(1337);
 
-    let mut population = Vec::with_capacity(population_size as usize);
-    if let Some(ref seed) = seed_config {
-        let seed_ind = Individual::from_evolved_config(seed);
-        population.push(seed_ind.clone());
-        
-        for _ in 0..std::cmp::min(5, population_size - 1) {
-            let mut clone = seed_ind.clone();
-            clone.mutate(&mut rng, &bounds, 1.0);
-            population.push(clone);
-        }
-    }
-
-    while population.len() < population_size as usize {
-        population.push(Individual::random(&mut rng, &bounds));
-    }
-
-    let mut best_ind = population[0].clone();
-    let mut best_cost = f64::MAX;
-    let mut best_bill = 0.0;
-    let mut best_cycles = 0.0;
-
-    for gen_num in 1..=generations {
-        let num_threads = std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4);
-            
-        let chunk_size = (population.len() + num_threads - 1) / num_threads;
-        let mut results = vec![(0.0, 0.0, 0.0); population.len()];
-        
-        std::thread::scope(|s| {
-            let mut threads = Vec::new();
-            let population_slice = &population;
-            
-            for (thread_id, chunk) in population_slice.chunks(chunk_size).enumerate() {
-                let records_ref = records;
-                let template_ref = sim_config_template;
-                
-                let handle = s.spawn(move || {
-                    let mut chunk_res = Vec::new();
-                    for ind in chunk {
-                        let mut sim_config = template_ref.clone();
-                        sim_config.evolved_heuristic = ind.to_evolved_config();
-                        let res = crate::simulation::evolved_heuristic::run(records_ref, &sim_config);
-                        let cost = res.energy_cost + res.demand_charges + res.cycles * cycle_penalty;
-                        let bill = res.energy_cost + res.demand_charges;
-                        chunk_res.push((cost, bill, res.cycles));
-                    }
-                    (thread_id, chunk_res)
-                });
-                threads.push(handle);
-            }
-            
-            for handle in threads {
-                if let Ok((thread_id, chunk_res)) = handle.join() {
-                    let start_idx = thread_id * chunk_size;
-                    for (i, val) in chunk_res.into_iter().enumerate() {
-                        results[start_idx + i] = val;
-                    }
-                }
-            }
-        });
-
-        let mut gen_best_cost = f64::MAX;
-        let mut gen_best_idx = 0;
-        for (i, &(cost, _, _)) in results.iter().enumerate() {
-            if cost < gen_best_cost {
-                gen_best_cost = cost;
-                gen_best_idx = i;
-            }
-        }
-
-        if gen_best_cost < best_cost {
-            best_cost = gen_best_cost;
-            best_ind = population[gen_best_idx].clone();
-            best_bill = results[gen_best_idx].1;
-            best_cycles = results[gen_best_idx].2;
-        }
-
-        let percent = (gen_num as f64 / generations as f64) * 100.0;
-        let log_line = format!(
-            "GEN_PROGRESS: {}/{} | BEST_COST: {:.2} | BILL: {:.2} | CYCLES: {:.1} | PERCENT: {:.1}",
-            gen_num, generations, best_cost, best_bill, best_cycles, percent
-        );
-        
-        if let Some(ref cb) = progress_cb {
-            let should_continue = cb(TuningProgressEvent {
-                percent,
-                gen_num,
-                total_gens: generations,
-                best_cost,
-                bill: best_bill,
-                cycles: best_cycles,
-                log_line,
-                done: false,
-                best_params: Some(best_ind.to_evolved_config()),
-            });
-            if !should_continue {
-                return Err("Tuning cancelled by user".to_string());
-            }
-        }
-
-        let mut pop_with_res: Vec<(Individual, f64)> = population.iter()
-            .zip(results.iter())
-            .map(|(ind, &(cost, _, _))| (ind.clone(), cost))
-            .collect();
-            
-        pop_with_res.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-
-        let mut new_population = Vec::with_capacity(population_size as usize);
-        new_population.push(pop_with_res[0].0.clone());
-        new_population.push(pop_with_res[1].0.clone());
-
-        let tournament_select = |pop: &[(Individual, f64)], rng: &mut SimpleRng| -> Individual {
-            let mut best_candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
-            for _ in 0..2 {
-                let candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
-                if candidate.1 < best_candidate.1 {
-                    best_candidate = candidate;
-                }
-            }
-            best_candidate.0.clone()
+    for (month_idx, &month) in active_months.iter().enumerate() {
+        let month_recs = &monthly_records[&month];
+        let month_name = match month {
+            1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
+            5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
+            9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+            _ => "Unknown",
         };
 
-        while new_population.len() < population_size as usize {
-            let parent1 = tournament_select(&pop_with_res, &mut rng);
-            let parent2 = tournament_select(&pop_with_res, &mut rng);
+        let month_seed = seed_config_monthly.as_ref()
+            .and_then(|m: &HashMap<String, EvolvedHeuristicConfig>| m.get(&month.to_string()).cloned())
+            .or_else(|| seed_config.clone());
+
+        let mut population = Vec::with_capacity(population_size as usize);
+        if let Some(ref seed) = month_seed {
+            let seed_ind = Individual::from_evolved_config(seed);
+            population.push(seed_ind.clone());
             
-            let mut child = Individual::crossover(&parent1, &parent2, &mut rng, &bounds);
-            child.mutate(&mut rng, &bounds, 0.15);
-            new_population.push(child);
+            for _ in 0..std::cmp::min(5, population_size - 1) {
+                let mut clone = seed_ind.clone();
+                clone.mutate(&mut rng, &bounds, 1.0);
+                population.push(clone);
+            }
         }
 
-        population = new_population;
+        while population.len() < population_size as usize {
+            population.push(Individual::random(&mut rng, &bounds));
+        }
+
+        let mut best_ind = population[0].clone();
+        let mut best_cost = f64::MAX;
+        let mut best_bill = 0.0;
+        let mut best_cycles = 0.0;
+
+        for gen_num in 1..=generations {
+            let num_threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+                
+            let chunk_size = (population.len() + num_threads - 1) / num_threads;
+            let mut results = vec![(0.0, 0.0, 0.0); population.len()];
+            
+            std::thread::scope(|s| {
+                let mut threads = Vec::new();
+                let population_slice = &population;
+                
+                for (thread_id, chunk) in population_slice.chunks(chunk_size).enumerate() {
+                    let records_ref = month_recs;
+                    let template_ref = sim_config_template;
+                    
+                    let handle = s.spawn(move || {
+                        let mut chunk_res = Vec::new();
+                        for ind in chunk {
+                            let mut sim_config = template_ref.clone();
+                            sim_config.evolved_heuristic = ind.to_evolved_config();
+                            let res = crate::simulation::evolved_heuristic::run(records_ref, &sim_config);
+                            let cost = res.energy_cost + res.demand_charges + res.cycles * cycle_penalty;
+                            let bill = res.energy_cost + res.demand_charges;
+                            chunk_res.push((cost, bill, res.cycles));
+                        }
+                        (thread_id, chunk_res)
+                    });
+                    threads.push(handle);
+                }
+                
+                for handle in threads {
+                    if let Ok((thread_id, chunk_res)) = handle.join() {
+                        let start_idx = thread_id * chunk_size;
+                        for (i, val) in chunk_res.into_iter().enumerate() {
+                            results[start_idx + i] = val;
+                        }
+                    }
+                }
+            });
+
+            let mut gen_best_cost = f64::MAX;
+            let mut gen_best_idx = 0;
+            for (i, &(cost, _, _)) in results.iter().enumerate() {
+                if cost < gen_best_cost {
+                    gen_best_cost = cost;
+                    gen_best_idx = i;
+                }
+            }
+
+            if gen_best_cost < best_cost {
+                best_cost = gen_best_cost;
+                best_ind = population[gen_best_idx].clone();
+                best_bill = results[gen_best_idx].1;
+                best_cycles = results[gen_best_idx].2;
+            }
+
+            let progress_gens = (month_idx as f64) * (generations as f64) + (gen_num as f64);
+            let total_gens_all = (total_months as f64) * (generations as f64);
+            let percent = (progress_gens / total_gens_all) * 100.0;
+
+            let log_line = format!(
+                "[{}] Gen {}/{} | Month Cost: {:.2} | Total Bill: {:.2} | Total Cycles: {:.1} | {:.1}%",
+                month_name, gen_num, generations, best_cost,
+                accumulated_best_bill + best_bill,
+                accumulated_best_cycles + best_cycles,
+                percent
+            );
+            
+            if let Some(ref cb) = progress_cb {
+                let mut current_map = tuned_monthly_params.clone();
+                current_map.insert(month.to_string(), best_ind.to_evolved_config());
+                
+                let should_continue = cb(TuningProgressEvent {
+                    percent,
+                    gen_num: progress_gens as u32,
+                    total_gens: total_gens_all as u32,
+                    best_cost: accumulated_best_cost + best_cost,
+                    bill: accumulated_best_bill + best_bill,
+                    cycles: accumulated_best_cycles + best_cycles,
+                    log_line,
+                    done: false,
+                    best_params: Some(best_ind.to_evolved_config()),
+                    best_params_monthly: Some(current_map),
+                });
+                if !should_continue {
+                    return Err("Tuning cancelled by user".to_string());
+                }
+            }
+
+            let mut pop_with_res: Vec<(Individual, f64)> = population.iter()
+                .zip(results.iter())
+                .map(|(ind, &(cost, _, _))| (ind.clone(), cost))
+                .collect();
+                
+            pop_with_res.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            let mut new_population = Vec::with_capacity(population_size as usize);
+            new_population.push(pop_with_res[0].0.clone());
+            new_population.push(pop_with_res[1].0.clone());
+
+            let tournament_select = |pop: &[(Individual, f64)], rng: &mut SimpleRng| -> Individual {
+                let mut best_candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
+                for _ in 0..2 {
+                    let candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
+                    if candidate.1 < best_candidate.1 {
+                        best_candidate = candidate;
+                    }
+                }
+                best_candidate.0.clone()
+            };
+
+            while new_population.len() < population_size as usize {
+                let parent1 = tournament_select(&pop_with_res, &mut rng);
+                let parent2 = tournament_select(&pop_with_res, &mut rng);
+                
+                let mut child = Individual::crossover(&parent1, &parent2, &mut rng, &bounds);
+                child.mutate(&mut rng, &bounds, 0.15);
+                new_population.push(child);
+            }
+
+            population = new_population;
+        }
+
+        tuned_monthly_params.insert(month.to_string(), best_ind.to_evolved_config());
+        accumulated_best_bill += best_bill;
+        accumulated_best_cycles += best_cycles;
+        accumulated_best_cost += best_cost;
     }
 
-    let final_params = best_ind.to_evolved_config();
     if let Some(ref cb) = progress_cb {
         let _ = cb(TuningProgressEvent {
             percent: 100.0,
-            gen_num: generations,
-            total_gens: generations,
-            best_cost,
-            bill: best_bill,
-            cycles: best_cycles,
-            log_line: "Tuning successfully completed.".to_string(),
+            gen_num: (total_months as u32) * generations,
+            total_gens: (total_months as u32) * generations,
+            best_cost: accumulated_best_cost,
+            bill: accumulated_best_bill,
+            cycles: accumulated_best_cycles,
+            log_line: "Tuning successfully completed for all months.".to_string(),
             done: true,
-            best_params: Some(final_params.clone()),
+            best_params: None,
+            best_params_monthly: Some(tuned_monthly_params.clone()),
         });
     }
 
-    Ok(final_params)
+    Ok(tuned_monthly_params)
 }
 
 #[cfg(test)]
@@ -408,6 +482,7 @@ mod tests {
                 import_price_cents: 20.0,
                 export_price_cents: 8.0,
                 duration_hours: 1.0,
+                day_solar_kwh: 24.0,
             });
         }
 
@@ -425,6 +500,7 @@ mod tests {
             high_price_threshold: 0.0,
             periods: vec![],
             evolved_heuristic: EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
         };
 
         // Test running 3 generations, population of 5
@@ -434,6 +510,7 @@ mod tests {
             3,
             5,
             1.0,
+            None,
             None,
             Some(&|event| {
                 assert!(event.gen_num <= 3);
@@ -449,6 +526,7 @@ mod tests {
             3,
             5,
             1.0,
+            None,
             None,
             Some(&|event| {
                 if event.gen_num == 1 {

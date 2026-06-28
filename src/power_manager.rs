@@ -566,6 +566,36 @@ pub struct PowerManager {
 }
 
 impl PowerManager {
+    pub fn get_today_solar_forecast_kwh(&self) -> f64 {
+        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+        let now = chrono::Utc::now().with_timezone(&tz_offset);
+        let start_dt = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(0);
+        let end_dt = now.date_naive().and_hms_opt(23, 59, 59).unwrap().and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(0);
+        
+        let mut expected_solar_kwh = 0.0;
+        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
+            if let Ok(mut stmt) = conn.prepare("SELECT timestamp, predicted_solar_w FROM solar_forecast WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC") {
+                if let Ok(mut rows) = stmt.query(rusqlite::params![start_dt, end_dt]) {
+                    let mut prev_ts = None;
+                    let mut sum_kwh = 0.0;
+                    while let Ok(Some(row)) = rows.next() {
+                        let ts: i64 = row.get(0).unwrap_or(0);
+                        let val: f64 = row.get(1).unwrap_or(0.0);
+                        if let Some(pts) = prev_ts {
+                            let diff = (ts - pts) as f64 / 3600.0;
+                            if diff > 0.0 && diff <= 2.0 {
+                                sum_kwh += (val / 1000.0) * diff;
+                            }
+                        }
+                        prev_ts = Some(ts);
+                    }
+                    expected_solar_kwh = sum_kwh;
+                }
+            }
+        }
+        expected_solar_kwh
+    }
+
     pub fn new(config: SolaxBatteryControlConfig, base_topic: String) -> Self {
         let mut max_total_charge = 0.0;
         let mut max_total_discharge = 0.0;
@@ -810,12 +840,16 @@ impl PowerManager {
                     let hour = now.hour();
                     let demand_window = get_demand_window(Some(&self.config));
 
-                    let eh_config = self.config.evolved_heuristic.clone().unwrap_or_default();
+                    let month_key = chrono::Datelike::month(&now).to_string();
+                    let eh_config = self.config.evolved_heuristic_monthly.as_ref()
+                        .and_then(|m| m.get(&month_key).cloned())
+                        .or_else(|| self.config.evolved_heuristic.clone())
+                        .unwrap_or_default();
 
                     if import_rate < eh_config.neg_price_threshold {
                         let group_max_charge_pct = global_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
                         if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
-                    } else if export_rate >= eh_config.export_dump_threshold {
+                    } else if export_rate >= eh_config.tier2_export_dump_threshold || export_rate >= eh_config.export_dump_threshold {
                         let is_near_or_in_demand = if let Some((_, end)) = demand_window {
                             let hour_val = hour as i32;
                             let end_hour = end.hour() as i32;
@@ -823,17 +857,36 @@ impl PowerManager {
                         } else {
                             hour >= 12 && hour < 21
                         };
-                        let reserve_kwh = if is_near_or_in_demand { eh_config.dump_reserve_demand } else { eh_config.dump_reserve_normal };
-                        let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                        let reserve_kwh = if export_rate >= eh_config.tier2_export_dump_threshold {
+                            eh_config.tier2_dump_reserve
+                        } else if is_near_or_in_demand {
+                            eh_config.dump_reserve_demand
+                        } else {
+                            eh_config.dump_reserve_normal
+                        };
+                        let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0).clamp(0.0, 100.0);
 
-                        if avg_soc > reserve_pct as f64 { max_total_discharge } else { 0.0 }
+                        if avg_soc > reserve_pct { max_total_discharge } else { 0.0 }
                     } else if {
                         let is_pre_charge_window = if let Some((start, _)) = demand_window {
-                            hour >= eh_config.pre_charge_start_hour && hour < start.hour()
+                            let start_h = start.hour();
+                            let pc_start = eh_config.pre_charge_start_hour;
+                            if pc_start <= start_h {
+                                hour >= pc_start && hour < start_h
+                            } else {
+                                hour >= pc_start || hour < start_h
+                            }
                         } else {
-                            hour >= eh_config.pre_charge_start_hour && hour < 15
+                            let pc_start = eh_config.pre_charge_start_hour;
+                            if pc_start <= 15 {
+                                hour >= pc_start && hour < 15
+                            } else {
+                                hour >= pc_start || hour < 15
+                            }
                         };
-                        is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (avg_soc / 100.0) < eh_config.pre_charge_soc_limit
+                        let today_forecast_kwh = self.get_today_solar_forecast_kwh();
+                        let effective_soc_limit = (eh_config.pre_charge_soc_limit * (1.0 - today_forecast_kwh * eh_config.forecast_solar_weight)).max(0.0);
+                        is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (avg_soc / 100.0) < effective_soc_limit
                     } {
                         -max_total_charge
                     } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
@@ -1118,12 +1171,16 @@ impl PowerManager {
                         let hour = now.hour();
                         let demand_window = get_demand_window(Some(&self.config));
 
-                        let eh_config = self.config.evolved_heuristic.clone().unwrap_or_default();
+                        let month_key = chrono::Datelike::month(&now).to_string();
+                        let eh_config = self.config.evolved_heuristic_monthly.as_ref()
+                            .and_then(|m| m.get(&month_key).cloned())
+                            .or_else(|| self.config.evolved_heuristic.clone())
+                            .unwrap_or_default();
 
                         if import_rate < eh_config.neg_price_threshold {
                             let group_max_charge_pct = phase_group.batteries.iter().map(|b| b.max_soc_pct).fold(0.0_f64, |a, b| a.max(b));
                             if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
-                        } else if export_rate >= eh_config.export_dump_threshold {
+                        } else if export_rate >= eh_config.tier2_export_dump_threshold || export_rate >= eh_config.export_dump_threshold {
                             let is_near_or_in_demand = if let Some((_, end)) = demand_window {
                                 let hour_val = hour as i32;
                                 let end_hour = end.hour() as i32;
@@ -1131,17 +1188,36 @@ impl PowerManager {
                             } else {
                                 hour >= 12 && hour < 21
                             };
-                            let reserve_kwh = if is_near_or_in_demand { eh_config.dump_reserve_demand } else { eh_config.dump_reserve_normal };
-                            let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0) as u8;
+                            let reserve_kwh = if export_rate >= eh_config.tier2_export_dump_threshold {
+                                eh_config.tier2_dump_reserve
+                            } else if is_near_or_in_demand {
+                                eh_config.dump_reserve_demand
+                            } else {
+                                eh_config.dump_reserve_normal
+                            };
+                            let reserve_pct = ((reserve_kwh / total_capacity_kwh.max(1.0)) * 100.0).clamp(0.0, 100.0);
 
-                            if avg_soc > reserve_pct as f64 { max_phase_discharge } else { 0.0 }
+                            if avg_soc > reserve_pct { max_phase_discharge } else { 0.0 }
                         } else if {
                             let is_pre_charge_window = if let Some((start, _)) = demand_window {
-                                hour >= eh_config.pre_charge_start_hour && hour < start.hour()
+                                let start_h = start.hour();
+                                let pc_start = eh_config.pre_charge_start_hour;
+                                if pc_start <= start_h {
+                                    hour >= pc_start && hour < start_h
+                                } else {
+                                    hour >= pc_start || hour < start_h
+                                }
                             } else {
-                                hour >= eh_config.pre_charge_start_hour && hour < 15
+                                let pc_start = eh_config.pre_charge_start_hour;
+                                if pc_start <= 15 {
+                                    hour >= pc_start && hour < 15
+                                } else {
+                                    hour >= pc_start || hour < 15
+                                }
                             };
-                            is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (avg_soc / 100.0) < eh_config.pre_charge_soc_limit
+                            let today_forecast_kwh = self.get_today_solar_forecast_kwh();
+                            let effective_soc_limit = (eh_config.pre_charge_soc_limit * (1.0 - today_forecast_kwh * eh_config.forecast_solar_weight)).max(0.0);
+                            is_pre_charge_window && import_rate < eh_config.pre_charge_price_threshold && (avg_soc / 100.0) < effective_soc_limit
                         } {
                             -max_phase_charge
                         } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
@@ -2513,11 +2589,25 @@ pub fn load_sim_records(
             import_price_cents: import_price.unwrap_or(f64::NAN),
             export_price_cents: export_price.unwrap_or(f64::NAN),
             duration_hours,
+            day_solar_kwh: 0.0,
         });
     }
 
     if records.is_empty() {
         return Err("No aligned telemetry records found for simulation in range.".to_string());
+    }
+
+    // Precompute total daily solar generation (kWh)
+    let mut daily_solar_kwh_map: std::collections::HashMap<String, f64> = std::collections::HashMap::new();
+    for r in &records {
+        let date_str = r.dt_local.format("%Y-%m-%d").to_string();
+        let kwh = (r.solar_power_w / 1000.0) * r.duration_hours;
+        *daily_solar_kwh_map.entry(date_str).or_insert(0.0) += kwh;
+    }
+
+    for r in &mut records {
+        let date_str = r.dt_local.format("%Y-%m-%d").to_string();
+        r.day_solar_kwh = *daily_solar_kwh_map.get(&date_str).unwrap_or(&0.0);
     }
 
     let mut last_imp = 25.0;
@@ -2555,6 +2645,7 @@ pub fn load_sim_records(
         high_price_threshold,
         periods: periods_list,
         evolved_heuristic: evolved_heuristic_config,
+        evolved_heuristic_monthly: config.battery_control.as_ref().and_then(|bc| bc.evolved_heuristic_monthly.clone()),
     };
 
     Ok((records, sim_config))
@@ -2947,9 +3038,25 @@ mod tests {
                 println!("RESULT_START_DATE: {}", res.start_date);
                 println!("RESULT_END_DATE: {}", res.end_date);
                 println!("RESULT_RECORDS: {}", res.records_simulated);
-                println!("RESULT_NO_BATTERY: {:#?}", res.no_battery);
-                println!("RESULT_MPC_ARBITRAGE: {:#?}", res.mpc_arbitrage);
-                println!("RESULT_EVOLVED_HEURISTIC: {:#?}", res.evolved_heuristic);
+                println!("TOTAL SOLAR: {:.2} kWh, TOTAL USAGE: {:.2} kWh", res.total_solar_kwh, res.total_usage_kwh);
+                
+                let print_model = |name: &str, m: &SimulationResultModel| {
+                    println!(
+                        "{:<20} | Bill: ${:<8.2} | Cycles: {:<6.2} | Energy: ${:<8.2} | Demand: ${:<8.2}",
+                        name, m.net_bill, m.cycles, m.energy_cost, m.demand_charges
+                    );
+                };
+                
+                println!("{:=<90}", "");
+                print_model("No Battery", &res.no_battery);
+                print_model("Baseline", &res.baseline);
+                print_model("Auto", &res.auto);
+                print_model("Smart Heuristic", &res.smart_heuristic);
+                print_model("Lookahead MPC", &res.lookahead_mpc);
+                print_model("Adaptive Peak", &res.adaptive_peak);
+                print_model("MPC Arbitrage", &res.mpc_arbitrage);
+                print_model("Evolved Heuristic", &res.evolved_heuristic);
+                println!("{:=<90}", "");
             }
             Err(e) => {
                 println!("ERROR: {}", e);

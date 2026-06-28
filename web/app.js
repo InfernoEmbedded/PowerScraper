@@ -2897,6 +2897,7 @@ window.addEventListener('load', () => {
 // Model Tuning UI State
 let tuningEventSource = null;
 let currentEvolvedParams = null;
+let selectedResultsMonth = null;
 
 async function checkTuningStatus() {
     try {
@@ -2936,8 +2937,11 @@ async function checkTuningStatus() {
             }
             
             initTuningProgressStream();
-        } else if (progress.best_params) {
+        } else if (progress.best_params_monthly) {
             // Completed previously, show results comparison
+            currentEvolvedParams = progress.best_params_monthly;
+            renderTunedParametersComparison();
+        } else if (progress.best_params) {
             currentEvolvedParams = progress.best_params;
             renderTunedParametersComparison();
         }
@@ -3046,7 +3050,9 @@ function initTuningProgressStream() {
                 document.getElementById('tune-progress-title').innerText = `Training Status: In Progress (${msg.percent.toFixed(0)}%)`;
             }
 
-            if (msg.best_params) {
+            if (msg.best_params_monthly) {
+                currentEvolvedParams = msg.best_params_monthly;
+            } else if (msg.best_params) {
                 currentEvolvedParams = msg.best_params;
             }
 
@@ -3095,17 +3101,57 @@ async function cancelTuning() {
 function renderTunedParametersComparison() {
     if (!currentEvolvedParams) return;
 
+    const selectEl = document.getElementById('tune-results-month-select');
+    const containerEl = document.getElementById('tune-month-select-container');
+
+    let isMonthly = true;
+    if (currentEvolvedParams.neg_price_threshold !== undefined || currentEvolvedParams["neg-price-threshold"] !== undefined) {
+        isMonthly = false;
+    }
+
+    let evolvedParamsForMonth = currentEvolvedParams;
+    let currentControl = currentConfig.battery_control || {};
+    let currentEvolved = currentControl.evolved_heuristic || {};
+
+    if (isMonthly) {
+        containerEl.style.display = 'flex';
+        const months = Object.keys(currentEvolvedParams).sort((a, b) => parseInt(a) - parseInt(b));
+        
+        if (months.length === 0) return;
+
+        if (!selectedResultsMonth || !currentEvolvedParams[selectedResultsMonth]) {
+            selectedResultsMonth = months[0];
+        }
+
+        const monthNames = {
+            "1": "January", "2": "February", "3": "March", "4": "April",
+            "5": "May", "6": "June", "7": "July", "8": "August",
+            "9": "September", "10": "October", "11": "November", "12": "December"
+        };
+
+        selectEl.innerHTML = months.map(m => `
+            <option value="${m}" ${m === selectedResultsMonth ? "selected" : ""}>${monthNames[m] || 'Month ' + m}</option>
+        `).join('');
+
+        const currentMonthlyMap = currentControl.evolved_heuristic_monthly || {};
+        currentEvolved = currentMonthlyMap[selectedResultsMonth] || currentControl.evolved_heuristic || {};
+        evolvedParamsForMonth = currentEvolvedParams[selectedResultsMonth] || {};
+    } else {
+        containerEl.style.display = 'none';
+    }
+
     const body = document.getElementById('tune-results-body');
-    const currentControl = currentConfig.battery_control || {};
-    const currentEvolved = currentControl.evolved_heuristic || {};
 
     const paramMeta = [
         { key: "neg_price_threshold", label: "Negative Price Threshold", desc: "Cents/kWh threshold below which battery charges from grid at full rate.", unit: "¢" },
         { key: "export_dump_threshold", label: "Export Dump Threshold", desc: "Cents/kWh threshold above which battery discharges at max power to export.", unit: "¢" },
+        { key: "tier2_export_dump_threshold", label: "Tier 2 Export Dump Threshold", desc: "Cents/kWh threshold above which battery discharges to tier-2 reserve.", unit: "¢" },
+        { key: "tier2_dump_reserve", label: "Tier 2 Dump Reserve", desc: "Minimum capacity (kWh) to reserve during tier-2 export periods.", unit: " kWh" },
         { key: "dump_reserve_demand", label: "Dump Reserve (Peak)", desc: "Minimum capacity (kWh) to reserve during peak demand window.", unit: " kWh" },
         { key: "dump_reserve_normal", label: "Dump Reserve (Normal)", desc: "Minimum capacity (kWh) to reserve during normal/cheap periods.", unit: " kWh" },
         { key: "pre_charge_price_threshold", label: "Pre-Charge Price Threshold", desc: "Charge from grid if import price is below this cents/kWh.", unit: "¢" },
-        { key: "pre_charge_soc_limit", label: "Pre-Charge SOC Limit", desc: "Stop pre-charging from grid once battery reaches this capacity ratio.", unit: "", format: v => `${(v * 100).toFixed(0)}%` },
+        { key: "pre_charge_soc_limit", label: "Pre-Charge SOC Limit", desc: "Stop pre-charging once battery reaches this capacity ratio (scaled by forecast).", unit: "", format: v => `${(v * 100).toFixed(0)}%` },
+        { key: "forecast_solar_weight", label: "Forecast Solar Weight", desc: "Factor scaling down pre-charge SOC target based on forecast daytime solar (kWh).", unit: "", format: v => `${v.toFixed(3)}` },
         { key: "pre_charge_start_hour", label: "Pre-Charge Start Hour", desc: "Hour of day (0-23) when pre-charging is permitted.", unit: ":00" },
         { key: "use_adaptive_shaving", label: "Use Adaptive Shaving", desc: "Enables dynamic monthly peak target calculation.", unit: "", format: v => v ? "Enabled" : "Disabled" },
         { key: "adaptive_safety_buffer", label: "Adaptive Safety Buffer", desc: "Safety threshold (W) added to peak limit to avoid demand spikes.", unit: " W" }
@@ -3115,8 +3161,8 @@ function renderTunedParametersComparison() {
         const keyKebab = p.key.replace(/_/g, '-');
         const curVal = currentEvolved[p.key] !== undefined ? currentEvolved[p.key] : 
                       (currentEvolved[keyKebab] !== undefined ? currentEvolved[keyKebab] : "-");
-        const val = currentEvolvedParams[p.key] !== undefined ? currentEvolvedParams[p.key] : 
-                   (currentEvolvedParams[keyKebab] !== undefined ? currentEvolvedParams[keyKebab] : "-");
+        const val = evolvedParamsForMonth[p.key] !== undefined ? evolvedParamsForMonth[p.key] : 
+                   (evolvedParamsForMonth[keyKebab] !== undefined ? evolvedParamsForMonth[keyKebab] : "-");
         
         const fmt = (v) => {
             if (v === "-") return "-";
@@ -3137,6 +3183,11 @@ function renderTunedParametersComparison() {
     document.getElementById('btn-apply-tuning').disabled = false;
     document.getElementById('tune-apply-status').innerText = "";
     document.getElementById('tune-results-card').style.display = 'block';
+}
+
+function changeResultsMonth(month) {
+    selectedResultsMonth = month;
+    renderTunedParametersComparison();
 }
 
 async function applyTuning() {

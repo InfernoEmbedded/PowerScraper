@@ -755,6 +755,12 @@
                 <p class="text-muted" style="margin-bottom: 20px;">
                     The genetic algorithm successfully completed optimization. Below is a comparison between your current configuration and the newly evolved parameters.
                 </p>
+                <div id="tune-month-select-container" style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <label for="tune-results-month-select" style="font-weight: 500; font-size: 0.95rem; color: #fff;">Select Month to View/Compare:</label>
+                    <select id="tune-results-month-select" onchange="changeResultsMonth(this.value)" style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: rgba(20,24,46,0.9); color: #fff; outline: none; cursor: pointer; font-size: 0.9rem;">
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
                 <div style="overflow-x: auto; margin-bottom: 25px;">
                     <table class="sim-table" style="width: 100%; border-collapse: collapse; text-align: left;">
                         <thead>

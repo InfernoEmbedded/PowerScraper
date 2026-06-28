@@ -180,6 +180,7 @@ mod tests {
                 import_price_cents: 10.0, // daytime cheap
                 export_price_cents: 5.0,
                 duration_hours: 1.0,
+                day_solar_kwh: 0.0,
             },
             SimRecord {
                 timestamp: dt2.timestamp(),
@@ -189,6 +190,7 @@ mod tests {
                 import_price_cents: 30.0, // night expensive
                 export_price_cents: 10.0,
                 duration_hours: 1.0,
+                day_solar_kwh: 0.0,
             }
         ];
 
@@ -206,6 +208,7 @@ mod tests {
             high_price_threshold: 0.0,
             periods: vec![],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
         };
 
         let result = run(&records, &config);

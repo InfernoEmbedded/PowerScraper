@@ -1,6 +1,6 @@
 use super::{SimRecord, SimConfig, SimTracker, is_time_in_window, calculate_demand_charges_total};
 use crate::power_manager::SimulationResultModel;
-use chrono::Timelike;
+use chrono::{Timelike, Datelike};
 use std::collections::HashMap;
 
 pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
@@ -8,9 +8,13 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
     let mut bat_soc = config.battery_capacity_kwh * 0.5;
     let mut tracker = SimTracker::new();
 
-    let eh_config = &config.evolved_heuristic;
-
     for r in records {
+        let month = r.dt_local.month();
+        let eh_config = if let Some(ref monthly_map) = config.evolved_heuristic_monthly {
+            monthly_map.get(&month.to_string()).unwrap_or(&config.evolved_heuristic)
+        } else {
+            &config.evolved_heuristic
+        };
         let net_w = r.load_power_w - r.solar_power_w;
         let now_time = r.dt_local.time();
         let month_key = r.dt_local.format("%Y-%m").to_string();
@@ -31,7 +35,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             charge_w = config.max_power_w.min(max_avail_charge);
         }
         // 2. High export price: dump to grid (arbitrage)
-        else if export_price >= eh_config.export_dump_threshold {
+        else if export_price >= eh_config.tier2_export_dump_threshold || export_price >= eh_config.export_dump_threshold {
             let is_near_or_in_demand = if let Some((_start, end)) = config.demand_window {
                 let hour_val = hour as i32;
                 let end_hour = end.hour() as i32;
@@ -39,13 +43,14 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             } else {
                 hour >= 12 && hour < 21
             };
-            let reserve_kwh = if is_near_or_in_demand {
+            let reserve_kwh = if export_price >= eh_config.tier2_export_dump_threshold {
+                eh_config.tier2_dump_reserve
+            } else if is_near_or_in_demand {
                 eh_config.dump_reserve_demand
             } else {
                 eh_config.dump_reserve_normal
             };
-            let reserve_pct = ((reserve_kwh / config.battery_capacity_kwh) * 100.0) as u8;
-            let min_pct_limit = config.battery_capacity_kwh * (reserve_pct as f64 / 100.0);
+            let min_pct_limit = reserve_kwh.clamp(0.0, config.battery_capacity_kwh);
             if bat_soc > min_pct_limit {
                 let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
                 discharge_w = config.max_power_w.min(max_avail_discharge);
@@ -54,13 +59,26 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         // 3. Pre-charge window: top up using cheap grid
         else if {
             let is_pre_charge_window = if let Some((start, _)) = config.demand_window {
-                hour >= eh_config.pre_charge_start_hour && hour < start.hour()
+                let start_h = start.hour();
+                let pc_start = eh_config.pre_charge_start_hour;
+                if pc_start <= start_h {
+                    hour >= pc_start && hour < start_h
+                } else {
+                    hour >= pc_start || hour < start_h
+                }
             } else {
-                hour >= eh_config.pre_charge_start_hour && hour < 15
+                let pc_start = eh_config.pre_charge_start_hour;
+                if pc_start <= 15 {
+                    hour >= pc_start && hour < 15
+                } else {
+                    hour >= pc_start || hour < 15
+                }
             };
-            is_pre_charge_window && import_price < eh_config.pre_charge_price_threshold && (bat_soc / config.battery_capacity_kwh) < eh_config.pre_charge_soc_limit
+            let effective_soc_limit = (eh_config.pre_charge_soc_limit * (1.0 - r.day_solar_kwh * eh_config.forecast_solar_weight)).max(0.0);
+            is_pre_charge_window && import_price < eh_config.pre_charge_price_threshold && (bat_soc / config.battery_capacity_kwh) < effective_soc_limit
         } {
-            let target = config.battery_capacity_kwh * eh_config.pre_charge_soc_limit;
+            let effective_soc_limit = (eh_config.pre_charge_soc_limit * (1.0 - r.day_solar_kwh * eh_config.forecast_solar_weight)).max(0.0);
+            let target = config.battery_capacity_kwh * effective_soc_limit;
             let deficit = (target - bat_soc).max(0.0);
             let max_avail_charge = (deficit / 0.95) / r.duration_hours * 1000.0;
             charge_w = config.max_power_w.min(max_avail_charge);
@@ -163,6 +181,7 @@ mod tests {
             import_price_cents: 0.5,
             export_price_cents: -1.0,
             duration_hours: 1.0,
+            day_solar_kwh: 0.0,
         }];
 
         let evolved = EvolvedHeuristicConfig {
@@ -175,6 +194,9 @@ mod tests {
             pre_charge_start_hour: 4,
             use_adaptive_shaving: true,
             adaptive_safety_buffer: 0.0,
+            forecast_solar_weight: 0.0,
+            tier2_export_dump_threshold: 1000.0,
+            tier2_dump_reserve: 0.0,
         };
 
         let config = SimConfig {
@@ -191,6 +213,7 @@ mod tests {
             high_price_threshold: 0.0,
             periods: vec![],
             evolved_heuristic: evolved,
+            evolved_heuristic_monthly: None,
         };
 
         let result = run(&records, &config);

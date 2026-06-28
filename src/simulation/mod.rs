@@ -12,6 +12,7 @@ pub struct SimRecord {
     pub import_price_cents: f64,
     pub export_price_cents: f64,
     pub duration_hours: f64,
+    pub day_solar_kwh: f64,
 }
 
 #[derive(Clone)]
@@ -29,6 +30,7 @@ pub struct SimConfig {
     pub high_price_threshold: f64,
     pub periods: Vec<crate::config::BatteryControlPeriod>,
     pub evolved_heuristic: EvolvedHeuristicConfig,
+    pub evolved_heuristic_monthly: Option<std::collections::HashMap<String, EvolvedHeuristicConfig>>,
 }
 
 pub struct SimTracker {

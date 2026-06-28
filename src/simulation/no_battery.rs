@@ -65,6 +65,7 @@ mod tests {
             import_price_cents: 20.0,
             export_price_cents: 8.0,
             duration_hours: 1.0,
+            day_solar_kwh: 0.0,
         }];
 
         let config = SimConfig {
@@ -81,6 +82,7 @@ mod tests {
             high_price_threshold: 0.0,
             periods: vec![],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
         };
 
         let result = run(&records, &config);
@@ -106,6 +108,7 @@ mod tests {
             import_price_cents: 30.0,
             export_price_cents: 10.0,
             duration_hours: 0.5, // 30 mins
+            day_solar_kwh: 0.0,
         }];
 
         let config = SimConfig {
@@ -122,6 +125,7 @@ mod tests {
             high_price_threshold: 0.0,
             periods: vec![],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
         };
 
         let result = run(&records, &config);
