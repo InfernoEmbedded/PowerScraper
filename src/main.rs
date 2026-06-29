@@ -205,41 +205,93 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // 6. Spawn SDM630 Serial Modbus RTU Meters
         if let Some(ref sdm_cfg) = config.sdm630_modbus_v2 {
-            println!("Spawning SDM630 Meter Drivers...");
+            println!("Spawning SDM630 Meter Drivers on dedicated realtime threads...");
             for port in &sdm_cfg.ports {
                 let port_clone = port.clone();
                 let cfg_clone = sdm_cfg.clone();
                 let mqtt_clone = mqtt_config.clone();
                 let cancel_clone = cancel_token.clone();
-                tokio::spawn(async move {
-                    drivers::sdm630::run_sdm630_driver(
-                        port_clone,
-                        cfg_clone,
-                        mqtt_clone,
-                        cancel_clone,
-                    )
-                    .await;
-                });
+                let device_name = port_clone.replace("/dev/tty", "");
+                
+                std::thread::Builder::new()
+                    .name(format!("sdm630-{}", device_name))
+                    .spawn(move || {
+                        #[cfg(target_os = "linux")]
+                        unsafe {
+                            let thread_id = libc::pthread_self();
+                            // SCHED_FIFO = 1
+                            let policy = 1;
+                            let param = libc::sched_param { sched_priority: 50 };
+                            let res = libc::pthread_setschedparam(thread_id, policy, &param);
+                            if res != 0 {
+                                eprintln!("[Warning] Failed to set SDM630 thread to SCHED_FIFO: error code {}", res);
+                            } else {
+                                println!("Successfully set SDM630 thread to SCHED_FIFO (realtime priority 50)");
+                            }
+                        }
+                        
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                            
+                        rt.block_on(async {
+                            drivers::sdm630::run_sdm630_driver(
+                                port_clone,
+                                cfg_clone,
+                                mqtt_clone,
+                                cancel_clone,
+                            )
+                            .await;
+                        });
+                    })
+                    .expect("Failed to spawn SDM630 driver thread");
             }
         }
 
         // 7. Spawn DTSU666 Serial Modbus RTU Meters
         if let Some(ref dtsu_cfg) = config.dtsu666 {
-            println!("Spawning DTSU666 Meter Drivers...");
+            println!("Spawning DTSU666 Meter Drivers on dedicated realtime threads...");
             for port in &dtsu_cfg.ports {
                 let port_clone = port.clone();
                 let cfg_clone = dtsu_cfg.clone();
                 let mqtt_clone = mqtt_config.clone();
                 let cancel_clone = cancel_token.clone();
-                tokio::spawn(async move {
-                    drivers::dtsu666::run_dtsu666_driver(
-                        port_clone,
-                        cfg_clone,
-                        mqtt_clone,
-                        cancel_clone,
-                    )
-                    .await;
-                });
+                let device_name = port_clone.replace("/dev/tty", "");
+                
+                std::thread::Builder::new()
+                    .name(format!("dtsu666-{}", device_name))
+                    .spawn(move || {
+                        #[cfg(target_os = "linux")]
+                        unsafe {
+                            let thread_id = libc::pthread_self();
+                            // SCHED_FIFO = 1
+                            let policy = 1;
+                            let param = libc::sched_param { sched_priority: 50 };
+                            let res = libc::pthread_setschedparam(thread_id, policy, &param);
+                            if res != 0 {
+                                eprintln!("[Warning] Failed to set DTSU666 thread to SCHED_FIFO: error code {}", res);
+                            } else {
+                                println!("Successfully set DTSU666 thread to SCHED_FIFO (realtime priority 50)");
+                            }
+                        }
+                        
+                        let rt = tokio::runtime::Builder::new_current_thread()
+                            .enable_all()
+                            .build()
+                            .unwrap();
+                            
+                        rt.block_on(async {
+                            drivers::dtsu666::run_dtsu666_driver(
+                                port_clone,
+                                cfg_clone,
+                                mqtt_clone,
+                                cancel_clone,
+                            )
+                            .await;
+                        });
+                    })
+                    .expect("Failed to spawn DTSU666 driver thread");
             }
         }
 
