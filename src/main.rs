@@ -224,7 +224,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let param = libc::sched_param { sched_priority: 50 };
                             let res = libc::pthread_setschedparam(thread_id, policy, &param);
                             if res != 0 {
-                                eprintln!("[Warning] Failed to set SDM630 thread to SCHED_FIFO: error code {}", res);
+                                eprintln!("[Warning] Failed to set SDM630 thread to SCHED_FIFO (error code {}). Falling back to nice -20...", res);
+                                let tid = libc::gettid();
+                                let nice_res = libc::setpriority(0, tid as libc::id_t, -20);
+                                if nice_res != 0 {
+                                    eprintln!("[Warning] Failed to set SDM630 thread niceness to -20: error code {}", nice_res);
+                                } else {
+                                    println!("Successfully set SDM630 thread niceness to -20 (highest priority fallback)");
+                                }
                             } else {
                                 println!("Successfully set SDM630 thread to SCHED_FIFO (realtime priority 50)");
                             }
@@ -270,7 +277,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             let param = libc::sched_param { sched_priority: 50 };
                             let res = libc::pthread_setschedparam(thread_id, policy, &param);
                             if res != 0 {
-                                eprintln!("[Warning] Failed to set DTSU666 thread to SCHED_FIFO: error code {}", res);
+                                eprintln!("[Warning] Failed to set DTSU666 thread to SCHED_FIFO (error code {}). Falling back to nice -20...", res);
+                                let tid = libc::gettid();
+                                let nice_res = libc::setpriority(0, tid as libc::id_t, -20);
+                                if nice_res != 0 {
+                                    eprintln!("[Warning] Failed to set DTSU666 thread niceness to -20: error code {}", nice_res);
+                                } else {
+                                    println!("Successfully set DTSU666 thread niceness to -20 (highest priority fallback)");
+                                }
                             } else {
                                 println!("Successfully set DTSU666 thread to SCHED_FIFO (realtime priority 50)");
                             }
