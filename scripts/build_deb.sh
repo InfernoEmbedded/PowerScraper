@@ -62,6 +62,7 @@ WorkingDirectory=/var/lib/powerscraper
 ExecStart=/usr/bin/powerscraper
 Restart=always
 RestartSec=5
+LimitRTPRIO=99
 
 [Install]
 WantedBy=multi-user.target
