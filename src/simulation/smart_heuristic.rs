@@ -37,7 +37,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
                 let max_avail_discharge = ((bat_soc - reserve) * 0.95) / r.duration_hours * 1000.0;
                 discharge_w = config.max_power_w.min(max_avail_discharge.max(0.0));
             }
-        } else if is_pre_charge && config.low_price_charge && import_price <= config.low_price_threshold && (bat_soc / config.battery_capacity_kwh) < 0.85 {
+        } else if is_pre_charge && (config.low_price_charge && import_price <= config.low_price_threshold || config.demand_rate > 0.0) && (bat_soc / config.battery_capacity_kwh) < 0.85 {
             let target = config.battery_capacity_kwh * 0.85;
             let deficit = target - bat_soc;
             let max_avail_charge = (deficit / 0.95) / r.duration_hours * 1000.0;

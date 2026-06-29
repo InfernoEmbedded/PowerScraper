@@ -77,7 +77,7 @@ pub fn run(
             let max_avail_discharge = ((bat_soc - required_reserve) * 0.95) / r.duration_hours * 1000.0;
             discharge_w = config.max_power_w.min(max_avail_discharge.max(0.0));
         } else if config.demand_window.map_or(false, |(start, _)| now_time < start) && (bat_soc + expected_solar * 0.95) < required_reserve {
-            let is_cheap = if config.low_price_charge { import_price <= config.low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold };
+            let is_cheap = if config.low_price_charge { import_price <= config.low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold } || config.demand_rate > 0.0;
             if is_cheap {
                 let projected_deficit = required_reserve - (bat_soc + expected_solar * 0.95);
                 let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;

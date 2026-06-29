@@ -707,7 +707,7 @@ impl PowerManager {
                         if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
                     } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > reserve_pct as f64 {
                         max_total_discharge
-                    } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && low_price_charge && import_rate <= low_price_threshold && avg_soc < 85.0 {
+                    } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && (low_price_charge && import_rate <= low_price_threshold || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0) && avg_soc < 85.0 {
                         -max_total_charge
                     } else {
                         let total_error = self.total_power - self.grid_target;
@@ -828,6 +828,8 @@ impl PowerManager {
                         if avg_soc < group_max_charge_pct { -max_total_charge } else { 0.0 }
                     } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
                         max_total_discharge
+                    } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && (low_price_charge && import_rate <= low_price_threshold || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0) && avg_soc < 85.0 {
+                        -max_total_charge
                     } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
                         let monthly_peak = self.get_monthly_peak_draw();
                         let orig_target = self.grid_target;
@@ -876,7 +878,7 @@ impl PowerManager {
                     } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
                         max_total_discharge
                     } else if demand_window.map_or(false, |(start, _)| now_time < start) && ((avg_soc / 100.0 * total_capacity_kwh) + expected_solar) < required_reserve {
-                        let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
+                        let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold } || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0;
                         if is_cheap {
                             -max_total_charge
                         } else {
@@ -915,7 +917,7 @@ impl PowerManager {
                     let required_reserve = total_needed.min(total_capacity_kwh * 0.95);
 
                     let current_charge = (avg_soc / 100.0) * total_capacity_kwh;
-                    let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
+                    let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold } || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0;
                     let now_before_demand = demand_window.map_or(true, |(start, _)| now_time < start);
 
                     let target_reserve = if night_avg_price > import_rate * 1.10 { required_reserve } else { demand_reserve };
@@ -1039,7 +1041,7 @@ impl PowerManager {
                             if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
                         } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > reserve_pct as f64 {
                             max_phase_discharge
-                        } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && low_price_charge && import_rate <= low_price_threshold && avg_soc < 85.0 {
+                        } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && (low_price_charge && import_rate <= low_price_threshold || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0) && avg_soc < 85.0 {
                             -max_phase_charge
                         } else {
                             let now = std::time::Instant::now();
@@ -1161,6 +1163,8 @@ impl PowerManager {
                             if avg_soc < group_max_charge_pct { -max_phase_charge } else { 0.0 }
                         } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
                             max_phase_discharge
+                        } else if demand_window.map_or(false, |(start, _)| now_time.hour() >= 10 && now_time < start) && (low_price_charge && import_rate <= low_price_threshold || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0) && avg_soc < 85.0 {
+                            -max_phase_charge
                         } else if demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
                             let monthly_peak = self.get_monthly_peak_draw();
                             let orig_target = self.grid_target;
@@ -1213,7 +1217,7 @@ impl PowerManager {
                         } else if high_price_discharge && export_rate >= high_price_threshold && avg_soc > (reserve_pct + 10) as f64 {
                             max_phase_discharge
                         } else if demand_window.map_or(false, |(start, _)| now_time < start) && ((avg_soc / 100.0 * total_capacity_kwh) + expected_solar) < required_reserve {
-                            let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
+                            let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold } || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0;
                             if is_cheap {
                                 -max_phase_charge
                             } else {
@@ -1250,7 +1254,7 @@ impl PowerManager {
                         let required_reserve = total_needed.min(total_capacity_kwh * 0.95);
 
                         let current_charge = (avg_soc / 100.0) * total_capacity_kwh;
-                        let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold };
+                        let is_cheap = if low_price_charge { import_rate <= low_price_threshold } else { import_rate < 12.0 || import_rate <= cheap_threshold } || self.config.demand.as_ref().map_or(0.0, |d| d.rate) > 0.0;
                         let now_before_demand = demand_window.map_or(true, |(start, _)| now_time < start);
 
                         let target_reserve = if night_avg_price > import_rate * 1.10 { required_reserve } else { demand_reserve };

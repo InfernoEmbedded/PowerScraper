@@ -93,7 +93,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             }
         } else {
             let projected_deficit = target_reserve - (bat_soc + expected_solar * 0.95);
-            let is_cheap = if config.low_price_charge { import_price <= config.low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold };
+            let is_cheap = if config.low_price_charge { import_price <= config.low_price_threshold } else { import_price < 12.0 || import_price <= cheap_threshold } || config.demand_rate > 0.0;
 
             if projected_deficit > 0.0 && is_cheap {
                 let max_avail_charge = (projected_deficit / 0.95) / r.duration_hours * 1000.0;
