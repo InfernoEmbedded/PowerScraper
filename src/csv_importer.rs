@@ -1,6 +1,4 @@
 use crate::config::Config;
-use crate::power_manager::init_history_db;
-use rusqlite::{params, Connection};
 use std::error::Error;
 use std::fs::File;
 use std::path::Path;
@@ -41,7 +39,7 @@ pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error
     }
 
     // Initialize historical schema in SQLite database
-    init_history_db(db_path)?;
+    crate::database::init_history_db(db_path)?;
 
     // Load active config to find configured Mains Meter source name
     let config = Config::load_from_db(db_path).ok();
@@ -86,64 +84,62 @@ pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error
         println!("  Column '{}' -> Topic '{}'", &headers[mapping.index], &mapping.topic);
     }
 
-    let mut conn = Connection::open(db_path)?;
-    let tx = conn.transaction()?;
-
     let mut total_rows = 0;
     let mut total_inserts = 0;
+    let mut batch = Vec::new();
 
-    {
-        let mut stmt = tx.prepare(
-            "INSERT OR REPLACE INTO telemetry_history (timestamp, topic, value) VALUES (?1, ?2, ?3)"
-        )?;
+    for result in rdr.records() {
+        let record = result?;
+        total_rows += 1;
 
-        for result in rdr.records() {
-            let record = result?;
-            total_rows += 1;
-
-            // Extract and parse timestamp
-            let ts_str = match record.get(timestamp_idx) {
-                Some(s) => s.trim(),
-                None => continue,
-            };
-            if ts_str.is_empty() {
+        // Extract and parse timestamp
+        let ts_str = match record.get(timestamp_idx) {
+            Some(s) => s.trim(),
+            None => continue,
+        };
+        if ts_str.is_empty() {
+            continue;
+        }
+        let timestamp: i64 = match ts_str.parse() {
+            Ok(val) => val,
+            Err(e) => {
+                eprintln!("Row {}: Failed to parse timestamp '{}': {}", total_rows, ts_str, e);
                 continue;
             }
-            let timestamp: i64 = match ts_str.parse() {
-                Ok(val) => val,
-                Err(e) => {
-                    eprintln!("Row {}: Failed to parse timestamp '{}': {}", total_rows, ts_str, e);
-                    continue;
-                }
+        };
+
+        // Process each mapped telemetry column in the row
+        for mapping in &mappings {
+            let val_str = match record.get(mapping.index) {
+                Some(s) => s.trim(),
+                None => "",
+            };
+            if val_str.is_empty() {
+                continue; // Missing values (empty cell) are ignored
+            }
+
+            let value: f64 = match val_str.parse() {
+                Ok(v) => v,
+                Err(_) => continue, // Ignore invalid/non-numeric cells gracefully
             };
 
-            // Process each mapped telemetry column in the row
-            for mapping in &mappings {
-                let val_str = match record.get(mapping.index) {
-                    Some(s) => s.trim(),
-                    None => "",
-                };
-                if val_str.is_empty() {
-                    continue; // Missing values (empty cell) are ignored
-                }
+            batch.push((timestamp, mapping.topic.clone(), value));
+            total_inserts += 1;
+        }
 
-                let value: f64 = match val_str.parse() {
-                    Ok(v) => v,
-                    Err(_) => continue, // Ignore invalid/non-numeric cells gracefully
-                };
+        if batch.len() >= 50000 {
+            crate::database::insert_telemetry_history_batch(db_path, &batch)?;
+            batch.clear();
+        }
 
-                stmt.execute(params![timestamp, mapping.topic, value])?;
-                total_inserts += 1;
-            }
-
-            if total_rows % 10000 == 0 {
-                println!("Processed {} rows, inserted {} points so far...", total_rows, total_inserts);
-            }
+        if total_rows % 10000 == 0 {
+            println!("Processed {} rows, inserted {} points so far...", total_rows, total_inserts);
         }
     }
 
-    println!("Committing transaction to SQLite...");
-    tx.commit()?;
+    if !batch.is_empty() {
+        crate::database::insert_telemetry_history_batch(db_path, &batch)?;
+    }
 
     println!("Successfully imported {} records (total {} data points) from CSV.", total_rows, total_inserts);
     Ok(())

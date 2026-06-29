@@ -442,66 +442,39 @@ impl Config {
     }
 
     pub fn load_from_db(db_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
-        let conn = rusqlite::Connection::open(db_path)?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                config_json TEXT NOT NULL
-            )",
-            [],
-        )?;
-
-        let mut stmt = conn.prepare("SELECT config_json FROM settings WHERE id = 1")?;
-        let mut rows = stmt.query([])?;
-
-        if let Some(row) = rows.next()? {
-            let json_str: String = row.get(0)?;
-            let config: Config = serde_json::from_str(&json_str)?;
-            Ok(config)
-        } else {
-            // Seed database from config.toml if present, else config-sample.toml, else empty config
-            let config = if Path::new("config.toml").exists() {
-                println!("Seeding SQLite database from config.toml...");
-                match Config::load_from_file("config.toml") {
-                    Ok(cfg) => cfg,
-                    Err(e) => {
-                        println!("Failed to load config.toml, using defaults: {}", e);
-                        Config::default_empty()
+        match crate::database::load_config_from_db(db_path) {
+            Ok(config) => Ok(config),
+            Err(_) => {
+                // Seed database from config.toml if present, else config-sample.toml, else empty config
+                let config = if Path::new("config.toml").exists() {
+                    println!("Seeding SQLite database from config.toml...");
+                    match Config::load_from_file("config.toml") {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            println!("Failed to load config.toml, using defaults: {}", e);
+                            Config::default_empty()
+                        }
                     }
-                }
-            } else if Path::new("config-sample.toml").exists() {
-                println!("Seeding SQLite database from config-sample.toml...");
-                match Config::load_from_file("config-sample.toml") {
-                    Ok(cfg) => cfg,
-                    Err(e) => {
-                        println!("Failed to load config-sample.toml, using defaults: {}", e);
-                        Config::default_empty()
+                } else if Path::new("config-sample.toml").exists() {
+                    println!("Seeding SQLite database from config-sample.toml...");
+                    match Config::load_from_file("config-sample.toml") {
+                        Ok(cfg) => cfg,
+                        Err(e) => {
+                            println!("Failed to load config-sample.toml, using defaults: {}", e);
+                            Config::default_empty()
+                        }
                     }
-                }
-            } else {
-                Config::default_empty()
-            };
-            config.save_to_db(db_path)?;
-            Ok(config)
+                } else {
+                    Config::default_empty()
+                };
+                config.save_to_db(db_path)?;
+                Ok(config)
+            }
         }
     }
 
     pub fn save_to_db(&self, db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-        let conn = rusqlite::Connection::open(db_path)?;
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                config_json TEXT NOT NULL
-            )",
-            [],
-        )?;
-
-        let json_str = serde_json::to_string_pretty(self)?;
-        conn.execute(
-            "INSERT OR REPLACE INTO settings (id, config_json) VALUES (1, ?1)",
-            rusqlite::params![json_str],
-        )?;
-        Ok(())
+        crate::database::save_config_to_db(db_path, self)
     }
 
     pub fn default_empty() -> Self {
@@ -750,3 +723,5 @@ topic_energy_total = "emon/aurora/total"
         assert_eq!(aurora1.topic_energy_total, Some("emon/aurora/total".to_string()));
     }
 }
+
+

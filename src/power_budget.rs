@@ -30,31 +30,25 @@ pub fn calculate_power_budget_with_charging(
     let mut last_solar_ts = now.timestamp();
     let mut expected_solar_wh = 0.0;
 
-    if let Ok(conn) = rusqlite::Connection::open(db_path) {
-        let now_ts = now.timestamp();
-        if let Ok(mut stmt) = conn.prepare("SELECT timestamp, predicted_solar_w FROM solar_forecast WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC") {
-            if let Ok(mut rows) = stmt.query(rusqlite::params![now_ts, end_of_today]) {
-                let mut prev_ts = None;
-                while let Ok(Some(row)) = rows.next() {
-                    let ts: i64 = row.get(0).unwrap_or(0);
-                    let val: f64 = row.get(1).unwrap_or(0.0);
-                    if val > 0.0 {
-                        last_solar_ts = last_solar_ts.max(ts);
-                    }
-                    if let Some(pts) = prev_ts {
-                        let diff_hours = (ts - pts) as f64 / 3600.0;
-                        if diff_hours > 0.0 && diff_hours <= 2.0 {
-                            expected_solar_wh += val * diff_hours;
-                        }
-                    } else {
-                        let diff_hours = (ts - now_ts) as f64 / 3600.0;
-                        if diff_hours > 0.0 && diff_hours <= 2.0 {
-                            expected_solar_wh += val * diff_hours;
-                        }
-                    }
-                    prev_ts = Some(ts);
+    let now_ts = now.timestamp();
+    if let Ok(records) = crate::database::load_solar_forecast_range(db_path, now_ts, end_of_today) {
+        let mut prev_ts = None;
+        for (ts, val) in records {
+            if val > 0.0 {
+                last_solar_ts = last_solar_ts.max(ts);
+            }
+            if let Some(pts) = prev_ts {
+                let diff_hours = (ts - pts) as f64 / 3600.0;
+                if diff_hours > 0.0 && diff_hours <= 2.0 {
+                    expected_solar_wh += val * diff_hours;
+                }
+            } else {
+                let diff_hours = (ts - now_ts) as f64 / 3600.0;
+                if diff_hours > 0.0 && diff_hours <= 2.0 {
+                    expected_solar_wh += val * diff_hours;
                 }
             }
+            prev_ts = Some(ts);
         }
     }
 

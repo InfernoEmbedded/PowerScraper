@@ -7,6 +7,7 @@
 )]
 
 pub mod config;
+pub mod database;
 pub mod csv_importer;
 pub mod mqtt_helper;
 pub mod drivers {

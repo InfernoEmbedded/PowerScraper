@@ -90,105 +90,26 @@ pub struct InverterState {
 }
 
 #[derive(Debug, Clone)]
-struct HistoryRecord {
-    timestamp: i64,
-    topic: String,
-    value: f64,
+pub struct HistoryRecord {
+    pub timestamp: i64,
+    pub topic: String,
+    pub value: f64,
 }
 
 pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
-    let conn = rusqlite::Connection::open(db_path)?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS telemetry_history (
-            timestamp INTEGER NOT NULL,
-            topic TEXT NOT NULL,
-            value REAL NOT NULL,
-            PRIMARY KEY (timestamp, topic)
-        )",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_timestamp ON telemetry_history (timestamp)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_topic_timestamp ON telemetry_history (topic, timestamp)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS solar_forecast (
-            timestamp INTEGER PRIMARY KEY,
-            predicted_solar_w REAL NOT NULL
-        )",
-        [],
-    )?;
-    Ok(())
+    crate::database::init_history_db(db_path)
 }
 
 fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, retention_days: Option<u32>) {
-    if buffer.is_empty() {
-        return;
-    }
-    let mut conn = match rusqlite::Connection::open(db_path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to open DB for telemetry flush: {}", e);
-            return;
-        }
-    };
-    let tx = match conn.transaction() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("Failed to start transaction for telemetry flush: {}", e);
-            return;
-        }
-    };
-    {
-        let mut stmt = match tx.prepare_cached(
-            "INSERT OR REPLACE INTO telemetry_history (timestamp, topic, value) VALUES (?1, ?2, ?3)"
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to prepare flush statement: {}", e);
-                return;
-            }
-        };
-        for record in buffer.iter() {
-            if let Err(e) = stmt.execute(rusqlite::params![record.timestamp, record.topic, record.value]) {
-                eprintln!("Failed to execute telemetry insert: {}", e);
-            }
-        }
-    }
-    if let Err(e) = tx.commit() {
-        eprintln!("Failed to commit telemetry flush transaction: {}", e);
-        return;
-    }
-    println!("Flushed {} telemetry records to SQLite database", buffer.len());
-    buffer.clear();
-
-    if let Some(days) = retention_days {
-        let cutoff = Utc::now().timestamp() - (days as i64 * 24 * 3600);
-        if let Err(e) = conn.execute("DELETE FROM telemetry_history WHERE timestamp < ?1", rusqlite::params![cutoff]) {
-            eprintln!("Failed to prune old telemetry records: {}", e);
-        }
+    let len = buffer.len();
+    crate::database::flush_history_to_db(db_path, buffer, retention_days);
+    if len > 0 {
+        println!("Flushed {} telemetry records to SQLite database", len);
     }
 }
 
 fn get_price_history(db_path: &str, topic: &str, since_timestamp: i64) -> Result<Vec<f64>, rusqlite::Error> {
-    let conn = rusqlite::Connection::open(db_path)?;
-    let mut stmt = conn.prepare(
-        "SELECT value FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2"
-    )?;
-    let rows = stmt.query_map(rusqlite::params![topic, since_timestamp], |row| {
-        row.get(0)
-    })?;
-    let mut values = Vec::new();
-    for val in rows {
-        if let Ok(v) = val {
-            values.push(v);
-        }
-    }
-    Ok(values)
+    crate::database::get_price_history(db_path, topic, since_timestamp)
 }
 
 fn calculate_percentiles(mut values: Vec<f64>) -> (f64, f64) {
@@ -232,37 +153,14 @@ pub fn calculate_price_thresholds(db_path: &str) -> Result<crate::web_server::Pr
 }
 
 pub fn calculate_inferred_battery_capacity(db_path: &str, inverter_name: &str) -> Option<f64> {
-    let conn = match rusqlite::Connection::open(db_path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to open DB for capacity inference: {}", e);
-            return None;
-        }
-    };
-
     let capacity_topic = format!("{}/Battery Capacity", inverter_name);
     let power_topic = format!("{}/Battery Power", inverter_name);
     let thirty_days_ago = Utc::now().timestamp() - (30 * 24 * 3600);
 
-    let mut stmt = match conn.prepare(
-        "SELECT timestamp, topic, value 
-         FROM telemetry_history 
-         WHERE (topic = ?1 OR topic = ?2) AND timestamp >= ?3 
-         ORDER BY timestamp ASC"
-    ) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("Failed to prepare SQL statement for capacity inference: {}", e);
-            return None;
-        }
-    };
-
-    let rows = match stmt.query_map(rusqlite::params![capacity_topic, power_topic, thirty_days_ago], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
-    }) {
+    let rows = match crate::database::get_telemetry_history_multiple_topics(db_path, &capacity_topic, &power_topic, thirty_days_ago) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("Failed to execute SQL query for capacity inference: {}", e);
+            eprintln!("Failed to fetch database rows for capacity inference: {}", e);
             return None;
         }
     };
@@ -287,9 +185,8 @@ pub fn calculate_inferred_battery_capacity(db_path: &str, inverter_name: &str) -
     const EFFICIENCY_CHARGE: f64 = 0.95;
     const EFFICIENCY_DISCHARGE: f64 = 0.95;
 
-    for row in rows {
-        if let Ok((ts, topic, val)) = row {
-            if topic == capacity_topic {
+    for (ts, topic, val) in rows {
+        if topic == capacity_topic {
                 current_soc = Some(val);
             } else if topic == power_topic {
                 current_power = Some(val);
@@ -414,7 +311,6 @@ pub fn calculate_inferred_battery_capacity(db_path: &str, inverter_name: &str) -
                 }
             }
             last_timestamp = Some(ts);
-        }
     }
 
     // Finalize any remaining cycle at the end of the history
@@ -573,25 +469,19 @@ impl PowerManager {
         let end_dt = now.date_naive().and_hms_opt(23, 59, 59).unwrap().and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(0);
         
         let mut expected_solar_kwh = 0.0;
-        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
-            if let Ok(mut stmt) = conn.prepare("SELECT timestamp, predicted_solar_w FROM solar_forecast WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC") {
-                if let Ok(mut rows) = stmt.query(rusqlite::params![start_dt, end_dt]) {
-                    let mut prev_ts = None;
-                    let mut sum_kwh = 0.0;
-                    while let Ok(Some(row)) = rows.next() {
-                        let ts: i64 = row.get(0).unwrap_or(0);
-                        let val: f64 = row.get(1).unwrap_or(0.0);
-                        if let Some(pts) = prev_ts {
-                            let diff = (ts - pts) as f64 / 3600.0;
-                            if diff > 0.0 && diff <= 2.0 {
-                                sum_kwh += (val / 1000.0) * diff;
-                            }
-                        }
-                        prev_ts = Some(ts);
+        if let Ok(records) = crate::database::load_solar_forecast_range(&self.db_path, start_dt, end_dt) {
+            let mut prev_ts = None;
+            let mut sum_kwh = 0.0;
+            for (ts, val) in records {
+                if let Some(pts) = prev_ts {
+                    let diff = (ts - pts) as f64 / 3600.0;
+                    if diff > 0.0 && diff <= 2.0 {
+                        sum_kwh += (val / 1000.0) * diff;
                     }
-                    expected_solar_kwh = sum_kwh;
                 }
+                prev_ts = Some(ts);
             }
+            expected_solar_kwh = sum_kwh;
         }
         expected_solar_kwh
     }
@@ -1677,10 +1567,6 @@ impl PowerManager {
         }
         let (demand_start, demand_end) = demand_window.unwrap();
         let mains_source = self.config.source.as_deref().unwrap_or("MainsMeter");
-        let conn = match rusqlite::Connection::open(&self.db_path) {
-            Ok(c) => c,
-            Err(_) => return 0.0,
-        };
 
         let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
         let now = chrono::Utc::now().with_timezone(&tz_offset);
@@ -1691,28 +1577,21 @@ impl PowerManager {
         let start_epoch = start_of_month.timestamp();
 
         let topic = format!("{}/Total system power", mains_source);
-        let mut stmt = match conn.prepare(
-            "SELECT timestamp, value FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2"
-        ) {
-            Ok(s) => s,
+        let records = match crate::database::get_telemetry_history(&self.db_path, &topic, start_epoch) {
+            Ok(r) => r,
             Err(_) => return 0.0,
         };
 
         let mut peak = 0.0;
-        if let Ok(mut rows) = stmt.query(rusqlite::params![topic, start_epoch]) {
-            while let Ok(Some(row)) = rows.next() {
-                let ts: i64 = row.get(0).unwrap_or(0);
-                let val: f64 = row.get(1).unwrap_or(0.0);
+        for (ts, val) in records {
+            let dt = chrono::Utc.timestamp_opt(ts, 0)
+                .single()
+                .map(|utc| utc.with_timezone(&tz_offset))
+                .unwrap_or_else(|| chrono::Utc::now().with_timezone(&tz_offset));
 
-                let dt = chrono::Utc.timestamp_opt(ts, 0)
-                    .single()
-                    .map(|utc| utc.with_timezone(&tz_offset))
-                    .unwrap_or_else(|| chrono::Utc::now().with_timezone(&tz_offset));
-
-                let dt_time = dt.time();
-                if is_time_in_window(dt_time, demand_start, demand_end) && val > peak {
-                    peak = val;
-                }
+            let dt_time = dt.time();
+            if is_time_in_window(dt_time, demand_start, demand_end) && val > peak {
+                peak = val;
             }
         }
         peak
@@ -1740,18 +1619,12 @@ impl PowerManager {
     fn compute_persistence_metrics(&self) -> (f64, f64, f64, f64, f64) {
         let demand_window = get_demand_window(Some(&self.config));
         let mains_source = self.config.source.as_deref().unwrap_or("MainsMeter");
-        let conn = match rusqlite::Connection::open(&self.db_path) {
-            Ok(c) => c,
-            Err(_) => return (0.0, 0.0, 12.0, 0.0, 30.0),
-        };
 
         let now = chrono::Local::now().timestamp();
         let since = now - 86400; // 24 hours ago
 
-        let mut stmt = match conn.prepare(
-            "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC"
-        ) {
-            Ok(s) => s,
+        let rows = match crate::database::get_all_telemetry_in_range(&self.db_path, since, now) {
+            Ok(r) => r,
             Err(_) => return (0.0, 0.0, 12.0, 0.0, 30.0),
         };
 
@@ -1763,25 +1636,19 @@ impl PowerManager {
         }
         let mut groups: BTreeMap<i64, RawGroup> = BTreeMap::new();
 
-        if let Ok(mut rows) = stmt.query(rusqlite::params![since, now]) {
-            while let Ok(Some(row)) = rows.next() {
-                let ts: i64 = row.get(0).unwrap_or(0);
-                let topic: String = row.get(1).unwrap_or_default();
-                let val: f64 = row.get(2).unwrap_or(0.0);
+        for (ts, topic, val) in rows {
+            let entry = groups.entry(ts).or_insert(RawGroup {
+                solar: 0.0,
+                load: None,
+                import_price: None,
+            });
 
-                let entry = groups.entry(ts).or_insert(RawGroup {
-                    solar: 0.0,
-                    load: None,
-                    import_price: None,
-                });
-
-                if topic.ends_with("/PV1 Power") || topic.ends_with("/PV2 Power") || topic.contains("/Input 1 Power") || topic.contains("/Input 2 Power") {
-                    entry.solar += val;
-                } else if topic == format!("{}/Total system power", mains_source) {
-                    entry.load = Some(val);
-                } else if topic == "tariff/import_price" {
-                    entry.import_price = Some(val);
-                }
+            if topic.ends_with("/PV1 Power") || topic.ends_with("/PV2 Power") || topic.contains("/Input 1 Power") || topic.contains("/Input 2 Power") {
+                entry.solar += val;
+            } else if topic == format!("{}/Total system power", mains_source) {
+                entry.load = Some(val);
+            } else if topic == "tariff/import_price" {
+                entry.import_price = Some(val);
             }
         }
 
@@ -1807,36 +1674,30 @@ impl PowerManager {
             now_ts
         };
 
-        if let Ok(conn) = rusqlite::Connection::open(&self.db_path) {
-            if let Ok(mut stmt) = conn.prepare("SELECT timestamp, predicted_solar_w FROM solar_forecast WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC") {
-                if let Ok(mut rows) = stmt.query(rusqlite::params![start_ts, end_dt]) {
-                    let mut prev_ts = None;
-                    let mut sum_kwh = 0.0;
-                    let mut points = 0;
-                    while let Ok(Some(row)) = rows.next() {
-                        let ts: i64 = row.get(0).unwrap_or(0);
-                        let val: f64 = row.get(1).unwrap_or(0.0);
-                        if let Some(pts) = prev_ts {
-                            let diff = (ts - pts) as f64 / 3600.0;
-                            if diff > 0.0 && diff <= 2.0 {
-                                sum_kwh += (val / 1000.0) * diff;
-                                points += 1;
-                            }
-                        } else {
-                            let diff = (ts - start_ts) as f64 / 3600.0;
-                            if diff > 0.0 && diff <= 2.0 {
-                                sum_kwh += (val / 1000.0) * diff;
-                                points += 1;
-                            }
-                        }
-                        prev_ts = Some(ts);
+        if let Ok(records) = crate::database::load_solar_forecast_range(&self.db_path, start_ts, end_dt) {
+            let mut prev_ts = None;
+            let mut sum_kwh = 0.0;
+            let mut points = 0;
+            for (ts, val) in records {
+                if let Some(pts) = prev_ts {
+                    let diff = (ts - pts) as f64 / 3600.0;
+                    if diff > 0.0 && diff <= 2.0 {
+                        sum_kwh += (val / 1000.0) * diff;
+                        points += 1;
                     }
-                    if points > 0 {
-                        expected_solar_kwh = sum_kwh;
-                        forecast_used = true;
-                        println!("Using Open-Meteo weather forecast for solar predictions: {:.2} kWh", expected_solar_kwh);
+                } else {
+                    let diff = (ts - start_ts) as f64 / 3600.0;
+                    if diff > 0.0 && diff <= 2.0 {
+                        sum_kwh += (val / 1000.0) * diff;
+                        points += 1;
                     }
                 }
+                prev_ts = Some(ts);
+            }
+            if points > 0 {
+                expected_solar_kwh = sum_kwh;
+                forecast_used = true;
+                println!("Using Open-Meteo weather forecast for solar predictions: {:.2} kWh", expected_solar_kwh);
             }
         }
 
@@ -2500,8 +2361,6 @@ pub fn load_sim_records(
         max_power_w = 5000.0;
     }
 
-    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
-
     let now_ts = chrono::Local::now().timestamp();
     let start_ts = match range {
         "1d" => now_ts - 86400,
@@ -2511,21 +2370,13 @@ pub fn load_sim_records(
         _ => 0,
     };
 
-    let mut stmt = conn.prepare(
-        "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ?1 ORDER BY timestamp ASC"
-    ).map_err(|e| e.to_string())?;
+    let rows = crate::database::get_all_telemetry_since(db_path, start_ts).map_err(|e| e.to_string())?;
 
     use std::collections::BTreeMap;
     use std::collections::HashMap;
 
     let mut groups: BTreeMap<i64, HashMap<String, f64>> = BTreeMap::new();
-
-    let mut rows = stmt.query(rusqlite::params![start_ts]).map_err(|e| e.to_string())?;
-    while let Ok(Some(row)) = rows.next() {
-        let ts: i64 = row.get(0).unwrap_or(0);
-        let topic: String = row.get(1).unwrap_or_default();
-        let val: f64 = row.get(2).unwrap_or(0.0);
-
+    for (ts, topic, val) in rows {
         let ts_rounded = (ts / 60) * 60;
         let entry = groups.entry(ts_rounded).or_insert_with(HashMap::new);
         entry.insert(topic, val);
@@ -2941,21 +2792,10 @@ pub async fn run_weather_fetcher_task(db_path: String, cancel_token: tokio_util:
                             }
                             
                             if !predictions.is_empty() {
-                                if let Ok(mut conn) = rusqlite::Connection::open(&db_path) {
-                                    if let Ok(tx) = conn.transaction() {
-                                        let _ = tx.execute("DELETE FROM solar_forecast", []);
-                                        for (ts, predicted_w) in &predictions {
-                                            let _ = tx.execute(
-                                                "INSERT OR REPLACE INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)",
-                                                rusqlite::params![ts, predicted_w],
-                                            );
-                                        }
-                                        if let Err(e) = tx.commit() {
-                                            eprintln!("Failed to commit solar forecast transaction: {}", e);
-                                        } else {
-                                            println!("Saved {} hourly solar predictions to solar_forecast table.", predictions.len());
-                                        }
-                                    }
+                                if let Err(e) = crate::database::delete_and_save_solar_forecast(&db_path, &predictions) {
+                                    eprintln!("Failed to save solar forecast: {}", e);
+                                } else {
+                                    println!("Saved {} hourly solar predictions to solar_forecast table.", predictions.len());
                                 }
                             }
                         }
@@ -3004,14 +2844,10 @@ mod tests {
 
         // Let's connect directly to see the timestamps and dt_local conversion
         let tz_offset = get_timezone_offset(config.battery_control.as_ref().and_then(|bc| bc.timezone.as_deref()));
-        let conn = rusqlite::Connection::open(db_to_test).unwrap();
-        let mut stmt = conn.prepare("SELECT timestamp, topic, value FROM telemetry_history ORDER BY timestamp ASC").unwrap();
-        let mut rows = stmt.query([]).unwrap();
+        let rows = crate::database::get_all_telemetry_since(db_to_test, 0).unwrap();
         let mut count = 0;
         let mut in_window_count = 0;
-        while let Ok(Some(row)) = rows.next() {
-            let ts: i64 = row.get(0).unwrap();
-            let topic: String = row.get(1).unwrap();
+        for (ts, topic, _val) in rows {
             if topic == "MainsMeter/Total system power" {
                 let dt_local = chrono::Utc.timestamp_opt(ts, 0)
                     .single()
@@ -4365,24 +4201,19 @@ mod tests {
 
         // 4. Verify DB contents
         {
-            let conn = rusqlite::Connection::open(temp_db).unwrap();
-            let mut stmt = conn.prepare("SELECT timestamp, topic, value FROM telemetry_history ORDER BY timestamp, topic").unwrap();
-            let mut rows = stmt.query([]).unwrap();
+            let rows = crate::database::get_all_telemetry_since(temp_db, 0).unwrap();
+            assert_eq!(rows.len(), 3);
+            assert_eq!(rows[0].0, now_ts - 600);
+            assert_eq!(rows[0].1, "solax1/PV1 Power");
+            assert_eq!(rows[0].2, 1200.5);
 
-            let r1 = rows.next().unwrap().unwrap();
-            assert_eq!(r1.get::<_, i64>(0).unwrap(), now_ts - 600);
-            assert_eq!(r1.get::<_, String>(1).unwrap(), "solax1/PV1 Power");
-            assert_eq!(r1.get::<_, f64>(2).unwrap(), 1200.5);
+            assert_eq!(rows[1].0, now_ts - 600);
+            assert_eq!(rows[1].1, "tariff/import_price");
+            assert_eq!(rows[1].2, 28.5);
 
-            let r2 = rows.next().unwrap().unwrap();
-            assert_eq!(r2.get::<_, i64>(0).unwrap(), now_ts - 600);
-            assert_eq!(r2.get::<_, String>(1).unwrap(), "tariff/import_price");
-            assert_eq!(r2.get::<_, f64>(2).unwrap(), 28.5);
-
-            let r3 = rows.next().unwrap().unwrap();
-            assert_eq!(r3.get::<_, i64>(0).unwrap(), now_ts - 300);
-            assert_eq!(r3.get::<_, String>(1).unwrap(), "solax1/PV1 Power");
-            assert_eq!(r3.get::<_, f64>(2).unwrap(), 1250.0);
+            assert_eq!(rows[2].0, now_ts - 300);
+            assert_eq!(rows[2].1, "solax1/PV1 Power");
+            assert_eq!(rows[2].2, 1250.0);
         }
 
         // 5. Test pruning
@@ -4403,8 +4234,7 @@ mod tests {
 
         // Check total count - should be 4 (three original ones + 1 kept from buffer2, 1 pruned)
         {
-            let conn = rusqlite::Connection::open(temp_db).unwrap();
-            let total_count: i64 = conn.query_row("SELECT COUNT(*) FROM telemetry_history", [], |r| r.get(0)).unwrap();
+            let total_count = crate::database::get_all_telemetry_since(temp_db, 0).unwrap().len();
             assert_eq!(total_count, 4);
         }
 
@@ -4736,28 +4566,11 @@ mod tests {
             now
         };
 
-        // Insert forecasted solar values (5000 W) in the query window
         {
-            let conn = rusqlite::Connection::open(temp_db).unwrap();
-            conn.execute(
-                "CREATE TABLE IF NOT EXISTS solar_forecast (
-                    timestamp INTEGER PRIMARY KEY,
-                    predicted_solar_w REAL NOT NULL
-                )",
-                [],
-            ).unwrap();
-            
             let ts1 = start_ts;
             let ts2 = start_ts + 1800; // 30 mins later (well within window)
             assert!(ts2 <= end_dt, "Forecast test timestamps must be within the end_dt window bounds");
-            conn.execute(
-                "INSERT INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)",
-                rusqlite::params![ts1, 5000.0],
-            ).unwrap();
-            conn.execute(
-                "INSERT INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)",
-                rusqlite::params![ts2, 5000.0],
-            ).unwrap();
+            crate::database::delete_and_save_solar_forecast(temp_db, &[(ts1, 5000.0), (ts2, 5000.0)]).unwrap();
         }
         pm.clear_metrics_cache();
         

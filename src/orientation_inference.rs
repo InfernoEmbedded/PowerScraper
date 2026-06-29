@@ -15,25 +15,14 @@ pub async fn handle_infer_orientation(
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let topic = format!("{}/{} Power", payload.inverter, payload.string);
     
-    let conn = rusqlite::Connection::open(&db_path)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to open database: {}", e)))?;
-        
     let one_year_ago = chrono::Utc::now().timestamp() - (365 * 24 * 3600);
-    
-    let mut stmt = conn.prepare(
-        "SELECT timestamp, value FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2 ORDER BY timestamp ASC"
-    ).map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to prepare query: {}", e)))?;
-    
-    let rows = stmt.query_map(rusqlite::params![topic, one_year_ago], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
-    }).map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Query error: {}", e)))?;
+    let records = crate::database::get_telemetry_history(&db_path, &topic, one_year_ago)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Database error: {}", e)))?;
     
     let mut daily_data: HashMap<i64, Vec<(i64, f64)>> = HashMap::new();
-    for row in rows {
-        if let Ok((ts, val)) = row {
-            let day = ts / 86400;
-            daily_data.entry(day).or_default().push((ts, val));
-        }
+    for (ts, val) in records {
+        let day = ts / 86400;
+        daily_data.entry(day).or_default().push((ts, val));
     }
     
     if daily_data.is_empty() {
@@ -206,31 +195,9 @@ mod tests {
     #[tokio::test]
     async fn test_infer_orientation_no_data() {
         let temp_db = "temp_test_infer.db";
-        let conn = rusqlite::Connection::open(temp_db).unwrap();
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                config_json TEXT NOT NULL
-            )",
-            [],
-        ).unwrap();
-        
-        let config = crate::config::Config::default_empty();
-        let config_json = serde_json::to_string_pretty(&config).unwrap();
-        conn.execute(
-            "INSERT OR REPLACE INTO settings (id, config_json) VALUES (1, ?1)",
-            rusqlite::params![config_json],
-        ).unwrap();
-        
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS telemetry_history (
-                timestamp INTEGER NOT NULL,
-                topic TEXT NOT NULL,
-                value REAL NOT NULL,
-                PRIMARY KEY (timestamp, topic)
-            )",
-            [],
-        ).unwrap();
+        let _ = std::fs::remove_file(temp_db);
+        crate::database::save_config_to_db(temp_db, &crate::config::Config::default_empty()).unwrap();
+        crate::database::init_history_db(temp_db).unwrap();
 
         let req = InferRequest {
             inverter: "solax1".to_string(),
@@ -249,34 +216,11 @@ mod tests {
     async fn test_infer_orientation_with_mock_telemetry() {
         let temp_db = "temp_test_infer_mock.db";
         let _ = std::fs::remove_file(temp_db);
-        let conn = rusqlite::Connection::open(temp_db).unwrap();
-        
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS settings (
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-                config_json TEXT NOT NULL
-            )",
-            [],
-        ).unwrap();
-        
-        let config = crate::config::Config::default_empty();
-        let config_json = serde_json::to_string_pretty(&config).unwrap();
-        conn.execute(
-            "INSERT OR REPLACE INTO settings (id, config_json) VALUES (1, ?1)",
-            rusqlite::params![config_json],
-        ).unwrap();
-
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS telemetry_history (
-                timestamp INTEGER NOT NULL,
-                topic TEXT NOT NULL,
-                value REAL NOT NULL,
-                PRIMARY KEY (timestamp, topic)
-            )",
-            [],
-        ).unwrap();
+        crate::database::save_config_to_db(temp_db, &crate::config::Config::default_empty()).unwrap();
+        crate::database::init_history_db(temp_db).unwrap();
 
         let start_time = (chrono::Utc::now().timestamp() / 86400 - 10) * 86400;
+        let mut buffer = Vec::new();
         
         for day in 0..10 {
             let day_start = start_time + (day * 24 * 3600);
@@ -289,12 +233,14 @@ mod tests {
                 let poa = crate::power_manager::calculate_poa_irradiance(dni, dhi, el, az, 20.0, 180.0);
                 let pv_power = poa * 3.0;
                 
-                conn.execute(
-                    "INSERT INTO telemetry_history (timestamp, topic, value) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![ts, "solax1/PV1 Power", pv_power],
-                ).unwrap();
+                buffer.push(crate::power_manager::HistoryRecord {
+                    timestamp: ts,
+                    topic: "solax1/PV1 Power".to_string(),
+                    value: pv_power,
+                });
             }
         }
+        crate::database::flush_history_to_db(temp_db, &mut buffer, None);
 
         let req = InferRequest {
             inverter: "solax1".to_string(),
