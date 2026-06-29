@@ -8,7 +8,10 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
     let mut bat_soc = config.battery_capacity_kwh * 0.5;
     let mut tracker = SimTracker::new();
 
-    for r in records {
+    for (idx, r) in records.iter().enumerate() {
+        if idx % 100 == 0 {
+            std::thread::yield_now();
+        }
         let month = r.dt_local.month();
         let eh_config = if let Some(ref monthly_map) = config.evolved_heuristic_monthly {
             monthly_map.get(&month.to_string()).unwrap_or(&config.evolved_heuristic)

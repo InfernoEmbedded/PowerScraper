@@ -3,6 +3,24 @@ use super::{SimRecord, SimConfig};
 use std::collections::HashMap;
 use chrono::Datelike;
 
+#[cfg(unix)]
+fn lower_current_thread_priority() {
+    unsafe {
+        // Set nice value to 19 (lowest standard nice priority)
+        let _ = libc::setpriority(libc::PRIO_PROCESS, 0, 19);
+        
+        // On Linux, set scheduling policy to SCHED_IDLE (absolute lowest priority class)
+        #[cfg(target_os = "linux")]
+        {
+            let param = libc::sched_param { sched_priority: 0 };
+            let _ = libc::sched_setscheduler(0, libc::SCHED_IDLE, &param);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn lower_current_thread_priority() {}
+
 pub struct SimpleRng {
     state: u64,
 }
@@ -232,6 +250,7 @@ pub fn run_tuning(
     seed_config_monthly: Option<HashMap<String, EvolvedHeuristicConfig>>,
     progress_cb: Option<&(dyn Fn(TuningProgressEvent) -> bool + Send + Sync)>,
 ) -> Result<HashMap<String, EvolvedHeuristicConfig>, String> {
+    lower_current_thread_priority();
     if records.is_empty() {
         return Err("No telemetry records found for tuning".to_string());
     }
@@ -296,9 +315,10 @@ pub fn run_tuning(
         let mut best_cycles = 0.0;
 
         for gen_num in 1..=generations {
-            let num_threads = std::thread::available_parallelism()
+            let num_cores = std::thread::available_parallelism()
                 .map(|n| n.get())
                 .unwrap_or(4);
+            let num_threads = if num_cores > 1 { num_cores - 1 } else { 1 };
                 
             let chunk_size = (population.len() + num_threads - 1) / num_threads;
             let mut results = vec![(0.0, 0.0, 0.0); population.len()];
@@ -312,14 +332,15 @@ pub fn run_tuning(
                     let template_ref = sim_config_template;
                     
                     let handle = s.spawn(move || {
+                        lower_current_thread_priority();
                         let mut chunk_res = Vec::new();
                         for ind in chunk {
-                            let mut sim_config = template_ref.clone();
-                            sim_config.evolved_heuristic = ind.to_evolved_config();
-                            let res = crate::simulation::evolved_heuristic::run(records_ref, &sim_config);
-                            let cost = res.energy_cost + res.demand_charges + res.cycles * cycle_penalty;
-                            let bill = res.energy_cost + res.demand_charges;
-                            chunk_res.push((cost, bill, res.cycles));
+                             let mut sim_config = template_ref.clone();
+                             sim_config.evolved_heuristic = ind.to_evolved_config();
+                             let res = crate::simulation::evolved_heuristic::run(records_ref, &sim_config);
+                             let cost = res.energy_cost + res.demand_charges + res.cycles * cycle_penalty;
+                             let bill = res.energy_cost + res.demand_charges;
+                             chunk_res.push((cost, bill, res.cycles));
                         }
                         (thread_id, chunk_res)
                     });
@@ -417,6 +438,7 @@ pub fn run_tuning(
             }
 
             population = new_population;
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
         tuned_monthly_params.insert(month.to_string(), best_ind.to_evolved_config());
