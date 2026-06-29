@@ -77,15 +77,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     
                 match last_update {
                     Some(ts) => {
-                        if now_secs > ts && now_secs - ts > 180 {
-                            eprintln!("WATCHDOG: MainsMeter has not updated for {} seconds. Exiting for systemd restart...", now_secs - ts);
+                        if now_secs > ts && now_secs - ts > 1800 {
+                            eprintln!("WATCHDOG: MainsMeter has not updated for {} seconds (30 minutes). Exiting for systemd restart...", now_secs - ts);
                             std::process::exit(1);
                         }
                     }
                     None => {
-                        // Allow 5 minutes from startup for initial update
-                        if start_time.elapsed() > tokio::time::Duration::from_secs(300) {
-                            eprintln!("WATCHDOG: MainsMeter has failed to update since startup (5 minutes ago). Exiting for systemd restart...");
+                        // Allow 30 minutes from startup for initial update
+                        if start_time.elapsed() > tokio::time::Duration::from_secs(1800) {
+                            eprintln!("WATCHDOG: MainsMeter has failed to update since startup (30 minutes ago). Exiting for systemd restart...");
                             std::process::exit(1);
                         }
                     }
