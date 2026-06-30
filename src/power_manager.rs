@@ -7,7 +7,7 @@ use rumqttc::{Event, Packet, QoS};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tokio::time::{Duration, sleep};
+use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 fn parse_timezone_offset(tz_str: &str) -> chrono::FixedOffset {
@@ -1936,6 +1936,35 @@ pub async fn run_power_manager_task(
             .await;
     }
 
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<rumqttc::Event, ()>>(256);
+    let cancel_token_clone = cancel_token.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    match res {
+                        Ok(notification) => {
+                            if tx.send(Ok(notification)).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Power Manager MQTT eventloop error: {}", e);
+                            if tx.send(Err(())).await.is_err() {
+                                break;
+                            }
+                            tokio::select! {
+                                _ = cancel_token_clone.cancelled() => break,
+                                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
     let mut currently_connected = false;
     loop {
         tokio::select! {
@@ -1982,9 +2011,9 @@ pub async fn run_power_manager_task(
                     }
                 }
             }
-            res = eventloop.poll() => {
+            res = rx.recv() => {
                 match res {
-                    Ok(notification) => {
+                    Some(Ok(notification)) => {
                         if !currently_connected {
                             currently_connected = true;
                             if let Ok(mut status) = crate::web_server::get_system_status().lock() {
@@ -2049,10 +2078,7 @@ pub async fn run_power_manager_task(
                                                 let mut pm_lock = pm.lock().await;
                                                 pm_lock.grid_target = target;
                                                 pm_lock.config.grid_target = Some(target);
-                                                println!(
-                                                    "Power Manager grid target changed to: {}W",
-                                                    target
-                                                );
+                                                println!("Power Manager grid target changed to: {}", target);
 
                                                 if let Ok(mut status) = crate::web_server::get_system_status().lock() {
                                                     status.grid_target = target;
@@ -2063,7 +2089,7 @@ pub async fn run_power_manager_task(
                                                     if let Some(ref mut bat_ctrl) = db_cfg.battery_control {
                                                         bat_ctrl.grid_target = Some(target);
                                                         if let Err(e) = db_cfg.save_to_db(&db_path) {
-                                                            eprintln!("Failed to save config to DB on grid target change: {}", e);
+                                                            eprintln!("Failed to save config to DB on target change: {}", e);
                                                         }
                                                     }
                                                 }
@@ -2096,12 +2122,8 @@ pub async fn run_power_manager_task(
                                         let mut state_changed = false;
 
                                         // 1. Check if it's the configured power consumption source
-                                        let is_source = pm_lock
-                                            .config
-                                            .source
-                                            .as_ref()
-                                            .map(|s| s == device_name)
-                                            .unwrap_or(false);
+                                        let source_opt = pm_lock.config.source.clone();
+                                        let is_source = source_opt.as_ref().map(|s| s == device_name).unwrap_or(false);
                                         if is_source {
                                             if metric == "Total system power" {
                                                 pm_lock.total_power = val;
@@ -2128,14 +2150,9 @@ pub async fn run_power_manager_task(
                                             }
                                         }
 
-                                        // 2. Check if it's one of our configured participating inverters
-                                        if pm_lock.config.inverter.contains_key(device_name) {
-                                            // Update inverter-specific state
-                                            let mut state = pm_lock
-                                                .inverters
-                                                .entry(device_name.to_string())
-                                                .or_default()
-                                                .clone();
+                                        // 2. Check if it's an inverter telemetry update
+                                        if let Some(inv_cfg) = pm_lock.config.inverter.get(device_name) {
+                                            let mut state = pm_lock.inverters.get(device_name).cloned().unwrap_or_default();
                                             let mut updated = false;
 
                                             if metric == "Battery Capacity" {
@@ -2150,14 +2167,12 @@ pub async fn run_power_manager_task(
                                             } else if metric == "PV2 Power" {
                                                 state.pv2_power = val;
                                                 updated = true;
+
                                             } else if metric == "Measured Power" {
                                                 state.measured_power = val;
                                                 updated = true;
                                                 // If source is not configured, we use inverter measured power
-                                                if pm_lock.config.source.is_none()
-                                                    && let Some(inv_cfg) =
-                                                        pm_lock.config.inverter.get(device_name)
-                                                {
+                                                if pm_lock.config.source.is_none() {
                                                     let phase = inv_cfg.phase;
                                                     pm_lock.handle_inverter_power(device_name, phase, val);
                                                     if let Ok(mut status) = crate::web_server::get_system_status().lock() {
@@ -2172,6 +2187,7 @@ pub async fn run_power_manager_task(
                                                     }
                                                 }
                                             }
+
                                             if updated {
                                                 pm_lock.inverters.insert(device_name.to_string(), state);
                                                 state_changed = true;
@@ -2193,7 +2209,7 @@ pub async fn run_power_manager_task(
                                             for (metric_name, value) in aggregates {
                                                 let topic = format!("{}/aggregate/{}", base_topic, metric_name);
                                                 let _ = mqtt_client
-                                                    .publish(&topic, QoS::AtMostOnce, false, value.to_string())
+                                                    .publish(&topic, QoS::AtLeastOnce, false, value.to_string())
                                                     .await;
                                             }
                                         } else {
@@ -2204,19 +2220,15 @@ pub async fn run_power_manager_task(
                             }
                         }
                     }
-                    Err(e) => {
-                        println!("Power Manager MQTT error: {}", e);
+                    Some(Err(())) => {
                         if currently_connected {
                             currently_connected = false;
                             if let Ok(mut status) = crate::web_server::get_system_status().lock() {
                                 status.mqtt_connected = false;
                             }
                         }
-                        tokio::select! {
-                            _ = cancel_token.cancelled() => break,
-                            _ = sleep(Duration::from_secs(5)) => {}
-                        }
                     }
+                    None => break,
                 }
             }
         }
