@@ -138,6 +138,10 @@ patch=$((patch + 1))
 NEW_VERSION="$major.$minor.$patch"
 sed -i "s/^version = \"$VERSION\"/version = \"$NEW_VERSION\"/" Cargo.toml
 git add Cargo.toml
+if [ -f "Cargo.lock" ]; then
+    cargo metadata --format-version 1 &> /dev/null
+    git add Cargo.lock
+fi
 echo -e "${GREEN}Bumped to $NEW_VERSION${NC}"
 
 echo -e "${GREEN}All checks passed successfully! Commit approved.${NC}"
