@@ -101,3 +101,33 @@ Modern SolaX hybrid firmware requires a startup handshake to enable remote batte
 When commanding battery rates:
 1. `write_single_register(0x52, power_value)`: Sets the target battery charge/discharge rate.
 2. `write_single_register(0x51, 1)`: Ensures the control state override remains active.
+
+---
+
+## 4. SolaX Generation 4 (G4) Modbus TCP Driver
+
+The Generation 4 (G4) driver is designed for modern SolaX Hybrid X1/X3 Gen 4 inverters. Telemetry registers match the standard single-block read of `0x72` registers starting at address `0` (similar to the standard driver).
+
+### Remote Power Control
+G4 inverters utilize a dedicated Virtual Power Plant (VPP) remote control interface:
+1. **Enable Remote Control** (`0x007C`): Write Single Register (`0x06`) set to `1` (remote control enabled) or `0` (revert to self-use).
+2. **Keepalive Timeout** (`0x0088`): Write Single Register (`0x06`) setting the watchdog timeout in seconds (typically `30`).
+3. **Active Power Target** (`0x007E`): Write Multiple Registers (`0x10`, length 2) containing a 32-bit signed integer (low word at `0x007E`, high word at `0x007F`).
+   - Positive values charge the battery.
+   - Negative values discharge the battery.
+
+---
+
+## 5. SolaX Generation 3 (G3) Modbus TCP Driver
+
+The Generation 3 (G3) driver is designed specifically for SolaX Hybrid X1/X3 Gen 3 inverters. To prevent illegal address exception errors on sparse G3 registers, the driver splits telemetry queries into three non-contiguous block reads:
+- **Block A**: Reads `0x27` registers starting at `0x00` (PV power, battery telemetry).
+- **Block B**: Reads `0x1E` registers starting at `0x40` (fault states, grid meter).
+- **Block C**: Reads `0x0E` registers starting at `0x6A` (three-phase measurements).
+
+### Remote Power Control
+G3 VPP remote override control utilizes the following holding registers:
+1. **Enable Remote Control** (`0x0051`): Write Single Register (`0x06`) set to `1` (remote control enabled) or `0` (revert to self-use).
+2. **Keepalive Timeout** (`0x009F`): Write Single Register (`0x06`) setting the watchdog timeout in seconds (typically `30`).
+3. **Active Power Target** (`0x0052`): Write Single Register (`0x06`) containing a signed 16-bit power value (positive values charge, negative values discharge).
+

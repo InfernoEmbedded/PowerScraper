@@ -51,6 +51,16 @@ Used to scrape SolaX X-Series Hybrid inverters and chargers over Modbus TCP (use
 
 - Same configuration parameters as standard `[Solax-Modbus]`.
 
+### SolaX Generation 4 Modbus TCP Driver `[Solax-G4-Modbus]`
+Used to scrape SolaX Generation 4 Hybrid X1/X3 inverters over Modbus TCP and control them using the VPP remote control registers.
+
+- Same configuration parameters as standard `[Solax-Modbus]`.
+
+### SolaX Generation 3 Modbus TCP Driver `[Solax-G3-Modbus]`
+Used to scrape SolaX Generation 3 Hybrid X1/X3 inverters over Modbus TCP (uses sparse, divided register block queries) and control them using the G3 VPP remote override registers.
+
+- Same configuration parameters as standard `[Solax-Modbus]`.
+
 ---
 
 ## 3. Power Meter Drivers
