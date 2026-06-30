@@ -85,3 +85,13 @@ You must not sacrifice program correctness or safety for brevity. **Do not** min
 *   Correct error handling (never silently discard/suppress warnings or result errors).
 *   Critical unit test assertions.
 *   Required documentation comments (`///` and `//!`) for public structures and crates.
+
+---
+
+## 4. Documentation & Changelog Maintenance
+
+Whenever a user-facing change is made to the codebase (e.g. adding features, updating configuration schemas, changing power manager rules, modifying dashboard panels, or creating new drivers), you **must** document it in the [Changelog.md](file:///home/deece/src/PowerScraper/Changelog.md) file:
+*   Categorize modifications under standard headings: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, or `Security`.
+*   Maintain reverse-chronological order for version entries.
+*   Ensure that the changelog reflects the upcoming bumped version number.
+
