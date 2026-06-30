@@ -108,7 +108,26 @@ sudo systemctl start powerscraper.service
 
 ---
 
-## 6. Git Pre-Commit Hook
+## 6. Migration from Python Implementation
+
+The new Rust implementation uses the same TOML structure and is fully backwards-compatible with the older Python `config.toml` file.
+
+You can import your configuration using two different methods:
+
+### Method A: Automatic Seeding on Startup (Recommended)
+1. Copy your existing `config.toml` file to the root directory where `PowerScraper` is run.
+2. Ensure there is no existing SQLite database file (`config.db`).
+3. Start the application. PowerScraper will detect `config.toml`, parse it, and automatically seed and initialize the `config.db` database.
+
+### Method B: Import via Web UI Settings
+1. Start the application to initialize a blank database.
+2. Open the Web Dashboard in your browser.
+3. Navigate to **Settings** and click the **Import Config** button.
+4. Select and upload your old `config.toml` file to parse and apply it to the database instantly.
+
+---
+
+## 7. Git Pre-Commit Hook
 
 This repository enforces a Git pre-commit hook (`scripts/pre-commit`) to guarantee code quality. The hook automatically executes:
 1. `cargo fmt` format validation.
@@ -116,3 +135,4 @@ This repository enforces a Git pre-commit hook (`scripts/pre-commit`) to guarant
 3. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` documentation links validation.
 4. Unit/integration test execution.
 5. Increments the patch version in `Cargo.toml` and updates `Cargo.lock` with the synced version before staging both files.
+
