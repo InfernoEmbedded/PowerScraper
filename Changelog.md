@@ -1,0 +1,42 @@
+# Changelog
+
+All notable user-facing changes in PowerScraper since the transition from the legacy Python implementation (commit `2c2227e5fbb7957aed1c77ad66eb0986f63ecfbf`) are documented below.
+
+---
+
+## [1.0.70] - 2026-06-30
+
+### Added
+*   **SolaX Generation 4 (G4) Modbus Driver**: Custom driver supporting the 32-bit Virtual Power Plant (VPP) active power holding registers (`0x007C`, `0x007E`, `0x0088`).
+*   **SolaX Generation 3 (G3) Modbus Driver**: Custom driver supporting 16-bit remote control overrides and watchdog keepalives using sparse input block queries to avoid illegal address exceptions.
+*   **Mains Meter Watchdog Config**: Watchdog timeout settings are now exposed directly on the Web UI Settings tab and saved to the database.
+*   **Python Configuration Migration**: Added automated TOML-to-database seeding on startup and an **Import Config** file upload button in the Web Dashboard for seamless migration.
+*   **Pre-commit Hook Auto-Sync**: The pre-commit hook now runs `cargo metadata` and stages `Cargo.lock` automatically to ensure version consistency.
+
+### Changed
+*   **Top-up Period Charge Targets**: Min-SoC charging logic now evaluates target thresholds as the maximum of the period's min-charge and the inverter's baseline hard floor limit (e.g., proper grid charging behavior during TOU windows).
+
+---
+
+## [1.0.50] - 2026-06-25
+
+### Added
+*   **Realtime Modbus RTU Threading**: Moved SDM630 and DTSU666 serial drivers to dedicated OS threads running with realtime priority (`SCHED_FIFO` / nice `-20`) to eliminate grid telemetry latency.
+*   **Lookahead MPC Reserve**: Added support for grid pre-charging under demand tariffs in simulation.
+*   **SQLite Database Layer**: Factored out all direct query logic into a repository module leveraging WAL (Write-Ahead Logging) mode and busy timeouts.
+
+### Changed
+*   **Tuning Execution**: Parallelized the evolutionary parameter optimization in native Rust, replacing the slow Python child process executor.
+
+---
+
+## [1.0.0] - 2026-06-20
+
+### Added
+*   **Full Rust Port**: Rewrote the entire backend from Python/Twisted to Rust/Tokio, achieving a 10x reduction in memory footprint and massive performance enhancements.
+*   **Advanced Simulation Engine**: Native simulator with support for Lookahead MPC, Adaptive Peak Shaving, and Evolved Heuristic strategies.
+*   **Web Dashboard UI**: A premium, responsive single-page dashboard displaying live power flows, system stats, Amber pricing, and historical simulation graphs.
+*   **MQTT Power Meter Bridge**: Support for Shelly and custom ESPHome meters.
+*   **Home Assistant Auto-Discovery**: Automatically publishes MQTT discovery payloads for all entities.
+*   **Tariff Manager**: Live pricing models supporting Flat rates, Time-Of-Use schedules, and real-time Amber API price tracking.
+*   **Debian Packaging**: Integrated building scripts for packaging `.deb` files for local (`amd64`) or target (`arm64`) deployments.

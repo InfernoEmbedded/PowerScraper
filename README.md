@@ -4,6 +4,8 @@ PowerScraper is a high-performance, multithreaded Rust application designed to q
 
 It operates on a fully decoupled, **MQTT-only inter-task communication architecture** for maximum task isolation and resilience.
 
+See the [Changelog](Changelog.md) for a summary of recent changes and updates.
+
 ---
 
 ## 1. Key Features
