@@ -758,6 +758,12 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <p class="text-muted" style="margin-bottom: 20px;">
                     The genetic algorithm successfully completed optimization. Below is a comparison between your current configuration and the newly evolved parameters.
                 </p>
+                <div id="tune-month-select-container" style="margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+                    <label for="tune-results-month-select" style="font-weight: 500; font-size: 0.95rem; color: #fff;">Select Month to View/Compare:</label>
+                    <select id="tune-results-month-select" onchange="changeResultsMonth(this.value)" style="padding: 8px 12px; border-radius: 6px; border: 1px solid var(--border-color); background: rgba(20,24,46,0.9); color: #fff; outline: none; cursor: pointer; font-size: 0.9rem;">
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
                 <div style="overflow-x: auto; margin-bottom: 25px;">
                     <table class="sim-table" style="width: 100%; border-collapse: collapse; text-align: left;">
                         <thead>
@@ -2003,6 +2009,10 @@ function renderDriverCard(type, data = {}) {
                     <label>Stop Bits</label>
                     <input type="number" class="driver-sdm-stop" value="${stop}">
                 </div>
+                <div class="form-group">
+                    <label>Watchdog Timeout (s)</label>
+                    <input type="number" class="driver-sdm-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
+                </div>
             </div>
         `;
     } else if (type === 'DTSU666') {
@@ -2048,6 +2058,10 @@ function renderDriverCard(type, data = {}) {
                     <label>Stop Bits</label>
                     <input type="number" class="driver-dtsu-stop" value="${stop}">
                 </div>
+                <div class="form-group">
+                    <label>Watchdog Timeout (s)</label>
+                    <input type="number" class="driver-dtsu-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
+                </div>
             </div>
         `;
     } else if (type === 'MQTTPowerMeter') {
@@ -2074,6 +2088,10 @@ function renderDriverCard(type, data = {}) {
                 <div class="form-group">
                     <label>Poll Period (s)</label>
                     <input type="number" class="driver-mqtt-meter-poll" value="${poll}">
+                </div>
+                <div class="form-group">
+                    <label>Watchdog Timeout (s)</label>
+                    <input type="number" class="driver-mqtt-meter-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
             <div class="form-row">
@@ -2329,7 +2347,8 @@ async function loadConfig(configData = null) {
                     timeout: sdm.timeout || 1,
                     baud: sdm.baud || 38400,
                     parity: sdm.parity || 'E',
-                    stopbits: sdm.stopbits || 1
+                    stopbits: sdm.stopbits || 1,
+                    watchdog_timeout: sdm["watchdog-timeout"] || sdm.watchdog_timeout || null
                 });
             });
         }
@@ -2345,7 +2364,8 @@ async function loadConfig(configData = null) {
                     timeout: dtsu.timeout || 1,
                     baud: dtsu.baud || 9600,
                     parity: dtsu.parity || 'N',
-                    stopbits: dtsu.stopbits || 1
+                    stopbits: dtsu.stopbits || 1,
+                    watchdog_timeout: dtsu["watchdog-timeout"] || dtsu.watchdog_timeout || null
                 });
             });
         }
@@ -2366,7 +2386,8 @@ async function loadConfig(configData = null) {
                     topic_total: mDev.topic_total || mDev["topic-total"] || '',
                     topic_phase1: mDev.topic_phase1 || mDev["topic-phase1"] || '',
                     topic_phase2: mDev.topic_phase2 || mDev["topic-phase2"] || '',
-                    topic_phase3: mDev.topic_phase3 || mDev["topic-phase3"] || ''
+                    topic_phase3: mDev.topic_phase3 || mDev["topic-phase3"] || '',
+                    watchdog_timeout: mDev["watchdog-timeout"] || mDev.watchdog_timeout || null
                 });
             });
         }
@@ -3242,6 +3263,8 @@ async function saveConfiguration() {
             const baud = parseInt(card.querySelector('.driver-sdm-baud').value) || 38400;
             const parity = card.querySelector('.driver-sdm-parity').value;
             const stop = parseInt(card.querySelector('.driver-sdm-stop').value) || 1;
+            const watchdogInput = card.querySelector('.driver-sdm-watchdog');
+            const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
             if (port) {
                 if (!sdmConfig) {
                     sdmConfig = {
@@ -3253,6 +3276,9 @@ async function saveConfiguration() {
                         ports: []
                     };
                 }
+                if (watchdog !== null && !isNaN(watchdog)) {
+                    sdmConfig["watchdog-timeout"] = watchdog;
+                }
                 sdmConfig.ports.push(port);
             }
         } else if (type === 'DTSU666') {
@@ -3262,6 +3288,8 @@ async function saveConfiguration() {
             const baud = parseInt(card.querySelector('.driver-dtsu-baud').value) || 9600;
             const parity = card.querySelector('.driver-dtsu-parity').value;
             const stop = parseInt(card.querySelector('.driver-dtsu-stop').value) || 1;
+            const watchdogInput = card.querySelector('.driver-dtsu-watchdog');
+            const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
             if (port) {
                 if (!dtsuConfig) {
                     dtsuConfig = {
@@ -3272,6 +3300,9 @@ async function saveConfiguration() {
                         stopbits: stop,
                         ports: []
                     };
+                }
+                if (watchdog !== null && !isNaN(watchdog)) {
+                    dtsuConfig["watchdog-timeout"] = watchdog;
                 }
                 dtsuConfig.ports.push(port);
             }
@@ -3286,6 +3317,8 @@ async function saveConfiguration() {
             const topicP1 = card.querySelector('.driver-mqtt-meter-topic-p1').value.trim() || null;
             const topicP2 = card.querySelector('.driver-mqtt-meter-topic-p2').value.trim() || null;
             const topicP3 = card.querySelector('.driver-mqtt-meter-topic-p3').value.trim() || null;
+            const watchdogInput = card.querySelector('.driver-mqtt-meter-watchdog');
+            const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
             if (name && broker) {
                 if (!mqttMeterConfig) {
                     mqttMeterConfig = {
@@ -3304,6 +3337,9 @@ async function saveConfiguration() {
                     topic_phase2: topicP2,
                     topic_phase3: topicP3
                 };
+                if (watchdog !== null && !isNaN(watchdog)) {
+                    mqttMeterConfig[name]["watchdog-timeout"] = watchdog;
+                }
             }
         } else if (type === 'MQTTInverter') {
             const name = card.querySelector('.driver-mqtt-inv-name').value.trim();
@@ -4327,6 +4363,7 @@ window.addEventListener('load', () => {
 // Model Tuning UI State
 let tuningEventSource = null;
 let currentEvolvedParams = null;
+let selectedResultsMonth = null;
 
 async function checkTuningStatus() {
     try {
@@ -4366,8 +4403,11 @@ async function checkTuningStatus() {
             }
             
             initTuningProgressStream();
-        } else if (progress.best_params) {
+        } else if (progress.best_params_monthly) {
             // Completed previously, show results comparison
+            currentEvolvedParams = progress.best_params_monthly;
+            renderTunedParametersComparison();
+        } else if (progress.best_params) {
             currentEvolvedParams = progress.best_params;
             renderTunedParametersComparison();
         }
@@ -4476,7 +4516,9 @@ function initTuningProgressStream() {
                 document.getElementById('tune-progress-title').innerText = `Training Status: In Progress (${msg.percent.toFixed(0)}%)`;
             }
 
-            if (msg.best_params) {
+            if (msg.best_params_monthly) {
+                currentEvolvedParams = msg.best_params_monthly;
+            } else if (msg.best_params) {
                 currentEvolvedParams = msg.best_params;
             }
 
@@ -4525,17 +4567,57 @@ async function cancelTuning() {
 function renderTunedParametersComparison() {
     if (!currentEvolvedParams) return;
 
+    const selectEl = document.getElementById('tune-results-month-select');
+    const containerEl = document.getElementById('tune-month-select-container');
+
+    let isMonthly = true;
+    if (currentEvolvedParams.neg_price_threshold !== undefined || currentEvolvedParams["neg-price-threshold"] !== undefined) {
+        isMonthly = false;
+    }
+
+    let evolvedParamsForMonth = currentEvolvedParams;
+    let currentControl = currentConfig.battery_control || {};
+    let currentEvolved = currentControl.evolved_heuristic || {};
+
+    if (isMonthly) {
+        containerEl.style.display = 'flex';
+        const months = Object.keys(currentEvolvedParams).sort((a, b) => parseInt(a) - parseInt(b));
+        
+        if (months.length === 0) return;
+
+        if (!selectedResultsMonth || !currentEvolvedParams[selectedResultsMonth]) {
+            selectedResultsMonth = months[0];
+        }
+
+        const monthNames = {
+            "1": "January", "2": "February", "3": "March", "4": "April",
+            "5": "May", "6": "June", "7": "July", "8": "August",
+            "9": "September", "10": "October", "11": "November", "12": "December"
+        };
+
+        selectEl.innerHTML = months.map(m => `
+            <option value="${m}" ${m === selectedResultsMonth ? "selected" : ""}>${monthNames[m] || 'Month ' + m}</option>
+        `).join('');
+
+        const currentMonthlyMap = currentControl.evolved_heuristic_monthly || {};
+        currentEvolved = currentMonthlyMap[selectedResultsMonth] || currentControl.evolved_heuristic || {};
+        evolvedParamsForMonth = currentEvolvedParams[selectedResultsMonth] || {};
+    } else {
+        containerEl.style.display = 'none';
+    }
+
     const body = document.getElementById('tune-results-body');
-    const currentControl = currentConfig.battery_control || {};
-    const currentEvolved = currentControl.evolved_heuristic || {};
 
     const paramMeta = [
         { key: "neg_price_threshold", label: "Negative Price Threshold", desc: "Cents/kWh threshold below which battery charges from grid at full rate.", unit: "¢" },
         { key: "export_dump_threshold", label: "Export Dump Threshold", desc: "Cents/kWh threshold above which battery discharges at max power to export.", unit: "¢" },
+        { key: "tier2_export_dump_threshold", label: "Tier 2 Export Dump Threshold", desc: "Cents/kWh threshold above which battery discharges to tier-2 reserve.", unit: "¢" },
+        { key: "tier2_dump_reserve", label: "Tier 2 Dump Reserve", desc: "Minimum capacity (kWh) to reserve during tier-2 export periods.", unit: " kWh" },
         { key: "dump_reserve_demand", label: "Dump Reserve (Peak)", desc: "Minimum capacity (kWh) to reserve during peak demand window.", unit: " kWh" },
         { key: "dump_reserve_normal", label: "Dump Reserve (Normal)", desc: "Minimum capacity (kWh) to reserve during normal/cheap periods.", unit: " kWh" },
         { key: "pre_charge_price_threshold", label: "Pre-Charge Price Threshold", desc: "Charge from grid if import price is below this cents/kWh.", unit: "¢" },
-        { key: "pre_charge_soc_limit", label: "Pre-Charge SOC Limit", desc: "Stop pre-charging from grid once battery reaches this capacity ratio.", unit: "", format: v => `${(v * 100).toFixed(0)}%` },
+        { key: "pre_charge_soc_limit", label: "Pre-Charge SOC Limit", desc: "Stop pre-charging once battery reaches this capacity ratio (scaled by forecast).", unit: "", format: v => `${(v * 100).toFixed(0)}%` },
+        { key: "forecast_solar_weight", label: "Forecast Solar Weight", desc: "Factor scaling down pre-charge SOC target based on forecast daytime solar (kWh).", unit: "", format: v => `${v.toFixed(3)}` },
         { key: "pre_charge_start_hour", label: "Pre-Charge Start Hour", desc: "Hour of day (0-23) when pre-charging is permitted.", unit: ":00" },
         { key: "use_adaptive_shaving", label: "Use Adaptive Shaving", desc: "Enables dynamic monthly peak target calculation.", unit: "", format: v => v ? "Enabled" : "Disabled" },
         { key: "adaptive_safety_buffer", label: "Adaptive Safety Buffer", desc: "Safety threshold (W) added to peak limit to avoid demand spikes.", unit: " W" }
@@ -4545,8 +4627,8 @@ function renderTunedParametersComparison() {
         const keyKebab = p.key.replace(/_/g, '-');
         const curVal = currentEvolved[p.key] !== undefined ? currentEvolved[p.key] : 
                       (currentEvolved[keyKebab] !== undefined ? currentEvolved[keyKebab] : "-");
-        const val = currentEvolvedParams[p.key] !== undefined ? currentEvolvedParams[p.key] : 
-                   (currentEvolvedParams[keyKebab] !== undefined ? currentEvolvedParams[keyKebab] : "-");
+        const val = evolvedParamsForMonth[p.key] !== undefined ? evolvedParamsForMonth[p.key] : 
+                   (evolvedParamsForMonth[keyKebab] !== undefined ? evolvedParamsForMonth[keyKebab] : "-");
         
         const fmt = (v) => {
             if (v === "-") return "-";
@@ -4567,6 +4649,11 @@ function renderTunedParametersComparison() {
     document.getElementById('btn-apply-tuning').disabled = false;
     document.getElementById('tune-apply-status').innerText = "";
     document.getElementById('tune-results-card').style.display = 'block';
+}
+
+function changeResultsMonth(month) {
+    selectedResultsMonth = month;
+    renderTunedParametersComparison();
 }
 
 async function applyTuning() {
