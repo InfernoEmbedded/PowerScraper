@@ -52,6 +52,8 @@ pub struct SerialMeterConfig {
     pub parity: String, // 'N', 'E', 'O'
     pub stopbits: u8,
     pub ports: Vec<String>,
+    #[serde(default)]
+    pub watchdog_timeout: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -71,6 +73,8 @@ pub struct MQTTPowerMeterDeviceConfig {
     pub password: Option<String>,
     #[serde(alias = "poll_period")]
     pub poll_period: Option<f64>,
+    #[serde(default)]
+    pub watchdog_timeout: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

@@ -55,38 +55,61 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
             
             // Load config to check if a source is configured
-            let has_source = if let Ok(cfg) = Config::load_from_db(&db_path_wd) {
-                cfg.battery_control.as_ref().and_then(|bc| bc.source.as_ref()).is_some()
-            } else {
-                false
-            };
-            
-            if has_source {
-                let last_update = {
-                    if let Ok(status) = PowerScraper::web_server::get_system_status().lock() {
-                        status.meter_last_updated
-                    } else {
-                        None
-                    }
-                };
-                
-                let now_secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                    
-                match last_update {
-                    Some(ts) => {
-                        if now_secs > ts && now_secs - ts > 1800 {
-                            eprintln!("WATCHDOG: MainsMeter has not updated for {} seconds (30 minutes). Exiting for systemd restart...", now_secs - ts);
-                            std::process::exit(1);
+            if let Ok(cfg) = Config::load_from_db(&db_path_wd) {
+                if let Some(source) = cfg.battery_control.as_ref().and_then(|bc| bc.source.as_ref()) {
+                    let mut custom_timeout = None;
+                    if let Some(ref sdm) = cfg.sdm630_modbus_v2 {
+                        for port in &sdm.ports {
+                            if &port.replace("/dev/tty", "") == source {
+                                custom_timeout = sdm.watchdog_timeout;
+                            }
                         }
                     }
-                    None => {
-                        // Allow 30 minutes from startup for initial update
-                        if start_time.elapsed() > tokio::time::Duration::from_secs(1800) {
-                            eprintln!("WATCHDOG: MainsMeter has failed to update since startup (30 minutes ago). Exiting for systemd restart...");
-                            std::process::exit(1);
+                    if custom_timeout.is_none() {
+                        if let Some(ref dtsu) = cfg.dtsu666 {
+                            for port in &dtsu.ports {
+                                if &port.replace("/dev/tty", "") == source {
+                                    custom_timeout = dtsu.watchdog_timeout;
+                                }
+                            }
+                        }
+                    }
+                    if custom_timeout.is_none() {
+                        if let Some(ref mqtt) = cfg.mqtt_power_meter {
+                            if let Some(device) = mqtt.meter_devices.get(source) {
+                                custom_timeout = device.watchdog_timeout;
+                            }
+                        }
+                    }
+
+                    let timeout_limit = custom_timeout.unwrap_or(180);
+                    let startup_limit = custom_timeout.unwrap_or(300);
+
+                    let last_update = {
+                        if let Ok(status) = PowerScraper::web_server::get_system_status().lock() {
+                            status.meter_last_updated
+                        } else {
+                            None
+                        }
+                    };
+                    
+                    let now_secs = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                        
+                    match last_update {
+                        Some(ts) => {
+                            if now_secs > ts && now_secs - ts > timeout_limit {
+                                eprintln!("WATCHDOG: MainsMeter has not updated for {} seconds. Exiting for systemd restart...", now_secs - ts);
+                                std::process::exit(1);
+                            }
+                        }
+                        None => {
+                            if start_time.elapsed() > tokio::time::Duration::from_secs(startup_limit) {
+                                eprintln!("WATCHDOG: MainsMeter has failed to update since startup ({} seconds ago). Exiting for systemd restart...", startup_limit);
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
