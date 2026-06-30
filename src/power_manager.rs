@@ -632,7 +632,7 @@ impl PowerManager {
             let state = self.inverters.get(name).cloned().unwrap_or_default();
             let cap_kwh = inv_cfg.battery_capacity.unwrap_or(13.8);
             let soc = state.battery_capacity as f64;
-            let min_pct = inv_cfg.min_charge_pct.unwrap_or(period.min_charge) as f64;
+            let min_pct = period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64;
             let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
 
             let battery = crate::battery_group::Battery {
@@ -1343,7 +1343,7 @@ impl PowerManager {
                 };
                 let cap_kwh = calc_cap.unwrap_or_else(|| inv_cfg.battery_capacity.unwrap_or(13.8));
                 let soc = state.battery_capacity as f64;
-                let min_pct = inv_cfg.min_charge_pct.unwrap_or(period.min_charge) as f64;
+                let min_pct = period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64;
                 let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
 
                 let battery = crate::battery_group::Battery {
@@ -1413,7 +1413,7 @@ impl PowerManager {
                         };
                         let cap_kwh = calc_cap.unwrap_or_else(|| cfg.battery_capacity.unwrap_or(13.8));
                         let soc = state.battery_capacity as f64;
-                        let min_pct = cfg.min_charge_pct.unwrap_or(period.min_charge) as f64;
+                        let min_pct = period.min_charge.max(cfg.min_charge_pct.unwrap_or(0)) as f64;
                         let max_pct = cfg.max_charge_pct.unwrap_or(95) as f64;
 
                         let battery = crate::battery_group::Battery {
@@ -1476,7 +1476,7 @@ impl PowerManager {
             power = -in_cfg.max_charge;
         }
 
-        let min_limit = in_cfg.min_charge_pct.unwrap_or(period.min_charge);
+        let min_limit = period.min_charge.max(in_cfg.min_charge_pct.unwrap_or(0));
         if battery_capacity <= min_limit && power > 0.0 {
             power = 0.0;
         }
@@ -1936,7 +1936,7 @@ pub async fn run_power_manager_task(
             .await;
     }
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<rumqttc::Event, ()>>(256);
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Result<rumqttc::Event, ()>>();
     let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
         loop {
@@ -1945,13 +1945,13 @@ pub async fn run_power_manager_task(
                 res = eventloop.poll() => {
                     match res {
                         Ok(notification) => {
-                            if tx.send(Ok(notification)).await.is_err() {
+                            if tx.send(Ok(notification)).is_err() {
                                 break;
                             }
                         }
                         Err(e) => {
                             eprintln!("Power Manager MQTT eventloop error: {}", e);
-                            if tx.send(Err(())).await.is_err() {
+                            if tx.send(Err(())).is_err() {
                                 break;
                             }
                             tokio::select! {

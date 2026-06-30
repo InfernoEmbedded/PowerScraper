@@ -39,7 +39,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             }
         }
 
-        let min_pct = active_period.map(|p| p.min_charge).unwrap_or(config.min_charge_pct) as f64;
+        let min_pct = active_period.map(|p| p.min_charge.max(config.min_charge_pct)).unwrap_or(config.min_charge_pct) as f64;
         let grid_charge = active_period.map(|p| p.grid_charge).unwrap_or(false);
         let prefer_battery = active_period.map(|p| p.prefer_battery).unwrap_or(false);
         let force_discharge = active_period.and_then(|p| p.force_discharge);

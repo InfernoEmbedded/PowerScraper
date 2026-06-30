@@ -230,7 +230,7 @@ impl BatteryGroup {
 
                 // Update assist_needed
                 let mut assist = *assist_needed.get(&name).unwrap_or(&false);
-                let min_limit = inv_cfg.min_charge_pct.unwrap_or(period.min_charge);
+                let min_limit = period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0));
                 if soc <= min_limit && target_power_w > 0.0 {
                     assist = true;
                 } else if soc <= min_limit && period.prefer_battery {
