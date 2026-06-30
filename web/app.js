@@ -573,6 +573,10 @@ function renderDriverCard(type, data = {}) {
                     <label>Stop Bits</label>
                     <input type="number" class="driver-sdm-stop" value="${stop}">
                 </div>
+                <div class="form-group">
+                    <label>Watchdog Timeout (s)</label>
+                    <input type="number" class="driver-sdm-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
+                </div>
             </div>
         `;
     } else if (type === 'DTSU666') {
@@ -618,6 +622,10 @@ function renderDriverCard(type, data = {}) {
                     <label>Stop Bits</label>
                     <input type="number" class="driver-dtsu-stop" value="${stop}">
                 </div>
+                <div class="form-group">
+                    <label>Watchdog Timeout (s)</label>
+                    <input type="number" class="driver-dtsu-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
+                </div>
             </div>
         `;
     } else if (type === 'MQTTPowerMeter') {
@@ -644,6 +652,10 @@ function renderDriverCard(type, data = {}) {
                 <div class="form-group">
                     <label>Poll Period (s)</label>
                     <input type="number" class="driver-mqtt-meter-poll" value="${poll}">
+                </div>
+                <div class="form-group">
+                    <label>Watchdog Timeout (s)</label>
+                    <input type="number" class="driver-mqtt-meter-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
             <div class="form-row">
@@ -899,7 +911,8 @@ async function loadConfig(configData = null) {
                     timeout: sdm.timeout || 1,
                     baud: sdm.baud || 38400,
                     parity: sdm.parity || 'E',
-                    stopbits: sdm.stopbits || 1
+                    stopbits: sdm.stopbits || 1,
+                    watchdog_timeout: sdm["watchdog-timeout"] || sdm.watchdog_timeout || null
                 });
             });
         }
@@ -915,7 +928,8 @@ async function loadConfig(configData = null) {
                     timeout: dtsu.timeout || 1,
                     baud: dtsu.baud || 9600,
                     parity: dtsu.parity || 'N',
-                    stopbits: dtsu.stopbits || 1
+                    stopbits: dtsu.stopbits || 1,
+                    watchdog_timeout: dtsu["watchdog-timeout"] || dtsu.watchdog_timeout || null
                 });
             });
         }
@@ -936,7 +950,8 @@ async function loadConfig(configData = null) {
                     topic_total: mDev.topic_total || mDev["topic-total"] || '',
                     topic_phase1: mDev.topic_phase1 || mDev["topic-phase1"] || '',
                     topic_phase2: mDev.topic_phase2 || mDev["topic-phase2"] || '',
-                    topic_phase3: mDev.topic_phase3 || mDev["topic-phase3"] || ''
+                    topic_phase3: mDev.topic_phase3 || mDev["topic-phase3"] || '',
+                    watchdog_timeout: mDev["watchdog-timeout"] || mDev.watchdog_timeout || null
                 });
             });
         }
@@ -1812,6 +1827,8 @@ async function saveConfiguration() {
             const baud = parseInt(card.querySelector('.driver-sdm-baud').value) || 38400;
             const parity = card.querySelector('.driver-sdm-parity').value;
             const stop = parseInt(card.querySelector('.driver-sdm-stop').value) || 1;
+            const watchdogInput = card.querySelector('.driver-sdm-watchdog');
+            const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
             if (port) {
                 if (!sdmConfig) {
                     sdmConfig = {
@@ -1823,6 +1840,9 @@ async function saveConfiguration() {
                         ports: []
                     };
                 }
+                if (watchdog !== null && !isNaN(watchdog)) {
+                    sdmConfig["watchdog-timeout"] = watchdog;
+                }
                 sdmConfig.ports.push(port);
             }
         } else if (type === 'DTSU666') {
@@ -1832,6 +1852,8 @@ async function saveConfiguration() {
             const baud = parseInt(card.querySelector('.driver-dtsu-baud').value) || 9600;
             const parity = card.querySelector('.driver-dtsu-parity').value;
             const stop = parseInt(card.querySelector('.driver-dtsu-stop').value) || 1;
+            const watchdogInput = card.querySelector('.driver-dtsu-watchdog');
+            const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
             if (port) {
                 if (!dtsuConfig) {
                     dtsuConfig = {
@@ -1842,6 +1864,9 @@ async function saveConfiguration() {
                         stopbits: stop,
                         ports: []
                     };
+                }
+                if (watchdog !== null && !isNaN(watchdog)) {
+                    dtsuConfig["watchdog-timeout"] = watchdog;
                 }
                 dtsuConfig.ports.push(port);
             }
@@ -1856,6 +1881,8 @@ async function saveConfiguration() {
             const topicP1 = card.querySelector('.driver-mqtt-meter-topic-p1').value.trim() || null;
             const topicP2 = card.querySelector('.driver-mqtt-meter-topic-p2').value.trim() || null;
             const topicP3 = card.querySelector('.driver-mqtt-meter-topic-p3').value.trim() || null;
+            const watchdogInput = card.querySelector('.driver-mqtt-meter-watchdog');
+            const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
             if (name && broker) {
                 if (!mqttMeterConfig) {
                     mqttMeterConfig = {
@@ -1874,6 +1901,9 @@ async function saveConfiguration() {
                     topic_phase2: topicP2,
                     topic_phase3: topicP3
                 };
+                if (watchdog !== null && !isNaN(watchdog)) {
+                    mqttMeterConfig[name]["watchdog-timeout"] = watchdog;
+                }
             }
         } else if (type === 'MQTTInverter') {
             const name = card.querySelector('.driver-mqtt-inv-name').value.trim();
