@@ -226,6 +226,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
+        // 5b. Spawn Solax G4 Modbus TCP Drivers
+        if let Some(ref g4_cfg) = config.solax_g4_modbus {
+            println!("Spawning Solax G4 Modbus TCP Drivers...");
+            let hostnames = g4_cfg.hostnames.clone().unwrap_or_default();
+            for (idx, inverter) in g4_cfg.inverters.iter().enumerate() {
+                let hostname = if idx < hostnames.len() {
+                    hostnames[idx].clone()
+                } else {
+                    format!("{}:502", inverter)
+                };
+                let inv_clone = inverter.clone();
+                let cfg_clone = g4_cfg.clone();
+                let mqtt_clone = mqtt_config.clone();
+                let cancel_clone = cancel_token.clone();
+                tokio::spawn(async move {
+                    drivers::solax_g4::run_solax_g4_driver(
+                        inv_clone,
+                        hostname,
+                        cfg_clone,
+                        mqtt_clone,
+                        cancel_clone,
+                    )
+                    .await;
+                });
+            }
+        }
+
         // 6. Spawn SDM630 Serial Modbus RTU Meters
         if let Some(ref sdm_cfg) = config.sdm630_modbus_v2 {
             println!("Spawning SDM630 Meter Drivers on dedicated realtime threads...");

@@ -18,6 +18,7 @@ pub mod drivers {
     pub mod solax_modbus;
     pub mod solax_xhybrid;
     pub mod solax_wifi;
+    pub mod solax_g4;
 }
 pub mod forwarders;
 pub mod power_manager;

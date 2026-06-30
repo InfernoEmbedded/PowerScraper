@@ -44,6 +44,20 @@ pub struct SolaxXHybridModbusConfig {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
+pub struct SolaxG4ModbusConfig {
+    #[serde(alias = "poll_period")]
+    pub poll_period: f64,
+    pub timeout: f64,
+    #[serde(alias = "power_budget_avg_samples")]
+    pub power_budget_avg_samples: Option<usize>,
+    #[serde(alias = "installer_password")]
+    pub installer_password: Option<u16>,
+    pub inverters: Vec<String>,
+    pub hostnames: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "kebab-case")]
 pub struct SerialMeterConfig {
     #[serde(alias = "poll_period")]
     pub poll_period: f64,
@@ -410,6 +424,9 @@ pub struct Config {
     #[serde(rename = "Solax-XHybrid-Modbus")]
     pub solax_xhybrid_modbus: Option<SolaxXHybridModbusConfig>,
 
+    #[serde(rename = "Solax-G4-Modbus")]
+    pub solax_g4_modbus: Option<SolaxG4ModbusConfig>,
+
     #[serde(rename = "SDM630Modbusv2", alias = "SDM630ModbusV2")]
     pub sdm630_modbus_v2: Option<SerialMeterConfig>,
 
@@ -487,6 +504,7 @@ impl Config {
             solax_wifi: None,
             solax_modbus: None,
             solax_xhybrid_modbus: None,
+            solax_g4_modbus: None,
             sdm630_modbus_v2: None,
             dtsu666: None,
             mqtt_power_meter: None,
