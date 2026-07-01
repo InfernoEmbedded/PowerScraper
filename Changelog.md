@@ -4,6 +4,13 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.73] - 2026-07-01
+
+### Added
+*   **Test Coverage Expansion**: Added extensive unit and integration tests across core configurations, tariff management, EmonCMS and InfluxDB telemetry forwarders, solar orientation inference, and evolved heuristics. Evaluated and justified untestable boundaries.
+
+---
+
 ## [1.0.70] - 2026-06-30
 
 ### Added
