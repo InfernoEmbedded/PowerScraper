@@ -264,4 +264,36 @@ mod tests {
         assert!((azimuth - 180.0).abs() < 1.5);
         assert!(correlation > 0.99);
     }
+
+    #[tokio::test]
+    async fn test_infer_orientation_insufficient_points() {
+        let temp_db = "temp_test_infer_insufficient.db";
+        let _ = std::fs::remove_file(temp_db);
+        crate::database::save_config_to_db(temp_db, &crate::config::Config::default_empty()).unwrap();
+        crate::database::init_history_db(temp_db).unwrap();
+
+        let ts = chrono::Utc::now().timestamp();
+        let mut buffer = vec![
+            crate::power_manager::HistoryRecord {
+                timestamp: ts,
+                topic: "solax1/PV1 Power".to_string(),
+                value: 500.0,
+            }
+        ];
+        crate::database::flush_history_to_db(temp_db, &mut buffer, None);
+
+        let req = InferRequest {
+            inverter: "solax1".to_string(),
+            string: "PV1".to_string(),
+            latitude: 0.0,
+            longitude: 0.0,
+        };
+
+        let result = handle_infer_orientation(temp_db.to_string(), Json(req)).await;
+        assert!(result.is_err());
+        let err_msg = result.err().unwrap().1;
+        assert!(err_msg.contains("Insufficient") || err_msg.contains("No historical"));
+
+        let _ = std::fs::remove_file(temp_db);
+    }
 }

@@ -762,6 +762,35 @@ topic_energy_total = "emon/aurora/total"
         assert_eq!(aurora1.topic_energy_today, Some("emon/aurora/current_day".to_string()));
         assert_eq!(aurora1.topic_energy_total, Some("emon/aurora/total".to_string()));
     }
+
+    #[test]
+    fn test_config_db_operations() {
+        let temp_db_path = "config_test_temp.db";
+        let _ = std::fs::remove_file(temp_db_path);
+
+        // Load config from DB (seeds from existing config.toml if present)
+        let config = Config::load_from_db(temp_db_path).unwrap();
+
+        // Modifying and saving
+        let mut modified_config = config;
+        modified_config.mqtt = Some(MqttBrokerConfig {
+            broker: "192.168.1.50".to_string(),
+            port: Some(1883),
+            base_topic: Some("mytopic".to_string()),
+            username: None,
+            password: None,
+            home_assistant_discovery: Some(false),
+            home_assistant_prefix: None,
+        });
+
+        modified_config.save_to_db(temp_db_path).unwrap();
+
+        // Load again and verify
+        let loaded = Config::load_from_db(temp_db_path).unwrap();
+        assert_eq!(loaded.mqtt.as_ref().unwrap().broker, "192.168.1.50");
+
+        let _ = std::fs::remove_file(temp_db_path);
+    }
 }
 
 

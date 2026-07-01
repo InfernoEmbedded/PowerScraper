@@ -65,3 +65,44 @@ pub async fn forward_to_influx(
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn test_forward_to_influx_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let config = InfluxConfig {
+            influx_url: format!("http://127.0.0.1:{}", port),
+            influx_database: "testdb".to_string(),
+            influx_measurement: "m".to_string(),
+            influx_user: "user".to_string(),
+            influx_pass: "pass".to_string(),
+            influx_retention_policy: "autogen".to_string(),
+        };
+        let mut metrics = HashMap::new();
+        metrics.insert("PV1 Power".to_string(), "1200.5".to_string());
+        metrics.insert("Status".to_string(), "Normal".to_string());
+
+        let cancel = CancellationToken::new();
+        forward_to_influx(&client, &config, "solax1", &metrics, &cancel).await;
+
+        // Wait briefly for background task
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        server_task.await.unwrap();
+    }
+}
+

@@ -315,4 +315,77 @@ mod tests {
 
         server_task.await.unwrap();
     }
+
+    #[test]
+    fn test_tariff_manager_extra_coverage() {
+        // Test config() getter
+        let config = TariffConfig::Flat {
+            import_rate: 20.0,
+            export_rate: 5.0,
+        };
+        let tm = TariffManager::new(Some(config.clone()));
+        assert!(tm.config().is_some());
+
+        // Test set_current_rates()
+        tm.set_current_rates(CurrentTariffRates {
+            import_rate: 12.3,
+            export_rate: 4.5,
+        });
+        let current = tm.get_current_rates();
+        assert_eq!(current.import_rate, 12.3);
+        assert_eq!(current.export_rate, 4.5);
+
+        // Test TOU get_current_rates
+        let tou_config = TariffConfig::Tou {
+            periods: vec![TouTariffPeriod {
+                name: "Always".to_string(),
+                start: "00:00:00".to_string(),
+                end: "23:59:59".to_string(),
+                import_rate: 10.0,
+                export_rate: 2.0,
+            }],
+        };
+        let tm_tou = TariffManager::new(Some(tou_config));
+        let tou_rates = tm_tou.get_current_rates();
+        assert_eq!(tou_rates.import_rate, 10.0);
+        assert_eq!(tou_rates.export_rate, 2.0);
+
+        // Test parse_time fallback returns None
+        assert!(parse_time("invalid-time-format").is_none());
+
+        // Test lookup_tou_rate_at with invalid start/end parse
+        let bad_periods = vec![TouTariffPeriod {
+            name: "Bad".to_string(),
+            start: "bad_start".to_string(),
+            end: "bad_end".to_string(),
+            import_rate: 10.0,
+            export_rate: 2.0,
+        }];
+        let bad_rates = TariffManager::lookup_tou_rate_at(&bad_periods, NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+        assert_eq!(bad_rates.import_rate, 0.0);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_amber_prices_errors() {
+        use tokio::io::AsyncWriteExt;
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let response = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+
+        let client = reqwest::Client::new();
+        let url = format!("http://127.0.0.1:{}/v1/sites/test-site/prices/current", port);
+        let rates = Arc::new(RwLock::new(CurrentTariffRates::default()));
+
+        let res = TariffManager::fetch_amber_prices(&client, &url, "test-key", &rates).await;
+        assert!(res.is_err());
+
+        server_task.await.unwrap();
+    }
 }

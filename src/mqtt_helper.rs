@@ -375,4 +375,55 @@ mod tests {
         assert_eq!(payload["min"], -10000);
         assert_eq!(payload["max"], 10000);
     }
+
+    #[test]
+    fn test_mqtt_helper_extra_coverage() {
+        // Test disabled discovery
+        let disabled_config = MqttBrokerConfig {
+            broker: "localhost".to_string(),
+            port: None,
+            base_topic: None,
+            username: None,
+            password: None,
+            home_assistant_discovery: Some(false),
+            home_assistant_prefix: None,
+        };
+        assert!(build_discovery_payload(&disabled_config, "inverter", "PV1", false).is_none());
+
+        // Test power manager invalid metric
+        let enabled_config = MqttBrokerConfig {
+            broker: "localhost".to_string(),
+            port: None,
+            base_topic: None,
+            username: None,
+            password: None,
+            home_assistant_discovery: Some(true),
+            home_assistant_prefix: None,
+        };
+        assert!(build_discovery_payload(&enabled_config, "power_manager", "invalid_metric", false).is_none());
+
+        // Test additional metric type deductions (kvarh, kvar, fallback)
+        let (_, _, p_kvarh) = build_discovery_payload(&enabled_config, "inverter", "Total kvarh", false).unwrap();
+        assert_eq!(p_kvarh["unit_of_measurement"], "kvarh");
+
+        let (_, _, p_kvar) = build_discovery_payload(&enabled_config, "inverter", "System kvar", false).unwrap();
+        assert_eq!(p_kvar["unit_of_measurement"], "var");
+
+        let (_, _, p_fallback) = build_discovery_payload(&enabled_config, "inverter", "UnknownMetric", false).unwrap();
+        assert!(p_fallback.get("unit_of_measurement").is_none());
+
+        // Test create_mqtt_client function
+        let config = MqttBrokerConfig {
+            broker: "127.0.0.1".to_string(),
+            port: Some(1883),
+            base_topic: Some("sensors".to_string()),
+            username: Some("user".to_string()),
+            password: Some("pass".to_string()),
+            home_assistant_discovery: Some(true),
+            home_assistant_prefix: Some("ha".to_string()),
+        };
+        let (client, _eventloop) = create_mqtt_client("test_id", &config);
+        // Clean cleanup - we don't start the loop, just verify instantiation
+        drop(client);
+    }
 }

@@ -168,7 +168,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
 mod tests {
     use super::*;
     use crate::config::EvolvedHeuristicConfig;
-    use chrono::{TimeZone, FixedOffset};
+    use chrono::{TimeZone, FixedOffset, NaiveTime};
 
     #[test]
     fn test_evolved_heuristic_rules() {
@@ -223,5 +223,88 @@ mod tests {
 
         // Expect charging at 3kW -> 3.0 kWh import
         assert_eq!(result.import_kwh, 3.0);
+    }
+
+    #[test]
+    fn test_evolved_heuristic_extra_coverage() {
+        let tz = FixedOffset::east_opt(36000).unwrap();
+        let dt = tz.with_ymd_and_hms(2026, 6, 26, 12, 0, 0).unwrap(); // Month = 6 (June)
+
+        let mut monthly_map = HashMap::new();
+        monthly_map.insert(
+            "6".to_string(),
+            EvolvedHeuristicConfig {
+                neg_price_threshold: 0.86,
+                export_dump_threshold: 10.0,
+                dump_reserve_demand: 1.0,
+                dump_reserve_normal: 2.0,
+                pre_charge_price_threshold: 30.0,
+                pre_charge_soc_limit: 0.9,
+                pre_charge_start_hour: 4,
+                use_adaptive_shaving: true,
+                adaptive_safety_buffer: 50.0,
+                forecast_solar_weight: 0.1,
+                tier2_export_dump_threshold: 15.0,
+                tier2_dump_reserve: 0.5,
+            },
+        );
+
+        let config = SimConfig {
+            battery_capacity_kwh: 10.0,
+            max_power_w: 3000.0,
+            min_charge_pct: 20,
+            max_charge_pct: 100,
+            demand_window: Some((NaiveTime::from_hms_opt(11, 0, 0).unwrap(), NaiveTime::from_hms_opt(15, 0, 0).unwrap())),
+            demand_rate: 10.0,
+            negative_export_prevent: false,
+            low_price_charge: false,
+            low_price_threshold: 0.0,
+            high_price_discharge: false,
+            high_price_threshold: 0.0,
+            periods: vec![],
+            evolved_heuristic: EvolvedHeuristicConfig {
+                neg_price_threshold: 0.0,
+                export_dump_threshold: 100.0,
+                dump_reserve_demand: 0.0,
+                dump_reserve_normal: 0.0,
+                pre_charge_price_threshold: 0.0,
+                pre_charge_soc_limit: 0.0,
+                pre_charge_start_hour: 0,
+                use_adaptive_shaving: false,
+                adaptive_safety_buffer: 0.0,
+                forecast_solar_weight: 0.0,
+                tier2_export_dump_threshold: 200.0,
+                tier2_dump_reserve: 0.0,
+            },
+            evolved_heuristic_monthly: Some(monthly_map),
+        };
+
+        // 1. High export price (tier 2) -> dump reserve normal
+        let records = vec![
+            SimRecord {
+                timestamp: dt.timestamp(),
+                dt_local: dt,
+                solar_power_w: 100.0,
+                load_power_w: 0.0,
+                import_price_cents: 5.0,
+                export_price_cents: 20.0,
+                duration_hours: 0.5,
+                day_solar_kwh: 1.0,
+            },
+            // 2. Pre-charge window: month 6 config has pre_charge_start_hour = 4, hour is 12 (pre-charge window is active from 4 to 11, wait, end is start_h=11, so 12 is past. Let's do hour 8)
+            SimRecord {
+                timestamp: dt.timestamp(),
+                dt_local: tz.with_ymd_and_hms(2026, 6, 26, 8, 0, 0).unwrap(),
+                solar_power_w: 0.0,
+                load_power_w: 0.0,
+                import_price_cents: 15.0,
+                export_price_cents: 1.0,
+                duration_hours: 0.5,
+                day_solar_kwh: 1.0,
+            },
+        ];
+
+        let result = run(&records, &config);
+        assert!(result.soc_history.len() > 0);
     }
 }

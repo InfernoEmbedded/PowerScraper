@@ -494,7 +494,7 @@ mod tests {
     fn test_parse_solax_g3_registers() {
         let mut reg_a = vec![0u16; 39];
         let mut reg_b = vec![0u16; 30];
-        let mut reg_c = vec![0u16; 14];
+        let reg_c = vec![0u16; 14];
 
         reg_a[0x00] = 2300; // Grid Voltage = 230.0V
         reg_a[0x01] = 105; // Grid Current = 10.5A
