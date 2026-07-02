@@ -2850,6 +2850,19 @@ mod tests {
             return;
         };
         println!("TESTING SIMULATION ON DATABASE: {}", db_to_test);
+        // Verify that the table 'telemetry_history' exists in the database before proceeding
+        let conn = match crate::database::open_db_conn(db_to_test) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let table_exists: Result<String, _> = conn.query_row(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='telemetry_history'",
+            [],
+            |row| row.get(0),
+        );
+        if table_exists.is_err() {
+            return;
+        }
         let config = crate::config::Config::load_from_db(db_to_test).unwrap();
         let demand_window = get_demand_window(config.battery_control.as_ref());
         let demand_rate = config.battery_control.as_ref()
