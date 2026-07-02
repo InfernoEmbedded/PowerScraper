@@ -11,6 +11,44 @@ use PowerScraper::{config, drivers, forwarders, power_manager};
 use config::Config;
 use tokio::signal;
 
+/// Send a notification to systemd via the `NOTIFY_SOCKET` environment variable.
+/// Supports both filesystem paths and abstract sockets (prefixed with `@`).
+/// Silently does nothing if `NOTIFY_SOCKET` is not set (e.g. running outside systemd).
+#[cfg(unix)]
+fn systemd_notify(state: &str) {
+    use std::os::unix::net::UnixDatagram;
+
+    let socket_path = match std::env::var("NOTIFY_SOCKET") {
+        Ok(p) if !p.is_empty() => p,
+        _ => return, // Not running under systemd notify, silently skip
+    };
+
+    let sock = match UnixDatagram::unbound() {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("systemd_notify: failed to create socket: {}", e);
+            return;
+        }
+    };
+
+    // Abstract sockets use a leading null byte instead of '@'
+    let addr = if socket_path.starts_with('@') {
+        let abstract_name = format!("\0{}", &socket_path[1..]);
+        abstract_name
+    } else {
+        socket_path.clone()
+    };
+
+    if let Err(e) = sock.send_to(state.as_bytes(), &addr) {
+        eprintln!("systemd_notify: failed to send '{}' to {}: {}", state, socket_path, e);
+    }
+}
+
+#[cfg(not(unix))]
+fn systemd_notify(_state: &str) {
+    // No-op on non-Unix platforms
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Starting PowerScraper (Rust Next Branch)...");
@@ -104,12 +142,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 eprintln!("WATCHDOG: MainsMeter has not updated for {} seconds. Exiting for systemd restart...", now_secs - ts);
                                 std::process::exit(1);
                             }
+                            // Telemetry is healthy — ping the systemd watchdog
+                            systemd_notify("WATCHDOG=1");
                         }
                         None => {
                             if start_time.elapsed() > tokio::time::Duration::from_secs(startup_limit) {
                                 eprintln!("WATCHDOG: MainsMeter has failed to update since startup ({} seconds ago). Exiting for systemd restart...", startup_limit);
                                 std::process::exit(1);
                             }
+                            // Still in startup grace period — ping watchdog to prevent premature kill
+                            systemd_notify("WATCHDOG=1");
                         }
                     }
                 }
@@ -151,6 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cancel_token = tokio_util::sync::CancellationToken::new();
 
         println!("Spawning background drivers and manager tasks...");
+        systemd_notify("READY=1");
 
         // 3. Spawn Solax Wifi Drivers
         if let Some(ref wifi_cfg) = config.solax_wifi {
@@ -488,6 +531,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             _ = signal::ctrl_c() => {
                 println!("Shutdown signal (Ctrl-C) received. Canceling tasks...");
+                systemd_notify("STOPPING=1");
                 cancel_token.cancel();
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 break;
@@ -503,6 +547,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } => {
                 println!("Shutdown signal (SIGTERM) received. Canceling tasks...");
+                systemd_notify("STOPPING=1");
                 cancel_token.cancel();
                 tokio::time::sleep(std::time::Duration::from_secs(1)).await;
                 break;

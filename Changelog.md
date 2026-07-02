@@ -4,6 +4,28 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.75] - 2026-07-01
+
+### Added
+*   **Systemd Notify/Watchdog Protocol**: Implemented native `sd_notify` integration using raw Unix datagram sockets. The daemon now signals `READY=1` after startup, pings `WATCHDOG=1` every 30 seconds when telemetry is healthy, and sends `STOPPING=1` on clean shutdown — enabling systemd to automatically detect and restart deadlocked or frozen processes.
+*   **SQLite WAL Checkpointing**: Added `PRAGMA wal_checkpoint(TRUNCATE)` after config saves and telemetry flushes to compact the WAL file and prevent unbounded storage growth on embedded targets.
+
+### Changed
+*   **Systemd Service Type**: Changed from `Type=simple` to `Type=notify` with `WatchdogSec=180` in the packaged service file.
+*   **Database Directory Permissions**: Tightened `/var/lib/powerscraper` from `755` to `750` to protect stored MQTT credentials and API tokens.
+
+---
+
+## [1.0.74] - 2026-07-01
+
+### Added
+*   **REST API oneshot testing**: Extracted Axum `Router` builder into `build_web_app` to allow rigorous programmatic requests testing (400 Bad Request, 404 Not Found, 415 Unsupported Media Type, and 422 Unprocessable Entity payload handling).
+*   **Database Write Error Fail-Safe tests**: Expanded unit testing in `src/database.rs` to verify rusqlite write failure recovery by passing directory paths to SQLite connections.
+*   **E2E Playwright test expansions**: Added Test Cases 11 through 15 verifying historical simulation result cards, genetic algorithm model parameters tuning via SSE progress stream, dynamic capacity calculations on PV arrays, solar orientation inference correlation grid, and tariff Time-Of-Use periods.
+*   **Mock Telemetry Seeding**: Updated test server startup sequence to generate and seed a 1440-record double-peak household load, solar yield curve, battery charging, and flat electricity pricing data to enable simulation E2E tests.
+
+---
+
 ## [1.0.73] - 2026-07-01
 
 ### Added

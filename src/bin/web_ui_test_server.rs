@@ -9,6 +9,72 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::load_from_file("tests/test_config.toml")?;
     config.save_to_db(&db_path)?;
 
+    // Seed some mock historical telemetry for the simulation and orientation inference tabs
+    {
+        use PowerScraper::power_manager::HistoryRecord;
+        let mut buffer = Vec::new();
+        let now_ts = chrono::Local::now().timestamp();
+        // Generate 1 day of history (1440 points, once every 60 seconds)
+        for i in 0..1440 {
+            let ts = now_ts - (1440 - i) * 60;
+            let minute_of_day = (i % 1440) as f64;
+            
+            // Solar power: bell curve peak at midday
+            let solar_power = if minute_of_day > 360.0 && minute_of_day < 1080.0 {
+                let x = (minute_of_day - 720.0) / 180.0;
+                (3500.0 * (-x * x).exp()).max(0.0)
+            } else {
+                0.0
+            };
+
+            // Load power: double peak (morning and evening)
+            let load_power = 800.0
+                + 1200.0 * (-((minute_of_day - 480.0) / 60.0).powi(2)).exp()
+                + 2500.0 * (-((minute_of_day - 1140.0) / 120.0).powi(2)).exp();
+
+            // Battery power: discharging in evening/morning, charging midday
+            let net_power = load_power - solar_power;
+            let battery_power = if net_power > 0.0 {
+                net_power.min(2000.0) // discharge
+            } else {
+                net_power.max(-2000.0) // charge
+            };
+
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "MainsMeter/Total system power".to_string(),
+                value: load_power,
+            });
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "SolaX-Hybrid-Meter/Total system power".to_string(),
+                value: load_power,
+            });
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "solax-modbus/PV1 Power".to_string(),
+                value: solar_power,
+            });
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "solax-modbus/Battery Power".to_string(),
+                value: battery_power,
+            });
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "tariff/import_price".to_string(),
+                value: 28.5,
+            });
+            buffer.push(HistoryRecord {
+                timestamp: ts,
+                topic: "tariff/export_price".to_string(),
+                value: 8.2,
+            });
+        }
+        PowerScraper::database::init_history_db(&db_path)?;
+        PowerScraper::database::flush_history_to_db(&db_path, &mut buffer, None);
+    }
+
     // Set some mock data in the global system status for telemetry UI testing
     {
         let mut status = PowerScraper::web_server::get_system_status().lock().unwrap();

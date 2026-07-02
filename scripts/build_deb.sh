@@ -56,12 +56,13 @@ Description=PowerScraper daemon
 After=network.target
 
 [Service]
-Type=simple
+Type=notify
 User=root
 WorkingDirectory=/var/lib/powerscraper
 ExecStart=/usr/bin/powerscraper
 Restart=always
 RestartSec=5
+WatchdogSec=180
 LimitRTPRIO=99
 
 [Install]
@@ -89,7 +90,7 @@ set -e
 if [ "$1" = "configure" ]; then
     # Ensure database dir exists
     mkdir -p /var/lib/powerscraper
-    chmod 755 /var/lib/powerscraper
+    chmod 750 /var/lib/powerscraper
 
     # Reload systemd and start service
     systemctl daemon-reload

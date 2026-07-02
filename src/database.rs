@@ -53,6 +53,11 @@ pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn s
         "INSERT OR REPLACE INTO settings (id, config_json) VALUES (1, ?1)",
         params![json_str],
     )?;
+
+    // Compact WAL file to prevent unbounded growth on embedded storage
+    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        eprintln!("WAL checkpoint after config save failed: {}", e);
+    }
     Ok(())
 }
 
@@ -132,6 +137,11 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
         if let Err(e) = conn.execute("DELETE FROM telemetry_history WHERE timestamp < ?1", params![cutoff]) {
             eprintln!("Failed to prune old telemetry records: {}", e);
         }
+    }
+
+    // Compact WAL file to prevent unbounded growth on embedded storage
+    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        eprintln!("WAL checkpoint after telemetry flush failed: {}", e);
     }
 }
 
@@ -322,4 +332,44 @@ pub fn insert_telemetry_history_batch(
     }
     tx.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_database_init_errors() {
+        // Using a directory path causes SQLite to fail with SQLITE_CANTOPEN/SQLITE_IOERR
+        let invalid_path = "./tests/";
+        
+        let res_cfg = save_config_to_db(invalid_path, &Config::default_empty());
+        assert!(res_cfg.is_err());
+
+        let res_hist = init_history_db(invalid_path);
+        assert!(res_hist.is_err());
+    }
+
+    #[test]
+    fn test_flush_history_errors() {
+        let mut buffer = vec![
+            HistoryRecord {
+                timestamp: 1000,
+                topic: "test/topic".to_string(),
+                value: 50.5,
+            }
+        ];
+        // Directory path will fail to open or start transaction
+        flush_history_to_db("./tests/", &mut buffer, Some(30));
+        // Buffer should remain unflushed because database write failed
+        assert!(!buffer.is_empty());
+    }
+
+    #[test]
+    fn test_delete_and_save_solar_forecast_errors() {
+        let invalid_path = "./tests/";
+        let predictions = vec![(1000i64, 50.0f64)];
+        let res = delete_and_save_solar_forecast(invalid_path, &predictions);
+        assert!(res.is_err());
+    }
 }

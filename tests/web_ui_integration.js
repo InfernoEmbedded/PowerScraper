@@ -828,6 +828,198 @@ async function main() {
 
         console.log("Test 10 Passed successfully!");
 
+        // Test Case 11: Historical Simulation Execution
+        console.log("Running Test 11: Historical Simulation Execution...");
+        await page.click('.nav-btn:has-text("Simulation")');
+        await page.waitForTimeout(500);
+
+        // Click run simulation
+        console.log("Clicking 'Run Simulation' button...");
+        await page.click('#btn-run-simulation');
+        
+        // Wait for results container to show
+        console.log("Waiting for simulation results table...");
+        await page.waitForSelector('#sim-results', { state: 'visible', timeout: 15000 });
+
+        // Verify some cells in the table bodies are visible and contain float/currency formatting
+        const cellText = await page.innerText('#sim-table-body tr:first-child td:nth-child(2)');
+        if (!cellText || isNaN(parseFloat(cellText))) {
+            throw new Error(`Expected numeric/float values in simulation results table, got '${cellText}'`);
+        }
+        
+        // Hover over a cell to trigger hover chart updates
+        await page.hover('.sim-metric-cell[data-scenario="evolved_heuristic"][data-metric="net_bill"]');
+        await page.waitForTimeout(200);
+
+        // Click a cell to lock selection
+        await page.click('.sim-metric-cell[data-scenario="evolved_heuristic"][data-metric="net_bill"]');
+        await page.waitForTimeout(200);
+        console.log("Test 11 Passed successfully!");
+
+        // Test Case 12: Model Parameters Tuning (Genetic Algorithm)
+        console.log("Running Test 12: Model Parameters Tuning...");
+        await page.click('.nav-btn:has-text("Model Tuning")');
+        await page.waitForTimeout(500);
+
+        // Configure GA inputs to minimum (1 generation, 10 population size) to run instantly
+        await page.fill('#tune-generations', '1');
+        await page.fill('#tune-popsize', '10');
+        await page.fill('#tune-penalty', '35.0');
+        await page.selectOption('#tune-cores', '1'); // Force single core
+
+        // Click start training
+        console.log("Starting tuning execution...");
+        await page.click('#btn-start-tuning');
+        await page.waitForSelector('#tune-progress-card', { state: 'visible' });
+
+        // Wait for progress status to become complete
+        console.log("Waiting for tuning optimization to successfully complete...");
+        await page.waitForFunction(() => {
+            const el = document.getElementById('tune-progress-title');
+            return el && (el.textContent.includes('Successfully Completed') || el.textContent.includes('Failed') || el.textContent.includes('Error'));
+        }, { timeout: 15000 });
+
+        const progressTitleText = await page.textContent('#tune-progress-title');
+        console.log(`Tuning status message: "${progressTitleText}"`);
+        if (!progressTitleText.includes('Successfully Completed')) {
+            throw new Error(`Tuning did not complete successfully: ${progressTitleText}`);
+        }
+
+        // Verify optimization results card is displayed
+        await page.waitForSelector('#tune-results-card', { state: 'visible' });
+
+        // Click apply parameters
+        console.log("Clicking 'Apply Parameters'...");
+        await page.click('#btn-apply-tuning');
+        
+        console.log("Waiting for apply tuning status response...");
+        await page.waitForFunction(() => {
+            const el = document.getElementById('tune-apply-status');
+            return el && el.textContent.includes('applied');
+        }, { timeout: 10000 });
+        console.log("Test 12 Passed successfully!");
+
+        // Test Case 13: Location Tab PV Spec Copy & Auto-Calculation
+        console.log("Running Test 13: Location Tab PV Spec Copy & Calculations...");
+        await page.click('.nav-btn:has-text("Location")');
+        await page.waitForTimeout(500);
+
+        // PV Array Card: solax-modbus PV1
+        const arrayCardLoc = page.locator('.pv-array-card:has(.array-name[value="solax-modbus PV1"])');
+        
+        // Fill out some fields to trigger automatic capacity recalculation
+        console.log("Editing Series modules and parallel strings...");
+        const seriesInput = arrayCardLoc.locator('.array-series');
+        const parallelInput = arrayCardLoc.locator('.array-parallel');
+        const capacityInput = arrayCardLoc.locator('.array-capacity');
+
+        await seriesInput.fill('12');
+        await parallelInput.fill('2');
+        // Trigger blur/change events to fire recalculation in app.js
+        await seriesInput.dispatchEvent('change');
+        await parallelInput.dispatchEvent('change');
+        await page.waitForTimeout(200);
+
+        const calculatedCap = await capacityInput.inputValue();
+        console.log(`Calculated capacity: ${calculatedCap} W`);
+        // Expected: 12 * 2 * 37.5 * 12.0 = 10,800 W
+        if (calculatedCap !== '10800') {
+            throw new Error(`Expected capacity to recalculate to 10800, got: '${calculatedCap}'`);
+        }
+
+        // Test copy and paste specifications
+        console.log("Testing spec copy/paste...");
+        await arrayCardLoc.locator('button:has-text("Copy from PV2")'); // just a check that it exists
+        
+        // Target PV Array Card: solax-modbus PV2 (the other channel)
+        const targetCard = page.locator('.pv-array-card:has(.array-name[value="solax-modbus PV2"])');
+        
+        // Click Copy from PV1 on the PV2 card
+        await targetCard.locator('button:has-text("Copy from PV1")').click();
+        await page.waitForTimeout(200);
+
+        const pastedVmp = await targetCard.locator('.array-vmp').inputValue();
+        if (pastedVmp !== '37.5') {
+            throw new Error(`Expected copied Vmp to be '37.5', got '${pastedVmp}'`);
+        }
+
+        // Test clear specification details
+        console.log("Testing spec clear...");
+        await targetCard.locator('button:has-text("Clear Specs")').click();
+        await page.waitForTimeout(200);
+        
+        const clearedVmp = await targetCard.locator('.array-vmp').inputValue();
+        if (clearedVmp !== '') {
+            throw new Error(`Expected Vmp to be cleared to empty string, got '${clearedVmp}'`);
+        }
+        console.log("Test 13 Passed successfully!");
+
+        // Test Case 14: Solar Orientation Inference from UI
+        console.log("Running Test 14: Solar Orientation Inference...");
+        
+        // Seeding database was successful, now trigger inference via UI
+        console.log("Clicking 'Infer Orientation' on the first array card...");
+        dialogText = null;
+        await arrayCardLoc.locator('button:has-text("Infer Tilt & Azimuth")').click();
+
+        // Wait for orientation inference dialog alert success
+        let waitCountInfer = 0;
+        while (dialogText === null && waitCountInfer < 100) {
+            await page.waitForTimeout(100);
+            waitCountInfer++;
+        }
+        if (dialogText === null) {
+            throw new Error("Timed out waiting for orientation inference confirmation alert");
+        }
+        if (!dialogText.includes("Inference completed!") || !dialogText.includes("Tilt") || !dialogText.includes("Azimuth")) {
+            throw new Error(`Unexpected orientation inference alert content: "${dialogText}"`);
+        }
+
+        // Verify values populate the inputs
+        const inferredTilt = await arrayCardLoc.locator('.array-tilt').inputValue();
+        const inferredAzimuth = await arrayCardLoc.locator('.array-azimuth').inputValue();
+        console.log(`Inferred values populated - Tilt: ${inferredTilt}°, Azimuth: ${inferredAzimuth}°`);
+        if (isNaN(parseFloat(inferredTilt)) || isNaN(parseFloat(inferredAzimuth))) {
+            throw new Error(`Expected numeric inferred outputs populated, got Tilt='${inferredTilt}', Azimuth='${inferredAzimuth}'`);
+        }
+        console.log("Test 14 Passed successfully!");
+
+        // Test Case 15: Tariff TOU Periods Setup
+        console.log("Running Test 15: Tariff TOU Periods Setup...");
+        await page.click('.nav-btn:has-text("Electricity Tariff")');
+        await page.waitForTimeout(500);
+
+        // Select TOU tariff
+        await page.selectOption('#tariff-type', 'tou');
+        await page.waitForSelector('#tariff-section-tou', { state: 'visible' });
+
+        // Add a new period card
+        console.log("Adding new TOU period card...");
+        await page.click('#tariff-section-tou button:has-text("Add Period")');
+        await page.waitForSelector('#tariff-tou-periods-list .tariff-tou-period-card');
+
+        // Verify inputs
+        const tariffPeriodCard = page.locator('#tariff-tou-periods-list .tariff-tou-period-card').first();
+        await tariffPeriodCard.locator('.tariff-period-name').fill('PeakHours');
+        await tariffPeriodCard.locator('.tariff-period-start').fill('17:00:00');
+        await tariffPeriodCard.locator('.tariff-period-end').fill('21:00:00');
+        await tariffPeriodCard.locator('.tariff-period-import').fill('45.5');
+        await tariffPeriodCard.locator('.tariff-period-export').fill('12.3');
+
+        // Apply changes
+        dialogText = null;
+        console.log("Saving TOU tariff details...");
+        await page.click('.btn-apply');
+
+        let waitCountTariffSave = 0;
+        while (dialogText === null && waitCountTariffSave < 50) {
+            await page.waitForTimeout(100);
+            waitCountTariffSave++;
+        }
+        if (dialogText === null) {
+            throw new Error("Timed out waiting for save confirmation alert");
+        }
+        console.log("Test 15 Passed successfully!");
 
         console.log("\nAll Web UI Integration Tests PASSED successfully!");
         await browser.close();

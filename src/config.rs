@@ -791,6 +791,43 @@ topic_energy_total = "emon/aurora/total"
 
         let _ = std::fs::remove_file(temp_db_path);
     }
+
+    #[test]
+    fn test_malformed_config_parsing() {
+        // Test parsing empty config returns default structure or succeeds
+        let config_res = toml::from_str::<Config>("");
+        assert!(config_res.is_ok());
+
+        // Test parsing syntactically invalid TOML
+        let bad_toml = r#"
+            [MQTT]
+            broker = "127.0.0.1"
+            port = "not-a-port" # string type mismatch
+        "#;
+        let config_res = toml::from_str::<Config>(bad_toml);
+        assert!(config_res.is_err());
+
+        // Test loading from a nonexistent file returns error
+        let non_existent = "non_existent_file_name_12345.toml";
+        let load_res = Config::load_from_file(non_existent);
+        assert!(load_res.is_err());
+    }
+
+    #[test]
+    fn test_invalid_db_fallback() {
+        use std::io::Write;
+        // Create a corrupted database file filled with random text
+        let corrupt_path = "corrupted_test_config.db";
+        let mut file = std::fs::File::create(corrupt_path).unwrap();
+        file.write_all(b"not a sqlite database file header").unwrap();
+        drop(file);
+
+        // Trying to load should fail or fall back (Config::load_from_db returns Result)
+        let load_res = Config::load_from_db(corrupt_path);
+        assert!(load_res.is_err());
+
+        let _ = std::fs::remove_file(corrupt_path);
+    }
 }
 
 

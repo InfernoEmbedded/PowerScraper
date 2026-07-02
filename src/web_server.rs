@@ -85,7 +85,7 @@ struct SimQuery {
     range: Option<String>,
 }
 
-pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String, listener: tokio::net::TcpListener) {
+pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
     let db_path_clone = db_path.clone();
     let db_path_sim = db_path.clone();
     let db_path_train = db_path.clone();
@@ -94,7 +94,7 @@ pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String
     let reload_tx_apply = reload_tx.clone();
     let state = Arc::new(reload_tx);
 
-    let app = Router::new()
+    Router::new()
         .route("/", get(serve_dashboard))
         .route("/style.css", get(serve_style))
         .route("/app.js", get(serve_js))
@@ -236,8 +236,11 @@ pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String
             "/api/train/progress",
             get(handle_training_progress)
         )
-        .layer(CorsLayer::permissive());
+        .layer(CorsLayer::permissive())
+}
 
+pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String, listener: tokio::net::TcpListener) {
+    let app = build_web_app(reload_tx, db_path);
     axum::serve(listener, app).await.unwrap();
 }
 
@@ -778,6 +781,85 @@ async fn handle_mqtt_test(
         base_pub_sub,
         ha_discovery,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt; // for oneshot/call
+
+    #[tokio::test]
+    async fn test_web_server_routes_and_errors() {
+        let (reload_tx, _) = tokio::sync::mpsc::channel(10);
+        let temp_db = "temp_test_web_server.db";
+        let _ = std::fs::remove_file(temp_db);
+
+        crate::config::Config::default_empty().save_to_db(temp_db).unwrap();
+
+        let app = build_web_app(reload_tx, temp_db.to_string());
+
+        // 1. Test GET / (Dashboard)
+        let response = app.clone()
+            .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 2. Test GET /nonexistent (404)
+        let response = app.clone()
+            .oneshot(Request::builder().uri("/nonexistent").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        // 3. Test POST /api/config/import with invalid TOML syntax (400)
+        let response = app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/config/import")
+                    .header("content-type", "text/plain")
+                    .body(Body::from("invalid_toml_value = =="))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        // 4. Test POST /api/config with malformed JSON body (422 or 400)
+        let response = app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/config")
+                    .header("content-type", "application/json")
+                    .body(Body::from("{invalid json"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::BAD_REQUEST);
+
+        // 5. Test POST /api/config with unsupported content type (415)
+        let response = app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/config")
+                    .header("content-type", "text/plain")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        let _ = std::fs::remove_file(temp_db);
+    }
 }
 
 
