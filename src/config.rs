@@ -254,8 +254,10 @@ pub struct BatteryControlPeriod {
     pub force_discharge: Option<f64>,
     #[serde(default)]
     pub grace: bool,
-    #[serde(default, alias = "prefer_battery")]
+    #[serde(default, alias = "prefer-battery", alias = "prefer_battery")]
     pub prefer_battery: bool,
+    #[serde(default, alias = "min-charge-hysteresis", alias = "min_charge_hysteresis")]
+    pub min_charge_hysteresis: Option<u8>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -407,6 +409,8 @@ pub struct SolaxBatteryControlConfig {
     pub evolved_heuristic: Option<EvolvedHeuristicConfig>,
     #[serde(default)]
     pub evolved_heuristic_monthly: Option<HashMap<String, EvolvedHeuristicConfig>>,
+    #[serde(default, alias = "min-charge-hysteresis", alias = "min_charge_hysteresis")]
+    pub min_charge_hysteresis: Option<u8>,
 }
 
 fn default_flush_interval() -> u32 { 30 }

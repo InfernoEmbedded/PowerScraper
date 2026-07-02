@@ -7,6 +7,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
     let mut auto_peaks = HashMap::new();
     let mut bat_soc = config.battery_capacity_kwh * 0.5;
     let mut tracker = SimTracker::new();
+    let mut is_low_capacity = false;
 
     for r in records {
         let net_w = r.load_power_w - r.solar_power_w;
@@ -45,6 +46,12 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         let force_discharge = active_period.and_then(|p| p.force_discharge);
 
         let bat_pct = (bat_soc / config.battery_capacity_kwh) * 100.0;
+        let hyst = active_period.and_then(|p| p.min_charge_hysteresis).or(config.min_charge_hysteresis).unwrap_or(3) as f64;
+        is_low_capacity = if is_low_capacity {
+            bat_pct < min_pct + hyst
+        } else {
+            bat_pct < min_pct
+        };
 
         if let Some(fd_w) = force_discharge {
             if fd_w > 0.0 {
@@ -54,10 +61,10 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
                 let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
                 charge_w = (-fd_w).min(config.max_power_w).min(max_avail_charge);
             }
-        } else if grid_charge && bat_pct < min_pct {
+        } else if grid_charge && is_low_capacity {
             let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
             charge_w = config.max_power_w.min(max_avail_charge);
-        } else if prefer_battery && bat_pct < min_pct {
+        } else if prefer_battery && is_low_capacity {
             if net_w < 0.0 {
                 let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
                 charge_w = (-net_w).min(config.max_power_w).min(max_avail_charge);
@@ -141,6 +148,7 @@ mod tests {
             force_discharge: None,
             grace: false,
             prefer_battery: false,
+            min_charge_hysteresis: None,
         }];
 
         let records = vec![SimRecord {
@@ -169,6 +177,7 @@ mod tests {
             periods,
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
         };
 
         let result = run(&records, &config);
@@ -176,5 +185,55 @@ mod tests {
         // Grid charge rate should be max power W (3000W) or available deficit (3000W)
         // Since load is 1000W and battery charges at 3000W, total grid import is 4000W -> 4.0 kWh.
         assert_eq!(result.import_kwh, 4.0);
+    }
+
+    #[test]
+    fn test_auto_simulation_hysteresis() {
+        let tz = FixedOffset::east_opt(36000).unwrap();
+        let base_dt = tz.with_ymd_and_hms(2026, 6, 26, 2, 0, 0).unwrap(); // 02:00 AM
+
+        let mut records = Vec::new();
+        for i in 0..4 {
+            records.push(SimRecord {
+                timestamp: base_dt.timestamp() + i * 3600,
+                dt_local: base_dt + chrono::Duration::hours(i),
+                solar_power_w: 0.0,
+                load_power_w: 0.0,
+                import_price_cents: 20.0,
+                export_price_cents: 8.0,
+                duration_hours: 1.0,
+                day_solar_kwh: 0.0,
+            });
+        }
+
+        let config = SimConfig {
+            battery_capacity_kwh: 10.0,
+            max_power_w: 1000.0,
+            min_charge_pct: 20,
+            max_charge_pct: 100,
+            demand_window: None,
+            demand_rate: 0.0,
+            negative_export_prevent: false,
+            low_price_charge: false,
+            low_price_threshold: 0.0,
+            high_price_discharge: false,
+            high_price_threshold: 0.0,
+            periods: vec![BatteryControlPeriod {
+                start: "01:00:00".to_string(),
+                end: "10:00:00".to_string(),
+                min_charge: 60,
+                grid_charge: true,
+                force_discharge: None,
+                grace: false,
+                prefer_battery: false,
+                min_charge_hysteresis: Some(10),
+            }],
+            evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
+        };
+
+        let result = run(&records, &config);
+        assert_eq!(result.import_kwh, 3.0);
     }
 }

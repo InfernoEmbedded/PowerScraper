@@ -494,6 +494,7 @@ async function main() {
         await page.fill('#battery-grid-target', '150');
         await page.selectOption('#battery-init-mode', 'MpcArbitrage');
         await page.check('#battery-linked');
+        await page.fill('#battery-hysteresis', '5');
         
         // Configure solax-modbus inverter constraint
         const invCard = page.locator('.inverter-constraint-card:has(.inv-name[value="solax-modbus"])');
@@ -516,6 +517,7 @@ async function main() {
         await page.check('.period-card .period-grid-charge');
         await page.check('.period-card .period-grace');
         await page.check('.period-card .period-prefer-battery');
+        await page.fill('.period-card .period-min-charge-hysteresis', '10');
 
         // 5. Forwarders (EmonCMS, InfluxDB)
         console.log("Filling Forwarders tab...");
@@ -608,7 +610,8 @@ async function main() {
             await page.inputValue('#battery-tz') !== 'Australia/Sydney' ||
             await page.inputValue('#battery-grid-target') !== '150' ||
             await page.inputValue('#battery-init-mode') !== 'MpcArbitrage' ||
-            await page.isChecked('#battery-linked') !== true) {
+            await page.isChecked('#battery-linked') !== true ||
+            await page.inputValue('#battery-hysteresis') !== '5') {
             throw new Error("Battery general config did not reload correctly!");
         }
         // Verify Inverter Constraint
@@ -649,9 +652,10 @@ async function main() {
                 const gridCharge = await card.$eval('.period-grid-charge', el => el.checked);
                 const grace = await card.$eval('.period-grace', el => el.checked);
                 const preferBattery = await card.$eval('.period-prefer-battery', el => el.checked);
+                const hysteresis = await card.$eval('.period-min-charge-hysteresis', el => el.value);
 
-                if (start !== '14:00:00' || end !== '20:00:00' || minCharge !== '80' || forceDischarge !== '1200' || gridCharge !== true || grace !== true || preferBattery !== true) {
-                    throw new Error(`TOU Period values incorrect for PeakRate: start=${start}, end=${end}, minCharge=${minCharge}, forceDischarge=${forceDischarge}, gridCharge=${gridCharge}, grace=${grace}, preferBattery=${preferBattery}`);
+                if (start !== '14:00:00' || end !== '20:00:00' || minCharge !== '80' || forceDischarge !== '1200' || gridCharge !== true || grace !== true || preferBattery !== true || hysteresis !== '10') {
+                    throw new Error(`TOU Period values incorrect for PeakRate: start=${start}, end=${end}, minCharge=${minCharge}, forceDischarge=${forceDischarge}, gridCharge=${gridCharge}, grace=${grace}, preferBattery=${preferBattery}, hysteresis=${hysteresis}`);
                 }
                 break;
             }

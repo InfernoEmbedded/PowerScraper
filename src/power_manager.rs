@@ -459,6 +459,7 @@ pub struct PowerManager {
     last_metrics_update: Option<std::time::Instant>,
     phase_discharge_power: [f64; 16],
     commanded_powers: HashMap<String, i32>,
+    pub low_capacity_state: HashMap<String, bool>,
 }
 
 impl PowerManager {
@@ -533,6 +534,7 @@ impl PowerManager {
             last_metrics_update: None,
             phase_discharge_power: [0.0; 16],
             commanded_powers: HashMap::new(),
+            low_capacity_state: HashMap::new(),
         }
     }
 
@@ -556,6 +558,28 @@ impl PowerManager {
             }
         }
         None
+    }
+
+    fn check_low_capacity(&mut self, batteries: &[crate::battery_group::Battery], period: &BatteryControlPeriod) -> bool {
+        let mut any_low = false;
+        for b in batteries {
+            let was_low = self.low_capacity_state.get(&b.name).copied().unwrap_or(false);
+            let hyst = period.min_charge_hysteresis
+                .or(self.config.min_charge_hysteresis)
+                .unwrap_or(3) as f64;
+                
+            let is_low = if was_low {
+                b.current_soc_pct < b.min_soc_pct + hyst
+            } else {
+                b.current_soc_pct < b.min_soc_pct
+            };
+            
+            self.low_capacity_state.insert(b.name.clone(), is_low);
+            if is_low {
+                any_low = true;
+            }
+        }
+        any_low
     }
 
     #[allow(dead_code)]
@@ -609,6 +633,7 @@ impl PowerManager {
             force_discharge: None,
             grace: false,
             prefer_battery: false,
+            min_charge_hysteresis: None,
         };
         let period = period_opt.unwrap_or(default_period);
 
@@ -665,7 +690,7 @@ impl PowerManager {
             };
             let total_capacity_kwh = global_group.batteries.iter().map(|b| b.capacity_wh).sum::<f64>() / 1000.0;
 
-            let any_low_capacity = global_group.batteries.iter().any(|b| b.current_soc_pct < b.min_soc_pct);
+            let any_low_capacity = self.check_low_capacity(&global_group.batteries, &period);
 
             let target_power = match self.mode {
                 PowerManagerMode::ChargeBatteries => -max_total_charge,
@@ -985,7 +1010,7 @@ impl PowerManager {
                 };
                 let total_capacity_kwh = phase_group.batteries.iter().map(|b| b.capacity_wh).sum::<f64>() / 1000.0;
 
-                let any_low_capacity = phase_group.batteries.iter().any(|b| b.current_soc_pct < b.min_soc_pct);
+                let any_low_capacity = self.check_low_capacity(&phase_group.batteries, &period);
 
                 let use_total = name_list.iter().any(|n| {
                     self.config.inverter.get(n).map_or(false, |cfg| cfg.use_total_power)
@@ -1328,6 +1353,7 @@ impl PowerManager {
             force_discharge: None,
             grace: false,
             prefer_battery: false,
+            min_charge_hysteresis: None,
         };
         let period = period_opt.unwrap_or(default_period);
 
@@ -1363,7 +1389,7 @@ impl PowerManager {
             let max_total_charge = self.max_total_charge_power;
             let max_total_discharge = self.max_total_discharge_power;
             let total_pv: f64 = self.inverters.values().map(|inv| inv.pv1_power + inv.pv2_power).sum();
-            let any_low_capacity = global_group.batteries.iter().any(|b| b.current_soc_pct < b.min_soc_pct);
+            let any_low_capacity = self.check_low_capacity(&global_group.batteries, &period);
 
             let target_power = match self.mode {
                 PowerManagerMode::ChargeBatteries => -max_total_charge,
@@ -2513,6 +2539,7 @@ pub fn load_sim_records(
         periods: periods_list,
         evolved_heuristic: evolved_heuristic_config,
         evolved_heuristic_monthly: config.battery_control.as_ref().and_then(|bc| bc.evolved_heuristic_monthly.clone()),
+        min_charge_hysteresis: config.battery_control.as_ref().and_then(|bc| bc.min_charge_hysteresis),
     };
 
     Ok((records, sim_config))
@@ -2841,6 +2868,101 @@ mod tests {
     use chrono::Local;
 
     #[test]
+    fn test_hysteresis_state_transitions() {
+        let config = crate::config::SolaxBatteryControlConfig {
+            source: None,
+            linked_batteries: true,
+            timezone: None,
+            inverter: HashMap::new(),
+            period: HashMap::new(),
+            grid_target: None,
+            initial_mode: None,
+            tariff: None,
+            demand: None,
+            evolved_heuristic: None,
+            evolved_heuristic_monthly: None,
+            min_charge_hysteresis: Some(5), // 5% global hysteresis
+        };
+
+        let mut pm = PowerManager::new(config, "powerscraper".to_string());
+        
+        let period = BatteryControlPeriod {
+            start: "00:00:00".to_string(),
+            end: "23:59:59".to_string(),
+            min_charge: 20, // Target is 20%
+            grid_charge: true,
+            force_discharge: None,
+            grace: false,
+            prefer_battery: false,
+            min_charge_hysteresis: None, // use global
+        };
+
+        // Battery 1 at 21% (not low, was not low)
+        let bat1 = crate::battery_group::Battery {
+            name: "bat1".to_string(),
+            capacity_wh: 10000.0,
+            current_soc_pct: 21.0,
+            min_soc_pct: 20.0,
+            max_soc_pct: 95.0,
+            max_charge_power_w: 3000.0,
+            max_discharge_power_w: 3000.0,
+        };
+
+        // 1. Initial check at 21% SOC -> should not trigger low capacity
+        let any_low = pm.check_low_capacity(&[bat1.clone()], &period);
+        assert!(!any_low);
+        assert_eq!(pm.low_capacity_state.get("bat1"), Some(&false));
+
+        // 2. SOC drops to 19% (below min_charge 20%) -> should trigger low capacity
+        let mut bat2 = bat1.clone();
+        bat2.current_soc_pct = 19.0;
+        let any_low = pm.check_low_capacity(&[bat2.clone()], &period);
+        assert!(any_low);
+        assert_eq!(pm.low_capacity_state.get("bat1"), Some(&true));
+
+        // 3. SOC rises to 21% (above min_charge but within hysteresis threshold 20% + 5% = 25%)
+        // Since it was already low, it should remain low!
+        let mut bat3 = bat1.clone();
+        bat3.current_soc_pct = 21.0;
+        let any_low = pm.check_low_capacity(&[bat3.clone()], &period);
+        assert!(any_low);
+        assert_eq!(pm.low_capacity_state.get("bat1"), Some(&true));
+
+        // 4. SOC rises to 26% (above 25% threshold) -> should release low capacity
+        let mut bat4 = bat1.clone();
+        bat4.current_soc_pct = 26.0;
+        let any_low = pm.check_low_capacity(&[bat4.clone()], &period);
+        assert!(!any_low);
+        assert_eq!(pm.low_capacity_state.get("bat1"), Some(&false));
+
+        // 5. Test period-specific hysteresis override (override global 5% with period-specific 10%)
+        let mut period_with_hyst = period.clone();
+        period_with_hyst.min_charge_hysteresis = Some(10);
+
+        // Drops to 19% again to trigger low
+        let mut bat5 = bat1.clone();
+        bat5.current_soc_pct = 19.0;
+        let any_low = pm.check_low_capacity(&[bat5.clone()], &period_with_hyst);
+        assert!(any_low);
+        assert_eq!(pm.low_capacity_state.get("bat1"), Some(&true));
+
+        // Rises to 28% (above 20 + 5 global, but within 20 + 10 = 30% period specific hysteresis)
+        // Since period specific is 10%, it should still remain low!
+        let mut bat6 = bat1.clone();
+        bat6.current_soc_pct = 28.0;
+        let any_low = pm.check_low_capacity(&[bat6.clone()], &period_with_hyst);
+        assert!(any_low);
+        assert_eq!(pm.low_capacity_state.get("bat1"), Some(&true));
+
+        // Rises to 31% (above 30% threshold) -> should release
+        let mut bat7 = bat1.clone();
+        bat7.current_soc_pct = 31.0;
+        let any_low = pm.check_low_capacity(&[bat7.clone()], &period_with_hyst);
+        assert!(!any_low);
+        assert_eq!(pm.low_capacity_state.get("bat1"), Some(&false));
+    }
+
+    #[test]
     fn test_print_simulation() {
         let db_to_test = if std::path::Path::new("config.db").exists() {
             "config.db"
@@ -2944,6 +3066,7 @@ mod tests {
             force_discharge: None,
             grace: false,
             prefer_battery,
+            min_charge_hysteresis: None,
         }
     }
 

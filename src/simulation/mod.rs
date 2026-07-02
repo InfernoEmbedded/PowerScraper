@@ -31,6 +31,7 @@ pub struct SimConfig {
     pub periods: Vec<crate::config::BatteryControlPeriod>,
     pub evolved_heuristic: EvolvedHeuristicConfig,
     pub evolved_heuristic_monthly: Option<std::collections::HashMap<String, EvolvedHeuristicConfig>>,
+    pub min_charge_hysteresis: Option<u8>,
 }
 
 pub struct SimTracker {

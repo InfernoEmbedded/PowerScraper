@@ -523,6 +523,7 @@ mod tests {
             periods: vec![],
             evolved_heuristic: EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
         };
 
         // Test running 3 generations, population of 5

@@ -105,6 +105,7 @@ mod tests {
             periods: vec![],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
         };
 
         let result = run(&records, &config);
@@ -152,6 +153,7 @@ mod tests {
             periods: vec![],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
         };
 
         let result = run(&records, &config);

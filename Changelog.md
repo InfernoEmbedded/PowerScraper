@@ -4,6 +4,15 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.76] - 2026-07-02
+
+### Added
+*   **Web-Configurable Battery Charge Hysteresis**: Added global and period-specific hysteresis options to prevent battery charging/discharging hunting (oscillation) near the minimum SOC limits (addresses issue #23).
+*   **Hysteresis State Machine & Simulation Validation**: Added a stateful `low_capacity_state` tracker in the live `PowerManager` loop and aligned the simulation run loop in `src/simulation/auto.rs`.
+*   **Automated Tests for Hysteresis**: Implemented comprehensive unit tests verifying state transitions of hysteresis logic, simulation engine accuracy, and Playwright UI config reload verification.
+
+---
+
 ## [1.0.75] - 2026-07-01
 
 ### Added

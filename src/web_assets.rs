@@ -281,6 +281,14 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                             </select>
                         </div>
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="battery-hysteresis">Min Charge Hysteresis (%)</label>
+                            <input type="number" id="battery-hysteresis" min="0" max="50" placeholder="e.g. 3">
+                        </div>
+                        <div class="form-group">
+                        </div>
+                    </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="battery-linked">
                         <label for="battery-linked">Enable Linked Batteries (balances charge rates proportionately)</label>
@@ -2433,6 +2441,7 @@ async function loadConfig(configData = null) {
             document.getElementById('battery-grid-target').value = bat["grid-target"] || 0.0;
             document.getElementById('battery-init-mode').value = bat["initial-mode"] || 'Auto';
             document.getElementById('battery-linked').checked = bat["linked-batteries"] === true;
+            document.getElementById('battery-hysteresis').value = bat["min-charge-hysteresis"] !== undefined ? bat["min-charge-hysteresis"] : '';
 
             // Load Instant controls defaults
             const gridTarget = bat["grid-target"] || 0.0;
@@ -2760,6 +2769,10 @@ function renderPeriodCard(pName, per) {
                 <div class="form-group">
                     <label>Force Discharge Rate (W)</label>
                     <input type="number" class="period-force-discharge" value="${per["force-discharge"] || ''}" placeholder="None">
+                </div>
+                <div class="form-group">
+                    <label>Hysteresis (%)</label>
+                    <input type="number" class="period-min-charge-hysteresis" value="${per["min-charge-hysteresis"] !== undefined ? per["min-charge-hysteresis"] : ''}" placeholder="e.g. 3">
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-grid-charge" ${per["grid-charge"] ? 'checked' : ''}>
@@ -3405,12 +3418,14 @@ async function saveConfiguration() {
 
     // Battery Control
     if (document.getElementById('battery-enable').checked) {
+        const globalHystVal = parseInt(document.getElementById('battery-hysteresis').value);
         cfg["Solax-BatteryControl"] = {
             source: document.getElementById('battery-source').value || null,
             timezone: document.getElementById('battery-tz').value || "UTC",
             "grid-target": parseFloat(document.getElementById('battery-grid-target').value) || 0.0,
             "initial-mode": document.getElementById('battery-init-mode').value || "Auto",
             "linked-batteries": document.getElementById('battery-linked').checked,
+            "min-charge-hysteresis": isNaN(globalHystVal) ? null : globalHystVal,
             inverter: {},
             period: {}
         };
@@ -3433,10 +3448,10 @@ async function saveConfiguration() {
             }
         });
 
-        // Compile periods
         document.querySelectorAll('.period-card').forEach(card => {
             const pName = card.querySelector('.period-name').value.trim();
             const forceVal = parseFloat(card.querySelector('.period-force-discharge').value);
+            const periodHystVal = parseInt(card.querySelector('.period-min-charge-hysteresis').value);
             if (pName) {
                 cfg["Solax-BatteryControl"].period[pName] = {
                     start: card.querySelector('.period-start').value.trim() || "00:00:00",
@@ -3445,7 +3460,8 @@ async function saveConfiguration() {
                     "grid-charge": card.querySelector('.period-grid-charge').checked,
                     "force-discharge": isNaN(forceVal) ? null : forceVal,
                     grace: card.querySelector('.period-grace').checked,
-                    "prefer-battery": card.querySelector('.period-prefer-battery').checked
+                    "prefer-battery": card.querySelector('.period-prefer-battery').checked,
+                    "min-charge-hysteresis": isNaN(periodHystVal) ? null : periodHystVal
                 };
             }
         });
