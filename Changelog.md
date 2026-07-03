@@ -4,6 +4,13 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.78] - 2026-07-03
+
+### Added
+*   **Solax X-Hybrid Telemetry Expansion**: Added parsing for missing Modbus input registers on X-Hybrid inverters (including Bus Voltage, DC Voltage Fault, Overload Fault, Battery Voltage Fault, BMS Connected, and Run Mode 2).
+
+---
+
 ## [1.0.77] - 2026-07-03
 
 ### Fixed

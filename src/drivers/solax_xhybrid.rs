@@ -446,6 +446,16 @@ fn parse_hybrid_registers(
         "Solar Energy Total".to_string(),
         format!("{:.1}", u32_b(0x56) as f64 / 10.0),
     );
+    vals.insert(
+        "Bus Voltage".to_string(),
+        format!("{:.1}", u16_b(0x66) as f64 / 10.0),
+    );
+    vals.insert(
+        "DC Voltage Fault".to_string(),
+        format!("{:.1}", u16_b(0x67) as f64 / 10.0),
+    );
+    vals.insert("Overload Fault".to_string(), u16_b(0x68).to_string());
+    vals.insert("Battery Voltage Fault".to_string(), u16_b(0x69).to_string());
 
     // Block C
     let battery_power = i16_c(0xC4);
@@ -464,6 +474,8 @@ fn parse_hybrid_registers(
         u16_c(0xCB).to_string(),
     );
     vals.insert("BMS Energy Throughput".to_string(), u32_c(0xCC).to_string());
+    vals.insert("Run Mode 2".to_string(), u16_c(0xBF).to_string());
+    vals.insert("BMS Connected".to_string(), u16_c(0xC5).to_string());
 
     let power_budget = battery_power
         + measured_power
