@@ -4,6 +4,13 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.77] - 2026-07-03
+
+### Fixed
+*   **EmonCMS Payload Serialization**: Parse stringified metric values to their correct JSON numeric (integers, floats) and boolean types before submitting. This resolves the issue where EmonCMS rejected the payloads and stopped updating feeds.
+
+---
+
 ## [1.0.76] - 2026-07-02
 
 ### Added

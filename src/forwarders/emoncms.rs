@@ -10,9 +10,26 @@ pub async fn forward_to_emoncms(
     metrics: &HashMap<String, String>,
     cancel_token: &CancellationToken,
 ) {
-    let mut payload = metrics.clone();
-    payload.remove("Serial");
-    payload.remove("name");
+    let mut payload = HashMap::new();
+    for (k, v) in metrics.iter() {
+        if k == "Serial" || k == "name" {
+            continue;
+        }
+        let json_val = if let Ok(i) = v.parse::<i64>() {
+            serde_json::Value::Number(i.into())
+        } else if let Ok(f) = v.parse::<f64>() {
+            if let Some(num) = serde_json::Number::from_f64(f) {
+                serde_json::Value::Number(num)
+            } else {
+                serde_json::Value::String(v.clone())
+            }
+        } else if let Ok(b) = v.parse::<bool>() {
+            serde_json::Value::Bool(b)
+        } else {
+            serde_json::Value::String(v.clone())
+        };
+        payload.insert(k.clone(), json_val);
+    }
 
     let url = format!("{}/input/post", config.server);
     let mut query_params = HashMap::new();
