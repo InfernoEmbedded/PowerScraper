@@ -37,6 +37,10 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line></svg>
                 Battery Control
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-history', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Telemetry History
+            </button>
             <button class="nav-btn" onclick="switchTab('tab-periods', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                 TOU Periods
@@ -298,6 +302,31 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                         <div class="card-title">Inverter Constraint Matrix</div>
                         <div id="inverters-constraints-list">
                             <!-- Dynamic inverter constraint cards -->
+                        </div>
+                </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- TELEMETRY HISTORY TAB -->
+        <div id="tab-history" class="tab-content">
+            <div class="glass-card">
+                <div class="card-title">
+                    Telemetry History Logging
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="history-enabled" onchange="toggleFormSection('history-section', this.checked)">
+                        <label for="history-enabled">Enable Logging</label>
+                    </div>
+                </div>
+                <div id="history-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="history-flush-interval">Flush Interval (minutes)</label>
+                            <input type="number" id="history-flush-interval" min="1" max="1440" placeholder="30">
+                        </div>
+                        <div class="form-group">
+                            <label for="history-retention-days">Data Retention (days)</label>
+                            <input type="number" id="history-retention-days" min="1" max="3650" placeholder="365">
                         </div>
                     </div>
                 </div>
@@ -1761,10 +1790,12 @@ async function fetchStatus() {
             if (nameEl) {
                 const name = nameEl.value.trim();
                 const invStatus = status.inverters && status.inverters[name];
-                if (invStatus && invStatus.calculated_battery_capacity !== undefined && invStatus.calculated_battery_capacity !== null) {
-                    const calcEl = card.querySelector('.inv-calc-capacity');
-                    if (calcEl) {
+                const calcEl = card.querySelector('.inv-calc-capacity');
+                if (calcEl) {
+                    if (invStatus && invStatus.calculated_battery_capacity !== undefined && invStatus.calculated_battery_capacity !== null) {
                         calcEl.value = `${invStatus.calculated_battery_capacity.toFixed(2)} kWh`;
+                    } else {
+                        calcEl.value = "N/A";
                     }
                 }
             }
@@ -2282,6 +2313,14 @@ async function loadConfig(configData = null) {
         document.getElementById('mqtt-base').value = mqtt["base-topic"] || '';
         document.getElementById('mqtt-ha-discovery').checked = mqtt["home-assistant-discovery"] !== false;
         document.getElementById('mqtt-ha-prefix').value = mqtt["home-assistant-prefix"] || '';
+
+        // Load History
+        const history = config.History || {};
+        const historyEnabled = history.enabled !== false;
+        document.getElementById('history-enabled').checked = historyEnabled;
+        document.getElementById('history-flush-interval').value = history["flush-interval-mins"] || history.flush_interval_mins || 30;
+        document.getElementById('history-retention-days').value = history["retention-days"] || history.retention_days || 365;
+        toggleFormSection('history-section', historyEnabled);
 
         // Clear dynamic drivers container
         const driversContainer = document.getElementById('drivers-list-container');
@@ -3190,6 +3229,11 @@ function parseCommaList(val) {
 // Saving config JSON
 async function saveConfiguration() {
     const cfg = {
+        History: {
+            enabled: document.getElementById('history-enabled').checked,
+            "flush-interval-mins": parseInt(document.getElementById('history-flush-interval').value) || 30,
+            "retention-days": parseInt(document.getElementById('history-retention-days').value) || 365
+        },
         MQTT: {
             broker: document.getElementById('mqtt-broker').value,
             port: parseInt(document.getElementById('mqtt-port').value) || 1883,

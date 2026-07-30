@@ -106,10 +106,8 @@ pub async fn run_solax_xhybrid_driver(
                                 if publish.topic == command_topic {
                                     let payload = String::from_utf8_lossy(&publish.payload);
                                     if let Ok(power) = payload.trim().parse::<i32>() {
-
                                         *req_power_clone.lock().await = power;
 
-                                        let power_u16 = power as u16;
                                         let mut lock = ctx_clone.lock().await;
                                         if lock.is_none() {
                                             if let Ok(addr) = resolve_address(&hostname_clone).await {
@@ -119,9 +117,13 @@ pub async fn run_solax_xhybrid_driver(
                                             }
                                         }
                                         if let Some(ref mut ctx) = *lock {
-                                            if ctx.write_single_register(0x52, power_u16).await.is_ok() {
-                                                let _ = ctx.write_single_register(0x51, 1).await;
-                                            }
+                                            // 1. Enable power control (0x0051)
+                                            let _ = ctx.write_single_register(0x51, 1).await;
+                                            // 2. Set keepalive timeout (0x009F)
+                                            let _ = ctx.write_single_register(0x9F, 30).await;
+                                            // 3. Write target power to Modbus ActivePower (0x0052)
+                                            let power_u16 = power as u16;
+                                            let _ = ctx.write_single_register(0x52, power_u16).await;
                                         }
                                     }
                                 }

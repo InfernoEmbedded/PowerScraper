@@ -155,15 +155,21 @@ pub fn calculate_price_thresholds(db_path: &str) -> Result<crate::web_server::Pr
 pub fn calculate_inferred_battery_capacity(db_path: &str, inverter_name: &str) -> Option<f64> {
     let capacity_topic = format!("{}/Battery Capacity", inverter_name);
     let power_topic = format!("{}/Battery Power", inverter_name);
-    let thirty_days_ago = Utc::now().timestamp() - (30 * 24 * 3600);
+    let ninety_days_ago = Utc::now().timestamp() - (90 * 24 * 3600);
 
-    let rows = match crate::database::get_telemetry_history_multiple_topics(db_path, &capacity_topic, &power_topic, thirty_days_ago) {
+    let mut rows = match crate::database::get_telemetry_history_multiple_topics(db_path, &capacity_topic, &power_topic, ninety_days_ago) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("Failed to fetch database rows for capacity inference: {}", e);
             return None;
         }
     };
+
+    if rows.is_empty() {
+        if let Ok(r) = crate::database::get_telemetry_history_multiple_topics(db_path, &capacity_topic, &power_topic, 0) {
+            rows = r;
+        }
+    }
 
     // We process the records sequentially
     let mut current_soc: Option<f64> = None;
@@ -655,7 +661,7 @@ impl PowerManager {
         let mut battery_map = HashMap::new();
         for (name, inv_cfg) in &self.config.inverter {
             let state = self.inverters.get(name).cloned().unwrap_or_default();
-            let cap_kwh = inv_cfg.battery_capacity.unwrap_or(13.8);
+            let cap_kwh = inv_cfg.battery_capacity.filter(|&c| c > 0.0).unwrap_or(13.8);
             let soc = state.battery_capacity as f64;
             let min_pct = period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64;
             let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
@@ -1367,7 +1373,9 @@ impl PowerManager {
                 } else {
                     None
                 };
-                let cap_kwh = calc_cap.unwrap_or_else(|| inv_cfg.battery_capacity.unwrap_or(13.8));
+                let cap_kwh = calc_cap
+                    .or_else(|| inv_cfg.battery_capacity.filter(|&c| c > 0.0))
+                    .unwrap_or(13.8);
                 let soc = state.battery_capacity as f64;
                 let min_pct = period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64;
                 let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
@@ -1437,7 +1445,9 @@ impl PowerManager {
                         } else {
                             None
                         };
-                        let cap_kwh = calc_cap.unwrap_or_else(|| cfg.battery_capacity.unwrap_or(13.8));
+                        let cap_kwh = calc_cap
+                            .or_else(|| cfg.battery_capacity.filter(|&c| c > 0.0))
+                            .unwrap_or(13.8);
                         let soc = state.battery_capacity as f64;
                         let min_pct = period.min_charge.max(cfg.min_charge_pct.unwrap_or(0)) as f64;
                         let max_pct = cfg.max_charge_pct.unwrap_or(95) as f64;
@@ -1825,7 +1835,7 @@ pub async fn run_power_manager_task(
     let history_config = crate::config::Config::load_from_db(&db_path)
         .ok()
         .and_then(|c| c.history);
-    let history_enabled = history_config.as_ref().map(|h| h.enabled).unwrap_or(false);
+    let history_enabled = history_config.as_ref().map(|h| h.enabled).unwrap_or(true);
     let flush_interval_mins = history_config.as_ref().map(|h| h.flush_interval_mins).unwrap_or(30);
     let retention_days = history_config.as_ref().and_then(|h| h.retention_days);
 

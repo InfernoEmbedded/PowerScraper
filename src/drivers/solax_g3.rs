@@ -117,19 +117,13 @@ pub async fn run_solax_g3_driver(
                                             }
                                         }
                                         if let Some(ref mut ctx) = *lock {
-                                            if power != 0 {
-                                                // 1. Enable power control (0x0051)
-                                                let _ = ctx.write_single_register(0x51, 1).await;
-                                                // 2. Set keepalive timeout (0x009F)
-                                                let _ = ctx.write_single_register(0x9F, 30).await;
-                                                // 3. Write target power to Modbus ActivePower (0x0052)
-                                                let power_u16 = power as u16;
-                                                let _ = ctx.write_single_register(0x52, power_u16).await;
-                                            } else {
-                                                // If power is 0, reset targets and return to standard self-use
-                                                let _ = ctx.write_single_register(0x52, 0).await;
-                                                let _ = ctx.write_single_register(0x51, 0).await;
-                                            }
+                                            // 1. Enable power control (0x0051)
+                                            let _ = ctx.write_single_register(0x51, 1).await;
+                                            // 2. Set keepalive timeout (0x009F)
+                                            let _ = ctx.write_single_register(0x9F, 30).await;
+                                            // 3. Write target power to Modbus ActivePower (0x0052)
+                                            let power_u16 = power as u16;
+                                            let _ = ctx.write_single_register(0x52, power_u16).await;
                                         }
                                     }
                                 }
