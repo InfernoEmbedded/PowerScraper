@@ -131,3 +131,16 @@ G3 VPP remote override control utilizes the following holding registers:
 2. **Keepalive Timeout** (`0x009F`): Write Single Register (`0x06`) setting the watchdog timeout in seconds (typically `30`).
 3. **Active Power Target** (`0x0052`): Write Single Register (`0x06`) containing a signed 16-bit power value (positive values charge, negative values discharge).
 
+---
+
+## 6. Inverter Hardware Generation & Serial Prefix Identification
+
+SolaX encodes hardware generation, phase count, and series type in the leading characters of the 14-character ASCII Serial Number read at holding register `0x0000`:
+
+| Serial Prefix | Hardware Generation | Inverter Series / Type | Driver Class | Remote Control Registers |
+| :--- | :--- | :--- | :--- | :--- |
+| **`U50...`** / **`U30...`** | **Gen 2 (SK-SU)** | SK-SU 3000 / SK-SU 5000E Single Phase | `Solax-Modbus` | `0x0051` (Power), `0x0090` (Trigger) |
+| **`PR...`** / **`PRI...`** | **Gen 3 (G3)** | X1-Hybrid / X3-Hybrid Gen 3 | `Solax-G3-Modbus` | `0x0051` (Enable=1), `0x009F` (Timeout=30), `0x0052` (Power Int16) |
+| **`H1...`** / **`H3...`** | **Gen 4 (G4)** | X1-Hybrid / X3-Hybrid Gen 4 | `Solax-G4-Modbus` | `0x007C` (Enable=1), `0x0088` (Timeout=30), `0x007E` (Power Int32) |
+| **`X3...`** / **`MIC...`** | Grid-Tied | X3-Mic / X1-Boost (No Battery) | `Solax-Modbus` | N/A (String Inverters) |
+
