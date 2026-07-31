@@ -4,6 +4,21 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.79] - 2026-07-31
+
+### Fixed
+* **SolaX Inverter Remote Control & Sign Alignments**:
+  - Aligned Gen 3 (`solax_g3.rs`) command writing for Holding Register `0x0052` with the `0.x` Python `SolaxXHybridModbus` implementation (passing target power as two's complement without extra negation).
+  - Fixed battery power telemetry sign reporting across `solax_g3.rs` and `solax_g4.rs` by negating Input Register `0x0016` (`-i16_a(0x16)`), ensuring telemetry maps to PowerScraper's system-wide convention (`battery_power > 0` = Discharging).
+  - Restored battery power telemetry negation in `solax_modbus.rs` (`-signed16_a(0x16)`) for Gen 2 SK-SU inverters.
+  - Corrected 32-bit Modbus word ordering (`high_word`, `low_word`) for `ActivePowerTarget` (`0x007E`) in `solax_g4.rs`.
+* **Modbus Quiet Time & Rate Limiting**: Added 200ms quiet-time inter-frame delays between consecutive Modbus write instructions to prevent packet drops.
+
+### Added
+* **Inverter Identification Documentation**: Added hardware generation matrix and serial prefix lookup table (`docs/inverters.md`).
+
+---
+
 ## [1.0.78] - 2026-07-03
 
 ### Added
