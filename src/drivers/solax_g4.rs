@@ -73,13 +73,9 @@ pub async fn run_solax_g4_driver(
     .await;
 
     // Spawn MQTT handler task
-    let ctx_clone = ctx_opt.clone();
-    let hostname_clone = hostname.clone();
     let req_power_clone = requested_battery_power.clone();
     let inverter_name_clone = inverter_name.clone();
     let cancel_token_clone = cancel_token.clone();
-    let mut last_power: Option<i32> = None;
-    let mut last_write_time: Option<std::time::Instant> = None;
 
     tokio::spawn(async move {
         loop {
@@ -93,50 +89,6 @@ pub async fn run_solax_g4_driver(
                                     let payload = String::from_utf8_lossy(&publish.payload);
                                     if let Ok(power) = payload.trim().parse::<i32>() {
                                         *req_power_clone.lock().await = power;
-
-                                        let needs_update = match (last_power, last_write_time) {
-                                            (Some(lp), Some(lt)) => lp != power || lt.elapsed() >= Duration::from_secs(10),
-                                            _ => true,
-                                        };
-
-                                        if needs_update {
-                                            if let Some(lt) = last_write_time {
-                                                let elapsed = lt.elapsed();
-                                                if elapsed < Duration::from_secs(1) {
-                                                    sleep(Duration::from_secs(1) - elapsed).await;
-                                                }
-                                            }
-
-                                            let mut lock = ctx_clone.lock().await;
-                                            if lock.is_none() {
-                                                if let Ok(addr) = resolve_address(&hostname_clone).await {
-                                                    if let Ok(ctx) = tcp::connect(addr).await {
-                                                        *lock = Some(ctx);
-                                                    }
-                                                }
-                                            }
-                                            if let Some(ref mut ctx) = *lock {
-                                                if power != 0 {
-                                                    // 1. Write 1 to ModbusPowerControl (0x007C) to enable remote control
-                                                    let _ = ctx.write_single_register(0x007C, 1).await;
-                                                    // 2. Write 30s to RemoteCtrlTimeOut (0x0088)
-                                                    let _ = ctx.write_single_register(0x0088, 30).await;
-                                                    // 3. Write requested power as int32 to 0x007E (Positive = charge, Negative = discharge)
-                                                    let low_word = (power & 0xFFFF) as u16;
-                                                    let high_word = ((power >> 16) & 0xFFFF) as u16;
-                                                    if ctx.write_multiple_registers(0x007E, &[low_word, high_word]).await.is_ok() {
-                                                        last_power = Some(power);
-                                                        last_write_time = Some(std::time::Instant::now());
-                                                    }
-                                                } else {
-                                                    // If power is 0, reset targets and return to standard self-use
-                                                    let _ = ctx.write_multiple_registers(0x007E, &[0u16, 0u16]).await;
-                                                    let _ = ctx.write_single_register(0x007C, 0).await;
-                                                    last_power = Some(0);
-                                                    last_write_time = Some(std::time::Instant::now());
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -162,6 +114,9 @@ pub async fn run_solax_g4_driver(
     let avg_samples = config.power_budget_avg_samples.unwrap_or(30);
     let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut discovered_metrics = std::collections::HashSet::new();
+    let mut consecutive_errors = 0u32;
+    let mut last_written_power: Option<i32> = None;
+    let mut last_write_time: Option<std::time::Instant> = None;
 
     loop {
         if cancel_token.is_cancelled() {
@@ -176,6 +131,7 @@ pub async fn run_solax_g4_driver(
                     Ok(addr) => match tcp::connect(addr).await {
                         Ok(ctx) => {
                             *lock = Some(ctx);
+                            consecutive_errors = 0;
                         }
                         Err(e) => {
                             println!("Driver [{}] failed to connect: {}", inverter_name, e);
@@ -187,10 +143,43 @@ pub async fn run_solax_g4_driver(
                 }
             }
             if let Some(ref mut ctx) = *lock {
+                let needs_update = match (last_written_power, last_write_time) {
+                    (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
+                    _ => true,
+                };
+
+                if needs_update {
+                    if req_power != 0 {
+                        // 1. Write 1 to ModbusPowerControl (0x007C) to enable remote control
+                        let _ = ctx.write_single_register(0x007C, 1).await;
+                        // 2. Write 30s to RemoteCtrlTimeOut (0x0088)
+                        let _ = ctx.write_single_register(0x0088, 30).await;
+                        // 3. Write requested power as int32 to 0x007E (Positive = charge, Negative = discharge)
+                        let low_word = (req_power & 0xFFFF) as u16;
+                        let high_word = ((req_power >> 16) & 0xFFFF) as u16;
+                        if ctx.write_multiple_registers(0x007E, &[low_word, high_word]).await.is_ok() {
+                            last_written_power = Some(req_power);
+                            last_write_time = Some(std::time::Instant::now());
+                        }
+                    } else {
+                        // If power is 0, reset targets and return to standard self-use
+                        let _ = ctx.write_multiple_registers(0x007E, &[0u16, 0u16]).await;
+                        let _ = ctx.write_single_register(0x007C, 0).await;
+                        last_written_power = Some(0);
+                        last_write_time = Some(std::time::Instant::now());
+                    }
+                }
+
                 match ctx.read_input_registers(0, 0x72).await {
-                    Ok(regs) => Ok(regs),
+                    Ok(regs) => {
+                        consecutive_errors = 0;
+                        Ok(regs)
+                    }
                     Err(e) => {
-                        *lock = None; // Reset on failure
+                        consecutive_errors += 1;
+                        if consecutive_errors >= 3 {
+                            *lock = None; // Reset on 3 consecutive failures
+                        }
                         Err(e)
                     }
                 }

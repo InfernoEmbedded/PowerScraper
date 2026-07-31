@@ -72,13 +72,9 @@ pub async fn run_solax_modbus_driver(
     .await;
 
     // Spawn MQTT handler task
-    let ctx_clone = ctx_opt.clone();
-    let hostname_clone = hostname.clone();
     let req_power_clone = requested_battery_power.clone();
     let inverter_name_clone = inverter_name.clone();
     let cancel_token_clone = cancel_token.clone();
-    let mut last_power: Option<i32> = None;
-    let mut last_write_time: Option<std::time::Instant> = None;
 
     tokio::spawn(async move {
         loop {
@@ -92,39 +88,6 @@ pub async fn run_solax_modbus_driver(
                                     let payload = String::from_utf8_lossy(&publish.payload);
                                     if let Ok(power) = payload.trim().parse::<i32>() {
                                         *req_power_clone.lock().await = power;
-
-                                        let needs_update = match (last_power, last_write_time) {
-                                            (Some(lp), Some(lt)) => lp != power || lt.elapsed() >= Duration::from_secs(10),
-                                            _ => true,
-                                        };
-
-                                        if needs_update {
-                                            if let Some(lt) = last_write_time {
-                                                let elapsed = lt.elapsed();
-                                                if elapsed < Duration::from_secs(1) {
-                                                    sleep(Duration::from_secs(1) - elapsed).await;
-                                                }
-                                            }
-
-                                            let power_u16 = power as u16;
-                                            let mut lock = ctx_clone.lock().await;
-                                            if lock.is_none() {
-                                                if let Ok(addr) = resolve_address(&hostname_clone).await {
-                                                    if let Ok(ctx) = tcp::connect(addr).await {
-                                                        *lock = Some(ctx);
-                                                    }
-                                                }
-                                            }
-                                            if let Some(ref mut ctx) = *lock {
-                                                if ctx.write_single_register(0x51, power_u16).await.is_ok() {
-                                                    last_power = Some(power);
-                                                    last_write_time = Some(std::time::Instant::now());
-                                                    if power != 0 {
-                                                        let _ = ctx.write_single_register(0x90, 1).await;
-                                                    }
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                             }
@@ -150,6 +113,9 @@ pub async fn run_solax_modbus_driver(
     let avg_samples = config.power_budget_avg_samples.unwrap_or(30);
     let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut discovered_metrics = std::collections::HashSet::new();
+    let mut consecutive_errors = 0u32;
+    let mut last_written_power: Option<i32> = None;
+    let mut last_write_time: Option<std::time::Instant> = None;
 
     loop {
         if cancel_token.is_cancelled() {
@@ -164,6 +130,7 @@ pub async fn run_solax_modbus_driver(
                     Ok(addr) => match tcp::connect(addr).await {
                         Ok(ctx) => {
                             *lock = Some(ctx);
+                            consecutive_errors = 0;
                         }
                         Err(e) => {
                             println!("Driver [{}] failed to connect: {}", inverter_name, e);
@@ -175,13 +142,35 @@ pub async fn run_solax_modbus_driver(
                 }
             }
             if let Some(ref mut ctx) = *lock {
+                let needs_update = match (last_written_power, last_write_time) {
+                    (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
+                    _ => true,
+                };
+
+                if needs_update {
+                    let power_u16 = req_power as u16;
+                    if ctx.write_single_register(0x51, power_u16).await.is_ok() {
+                        last_written_power = Some(req_power);
+                        last_write_time = Some(std::time::Instant::now());
+                        if req_power != 0 {
+                            let _ = ctx.write_single_register(0x90, 1).await;
+                        }
+                    }
+                }
+
                 let r_a = ctx.read_input_registers(0, 0x27).await;
                 let r_b = ctx.read_input_registers(0x40, 0x1E).await;
 
                 match (r_a, r_b) {
-                    (Ok(a), Ok(b)) => Ok((a, b)),
+                    (Ok(a), Ok(b)) => {
+                        consecutive_errors = 0;
+                        Ok((a, b))
+                    }
                     _ => {
-                        *lock = None; // Reset on failure
+                        consecutive_errors += 1;
+                        if consecutive_errors >= 3 {
+                            *lock = None; // Reset on 3 consecutive failures
+                        }
                         Err(std::io::Error::new(
                             std::io::ErrorKind::ConnectionReset,
                             "Failed to read Modbus blocks",
