@@ -660,6 +660,9 @@ impl PowerManager {
         // Build list of Battery structs
         let mut battery_map = HashMap::new();
         for (name, inv_cfg) in &self.config.inverter {
+            if !inv_cfg.has_battery() {
+                continue;
+            }
             let state = self.inverters.get(name).cloned().unwrap_or_default();
             let cap_kwh = inv_cfg.battery_capacity.filter(|&c| c > 0.0).unwrap_or(13.8);
             let soc = state.battery_capacity as f64;
@@ -1367,6 +1370,9 @@ impl PowerManager {
             // Build global group
             let mut batteries = Vec::new();
             for (name, inv_cfg) in &self.config.inverter {
+                if !inv_cfg.has_battery() {
+                    continue;
+                }
                 let state = self.inverters.get(name).cloned().unwrap_or_default();
                 let calc_cap = if let Ok(status) = crate::web_server::get_system_status().lock() {
                     status.inverters.get(name).and_then(|i| i.calculated_battery_capacity)
@@ -1430,6 +1436,9 @@ impl PowerManager {
         } else {
             // Unlinked
             if let Some(inv_cfg) = self.config.inverter.get(device_name) {
+                if !inv_cfg.has_battery() {
+                    return;
+                }
                 let phase = inv_cfg.phase;
                 let phase_inverters: Vec<String> = self.config.inverter.iter()
                     .filter(|(_, cfg)| cfg.phase == phase)
@@ -1439,6 +1448,9 @@ impl PowerManager {
                 let mut phase_batteries = Vec::new();
                 for name in &phase_inverters {
                     if let Some(cfg) = self.config.inverter.get(name) {
+                        if !cfg.has_battery() {
+                            continue;
+                        }
                         let state = self.inverters.get(name).cloned().unwrap_or_default();
                         let calc_cap = if let Ok(status) = crate::web_server::get_system_status().lock() {
                             status.inverters.get(name).and_then(|i| i.calculated_battery_capacity)
@@ -2371,6 +2383,9 @@ pub fn load_sim_records(
         std::thread::scope(|s| {
             let mut threads = Vec::new();
             for (inv_name, inv_cfg) in &bc.inverter {
+                if !inv_cfg.has_battery() {
+                    continue;
+                }
                 if let Some(cap) = inv_cfg.battery_capacity {
                     battery_capacity_kwh += cap;
                     max_power_w += inv_cfg.max_discharge.max(inv_cfg.max_charge);

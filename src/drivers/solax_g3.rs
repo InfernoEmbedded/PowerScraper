@@ -95,6 +95,9 @@ pub async fn run_solax_g3_driver(
     let req_power_clone = requested_battery_power.clone();
     let inverter_name_clone = inverter_name.clone();
     let cancel_token_clone = cancel_token.clone();
+    let mut last_power: Option<i32> = None;
+    let mut last_write_time: Option<std::time::Instant> = None;
+
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -108,22 +111,39 @@ pub async fn run_solax_g3_driver(
                                     if let Ok(power) = payload.trim().parse::<i32>() {
                                         *req_power_clone.lock().await = power;
 
-                                        let mut lock = ctx_clone.lock().await;
-                                        if lock.is_none() {
-                                            if let Ok(addr) = resolve_address(&hostname_clone).await {
-                                                if let Ok(ctx) = tcp::connect(addr).await {
-                                                    *lock = Some(ctx);
+                                        let needs_update = match (last_power, last_write_time) {
+                                            (Some(lp), Some(lt)) => lp != power || lt.elapsed() >= Duration::from_secs(10),
+                                            _ => true,
+                                        };
+
+                                        if needs_update {
+                                            if let Some(lt) = last_write_time {
+                                                let elapsed = lt.elapsed();
+                                                if elapsed < Duration::from_secs(1) {
+                                                    sleep(Duration::from_secs(1) - elapsed).await;
                                                 }
                                             }
-                                        }
-                                        if let Some(ref mut ctx) = *lock {
-                                            // 1. Enable power control (0x0051)
-                                            let _ = ctx.write_single_register(0x51, 1).await;
-                                            // 2. Set keepalive timeout (0x009F)
-                                            let _ = ctx.write_single_register(0x9F, 30).await;
-                                            // 3. Write target power to Modbus ActivePower (0x0052)
-                                            let power_u16 = power as u16;
-                                            let _ = ctx.write_single_register(0x52, power_u16).await;
+
+                                            let mut lock = ctx_clone.lock().await;
+                                            if lock.is_none() {
+                                                if let Ok(addr) = resolve_address(&hostname_clone).await {
+                                                    if let Ok(ctx) = tcp::connect(addr).await {
+                                                        *lock = Some(ctx);
+                                                    }
+                                                }
+                                            }
+                                            if let Some(ref mut ctx) = *lock {
+                                                // 1. Enable power control (0x0051)
+                                                let _ = ctx.write_single_register(0x51, 1).await;
+                                                // 2. Set keepalive timeout (0x009F)
+                                                let _ = ctx.write_single_register(0x9F, 30).await;
+                                                // 3. Write target power to Modbus ActivePower (0x0052)
+                                                let power_u16 = power as u16;
+                                                if ctx.write_single_register(0x52, power_u16).await.is_ok() {
+                                                    last_power = Some(power);
+                                                    last_write_time = Some(std::time::Instant::now());
+                                                }
+                                            }
                                         }
                                     }
                                 }

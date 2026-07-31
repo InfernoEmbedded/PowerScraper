@@ -241,6 +241,20 @@ pub struct BatteryControlInverter {
     pub no_pv: Option<bool>,
 }
 
+impl BatteryControlInverter {
+    pub fn has_battery(&self) -> bool {
+        if let Some(cap) = self.battery_capacity {
+            if cap <= 0.0 {
+                return false;
+            }
+        }
+        if self.max_charge <= 0.0 && self.max_discharge <= 0.0 {
+            return false;
+        }
+        true
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct BatteryControlPeriod {
