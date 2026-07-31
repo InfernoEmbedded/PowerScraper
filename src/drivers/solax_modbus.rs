@@ -153,6 +153,7 @@ pub async fn run_solax_modbus_driver(
                         last_written_power = Some(req_power);
                         last_write_time = Some(std::time::Instant::now());
                         if req_power != 0 {
+                            tokio::time::sleep(Duration::from_millis(200)).await;
                             let _ = ctx.write_single_register(0x90, 1).await;
                         }
                     }
@@ -340,7 +341,7 @@ fn parse_solax_registers(
         "Battery Current".to_string(),
         format!("{:.2}", signed16_a(0x15) as f64 / 100.0),
     );
-    vals.insert("Battery Power".to_string(), (-signed16_a(0x16)).to_string());
+    vals.insert("Battery Power".to_string(), signed16_a(0x16).to_string());
     vals.insert(
         "Charger Board Temperature".to_string(),
         signed16_a(0x17).to_string(),

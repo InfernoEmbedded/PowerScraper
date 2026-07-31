@@ -168,10 +168,12 @@ pub async fn run_solax_g3_driver(
                 if needs_update {
                     // 1. Enable power control (0x0051)
                     let _ = ctx.write_single_register(0x51, 1).await;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                     // 2. Set keepalive timeout (0x009F)
                     let _ = ctx.write_single_register(0x9F, 30).await;
+                    tokio::time::sleep(Duration::from_millis(200)).await;
                     // 3. Write target power to Modbus ActivePower (0x0052)
-                    let power_u16 = req_power as u16;
+                    let power_u16 = (-req_power) as u16;
                     if ctx.write_single_register(0x52, power_u16).await.is_ok() {
                         last_written_power = Some(req_power);
                         last_write_time = Some(std::time::Instant::now());
@@ -372,7 +374,7 @@ fn parse_hybrid_registers(
         "Battery Current".to_string(),
         format!("{:.1}", i16_a(0x15) as f64 / 10.0),
     );
-    vals.insert("Battery Power".to_string(), (-i16_a(0x16)).to_string());
+    vals.insert("Battery Power".to_string(), i16_a(0x16).to_string());
     vals.insert("BMS Connect State".to_string(), u16_a(0x17).to_string());
     vals.insert("Battery Temperature".to_string(), i16_a(0x18).to_string());
     vals.insert(

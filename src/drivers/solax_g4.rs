@@ -152,12 +152,14 @@ pub async fn run_solax_g4_driver(
                     if req_power != 0 {
                         // 1. Write 1 to ModbusPowerControl (0x007C) to enable remote control
                         let _ = ctx.write_single_register(0x007C, 1).await;
-                        // 2. Write 30s to RemoteCtrlTimeOut (0x0088)
+                        // 2. Write 1 to TargetSetType (0x007D) to activate power setpoint
+                        let _ = ctx.write_single_register(0x007D, 1).await;
+                        // 3. Write 30s to RemoteCtrlTimeOut (0x0088)
                         let _ = ctx.write_single_register(0x0088, 30).await;
-                        // 3. Write requested power as int32 to 0x007E (Positive = charge, Negative = discharge)
-                        let high_word = ((req_power >> 16) & 0xFFFF) as u16;
+                        // 4. Write requested power as int32 LSB at 0x007E, MSB at 0x007F (Positive = charge, Negative = discharge)
                         let low_word = (req_power & 0xFFFF) as u16;
-                        if ctx.write_multiple_registers(0x007E, &[high_word, low_word]).await.is_ok() {
+                        let high_word = ((req_power >> 16) & 0xFFFF) as u16;
+                        if ctx.write_multiple_registers(0x007E, &[low_word, high_word]).await.is_ok() {
                             last_written_power = Some(req_power);
                             last_write_time = Some(std::time::Instant::now());
                         }
@@ -339,7 +341,7 @@ fn parse_solax_registers(
         "Battery Current".to_string(),
         format!("{:.2}", signed16(0x15) as f64 / 100.0),
     );
-    vals.insert("Battery Power".to_string(), (-signed16(0x16)).to_string());
+    vals.insert("Battery Power".to_string(), signed16(0x16).to_string());
     vals.insert(
         "Charger Board Temperature".to_string(),
         signed16(0x17).to_string(),
