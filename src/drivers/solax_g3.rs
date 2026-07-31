@@ -376,11 +376,11 @@ fn parse_hybrid_registers(
     vals.insert("PV2 Power".to_string(), u16_a(0x0b).to_string());
     vals.insert(
         "Battery Voltage".to_string(),
-        format!("{:.2}", i16_a(0x14) as f64 / 100.0),
+        format!("{:.1}", i16_a(0x14) as f64 / 10.0),
     );
     vals.insert(
         "Battery Current".to_string(),
-        format!("{:.2}", i16_a(0x15) as f64 / 100.0),
+        format!("{:.1}", i16_a(0x15) as f64 / 10.0),
     );
     vals.insert("Battery Power".to_string(), (-i16_a(0x16)).to_string());
     vals.insert("BMS Connect State".to_string(), u16_a(0x17).to_string());
@@ -453,40 +453,44 @@ fn parse_hybrid_registers(
         "Energy Total".to_string(),
         format!("{:.3}", u32_b(0x52) as f64 / 1000.0),
     );
-    vals.insert(
-        "Battery Temperature".to_string(),
-        format!("{:.1}", u16_b(0x55) as f64 / 10.0),
-    );
-    vals.insert(
-        "Solar Energy Total".to_string(),
-        format!("{:.1}", u32_b(0x56) as f64 / 10.0),
-    );
 
-    // Block C details if present
-    if reg_c.len() >= 9 {
+    // Block C: Three Phase Grid Telemetry (R=0x6A..0x6D, S=0x6E..0x71, T=0x72..0x75)
+    if reg_c.len() >= 0x0C {
         vals.insert(
             "Phase 1 Grid Voltage".to_string(),
             format!("{:.1}", u16_c(0x6A) as f64 / 10.0),
         );
         vals.insert(
-            "Phase 2 Grid Voltage".to_string(),
-            format!("{:.1}", u16_c(0x6B) as f64 / 10.0),
-        );
-        vals.insert(
-            "Phase 3 Grid Voltage".to_string(),
-            format!("{:.1}", u16_c(0x6C) as f64 / 10.0),
-        );
-        vals.insert(
             "Phase 1 Grid Current".to_string(),
-            format!("{:.1}", i16_c(0x6D) as f64 / 10.0),
+            format!("{:.1}", i16_c(0x6B) as f64 / 10.0),
+        );
+        vals.insert(
+            "Phase 1 Grid Power".to_string(),
+            i16_c(0x6C).to_string(),
+        );
+        vals.insert(
+            "Phase 2 Grid Voltage".to_string(),
+            format!("{:.1}", u16_c(0x6E) as f64 / 10.0),
         );
         vals.insert(
             "Phase 2 Grid Current".to_string(),
-            format!("{:.1}", i16_c(0x6E) as f64 / 10.0),
+            format!("{:.1}", i16_c(0x6F) as f64 / 10.0),
+        );
+        vals.insert(
+            "Phase 2 Grid Power".to_string(),
+            i16_c(0x70).to_string(),
+        );
+        vals.insert(
+            "Phase 3 Grid Voltage".to_string(),
+            format!("{:.1}", u16_c(0x72) as f64 / 10.0),
         );
         vals.insert(
             "Phase 3 Grid Current".to_string(),
-            format!("{:.1}", i16_c(0x6F) as f64 / 10.0),
+            format!("{:.1}", i16_c(0x73) as f64 / 10.0),
+        );
+        vals.insert(
+            "Phase 3 Grid Power".to_string(),
+            i16_c(0x74).to_string(),
         );
     }
 
@@ -508,13 +512,24 @@ mod tests {
     fn test_parse_solax_g3_registers() {
         let mut reg_a = vec![0u16; 39];
         let mut reg_b = vec![0u16; 30];
-        let reg_c = vec![0u16; 14];
+        let mut reg_c = vec![0u16; 14];
 
         reg_a[0x00] = 2300; // Grid Voltage = 230.0V
         reg_a[0x01] = 105; // Grid Current = 10.5A
         reg_a[0x02] = 2000; // Inverter Power = 2000W
         reg_a[0x1C] = 15; // Battery Capacity = 15%
         reg_b[0x46 - 0x40] = 1000; // Measured Power = 1000W
+
+        // 3-Phase Grid Telemetry (R=0x6A..0x6D, S=0x6E..0x71, T=0x72..0x75)
+        reg_c[0x6A - 0x6A] = 2310; // Phase 1 Voltage = 231.0V
+        reg_c[0x6B - 0x6A] = 50;   // Phase 1 Current = 5.0A
+        reg_c[0x6C - 0x6A] = 1155; // Phase 1 Power = 1155W
+        reg_c[0x6E - 0x6A] = 2295; // Phase 2 Voltage = 229.5V
+        reg_c[0x6F - 0x6A] = 48;   // Phase 2 Current = 4.8A
+        reg_c[0x70 - 0x6A] = 1100; // Phase 2 Power = 1100W
+        reg_c[0x72 - 0x6A] = 2305; // Phase 3 Voltage = 230.5V
+        reg_c[0x73 - 0x6A] = 52;   // Phase 3 Current = 5.2A
+        reg_c[0x74 - 0x6A] = 1198; // Phase 3 Power = 1198W
 
         let parsed = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, 500);
         assert_eq!(parsed.get("Grid Voltage").unwrap(), "230.0");
@@ -523,5 +538,14 @@ mod tests {
         assert_eq!(parsed.get("Battery Capacity").unwrap(), "15");
         assert_eq!(parsed.get("Measured Power").unwrap(), "1000");
         assert_eq!(parsed.get("Requested Battery Power").unwrap(), "500");
+        assert_eq!(parsed.get("Phase 1 Grid Voltage").unwrap(), "231.0");
+        assert_eq!(parsed.get("Phase 1 Grid Current").unwrap(), "5.0");
+        assert_eq!(parsed.get("Phase 1 Grid Power").unwrap(), "1155");
+        assert_eq!(parsed.get("Phase 2 Grid Voltage").unwrap(), "229.5");
+        assert_eq!(parsed.get("Phase 2 Grid Current").unwrap(), "4.8");
+        assert_eq!(parsed.get("Phase 2 Grid Power").unwrap(), "1100");
+        assert_eq!(parsed.get("Phase 3 Grid Voltage").unwrap(), "230.5");
+        assert_eq!(parsed.get("Phase 3 Grid Current").unwrap(), "5.2");
+        assert_eq!(parsed.get("Phase 3 Grid Power").unwrap(), "1198");
     }
 }
