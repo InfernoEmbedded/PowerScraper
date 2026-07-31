@@ -175,11 +175,17 @@ pub async fn run_solax_modbus_driver(
                 }
             }
             if let Some(ref mut ctx) = *lock {
-                match ctx.read_input_registers(0, 0x72).await {
-                    Ok(regs) => Ok(regs),
-                    Err(e) => {
+                let r_a = ctx.read_input_registers(0, 0x27).await;
+                let r_b = ctx.read_input_registers(0x40, 0x1E).await;
+
+                match (r_a, r_b) {
+                    (Ok(a), Ok(b)) => Ok((a, b)),
+                    _ => {
                         *lock = None; // Reset on failure
-                        Err(e)
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionReset,
+                            "Failed to read Modbus blocks",
+                        ))
                     }
                 }
             } else {
@@ -191,9 +197,9 @@ pub async fn run_solax_modbus_driver(
         };
 
         match read_res {
-            Ok(registers) => {
-                if registers.len() >= 0x72 {
-                    let mut vals = parse_solax_registers(&registers, req_power);
+            Ok((reg_a, reg_b)) => {
+                if reg_a.len() >= 0x27 && reg_b.len() >= 0x1E {
+                    let mut vals = parse_solax_registers(&reg_a, &reg_b, req_power);
 
                     // Update global status for dashboard
                     let bat_cap = vals
@@ -277,22 +283,28 @@ pub async fn run_solax_modbus_driver(
 }
 
 fn parse_solax_registers(
-    registers: &[u16],
+    reg_a: &[u16],
+    reg_b: &[u16],
     requested_battery_power: i32,
 ) -> HashMap<String, String> {
     let mut vals = HashMap::new();
 
-    let unsigned16 = |addr: usize| -> u32 { registers[addr] as u32 };
-
-    let signed16 = |addr: usize| -> i32 { registers[addr] as i16 as i32 };
-
-    let unsigned32 = |addr: usize| -> u32 {
-        let low = registers[addr] as u32;
-        let high = registers[addr + 1] as u32;
+    let unsigned16_a = |addr: usize| -> u32 { reg_a[addr] as u32 };
+    let signed16_a = |addr: usize| -> i32 { reg_a[addr] as i16 as i32 };
+    let unsigned32_a = |addr: usize| -> u32 {
+        let low = reg_a[addr] as u32;
+        let high = reg_a[addr + 1] as u32;
         low | (high << 16)
     };
 
-    let signed32 = |addr: usize| -> i32 { unsigned32(addr) as i32 };
+    let unsigned16_b = |addr: usize| -> u32 { reg_b[addr - 0x40] as u32 };
+    let _signed16_b = |addr: usize| -> i32 { reg_b[addr - 0x40] as i16 as i32 };
+    let unsigned32_b = |addr: usize| -> u32 {
+        let low = reg_b[addr - 0x40] as u32;
+        let high = reg_b[addr + 1 - 0x40] as u32;
+        low | (high << 16)
+    };
+    let signed32_b = |addr: usize| -> i32 { unsigned32_b(addr) as i32 };
 
     vals.insert(
         "Requested Battery Power".to_string(),
@@ -300,121 +312,117 @@ fn parse_solax_registers(
     );
     vals.insert(
         "Grid Voltage".to_string(),
-        format!("{:.1}", unsigned16(0x00) as f64 / 10.0),
+        format!("{:.1}", unsigned16_a(0x00) as f64 / 10.0),
     );
     vals.insert(
         "Grid Current".to_string(),
-        format!("{:.1}", signed16(0x01) as f64 / 10.0),
+        format!("{:.1}", signed16_a(0x01) as f64 / 10.0),
     );
-    vals.insert("Inverter Power".to_string(), signed16(0x02).to_string());
+    vals.insert("Inverter Power".to_string(), signed16_a(0x02).to_string());
     vals.insert(
         "PV1 Voltage".to_string(),
-        format!("{:.1}", unsigned16(0x03) as f64 / 10.0),
+        format!("{:.1}", unsigned16_a(0x03) as f64 / 10.0),
     );
     vals.insert(
         "PV2 Voltage".to_string(),
-        format!("{:.1}", unsigned16(0x04) as f64 / 10.0),
+        format!("{:.1}", unsigned16_a(0x04) as f64 / 10.0),
     );
     vals.insert(
         "PV1 Current".to_string(),
-        format!("{:.1}", unsigned16(0x05) as f64 / 10.0),
+        format!("{:.1}", unsigned16_a(0x05) as f64 / 10.0),
     );
     vals.insert(
         "PV2 Current".to_string(),
-        format!("{:.1}", unsigned16(0x06) as f64 / 10.0),
+        format!("{:.1}", unsigned16_a(0x06) as f64 / 10.0),
     );
     vals.insert(
         "Grid Frequency".to_string(),
-        format!("{:.2}", unsigned16(0x07) as f64 / 100.0),
+        format!("{:.2}", unsigned16_a(0x07) as f64 / 100.0),
     );
-    vals.insert("Inner Temp".to_string(), signed16(0x08).to_string());
-    vals.insert("Run Mode".to_string(), unsigned16(0x09).to_string());
-    vals.insert("PV1 Power".to_string(), unsigned16(0x0a).to_string());
-    vals.insert("PV2 Power".to_string(), unsigned16(0x0b).to_string());
+    vals.insert("Inner Temp".to_string(), signed16_a(0x08).to_string());
+    vals.insert("Run Mode".to_string(), unsigned16_a(0x09).to_string());
+    vals.insert("PV1 Power".to_string(), unsigned16_a(0x0a).to_string());
+    vals.insert("PV2 Power".to_string(), unsigned16_a(0x0b).to_string());
     vals.insert(
         "Battery Voltage".to_string(),
-        format!("{:.2}", signed16(0x14) as f64 / 100.0),
+        format!("{:.2}", signed16_a(0x14) as f64 / 100.0),
     );
     vals.insert(
         "Battery Current".to_string(),
-        format!("{:.2}", signed16(0x15) as f64 / 100.0),
+        format!("{:.2}", signed16_a(0x15) as f64 / 100.0),
     );
-    vals.insert("Battery Power".to_string(), (-signed16(0x16)).to_string());
+    vals.insert("Battery Power".to_string(), (-signed16_a(0x16)).to_string());
     vals.insert(
         "Charger Board Temperature".to_string(),
-        signed16(0x17).to_string(),
+        signed16_a(0x17).to_string(),
     );
     vals.insert(
         "Charger Battery Temperature".to_string(),
-        signed16(0x18).to_string(),
+        signed16_a(0x18).to_string(),
     );
     vals.insert(
         "Charger Boost Temperature".to_string(),
-        signed16(0x19).to_string(),
+        signed16_a(0x19).to_string(),
     );
-    vals.insert("Battery Capacity".to_string(), unsigned16(0x1C).to_string());
+    vals.insert("Battery Capacity".to_string(), unsigned16_a(0x1C).to_string());
     vals.insert(
         "Battery Energy Discharged".to_string(),
-        format!("{:.1}", unsigned32(0x1D) as f64 / 10.0),
+        format!("{:.1}", unsigned32_a(0x1D) as f64 / 10.0),
     );
-    vals.insert("BMS Warning".to_string(), unsigned16(0x1F).to_string());
+    vals.insert("BMS Warning".to_string(), unsigned16_a(0x1F).to_string());
     vals.insert(
         "Battery Energy Charged".to_string(),
-        format!("{:.1}", unsigned32(0x20) as f64 / 10.0),
+        format!("{:.1}", unsigned32_a(0x20) as f64 / 10.0),
     );
     vals.insert(
         "Battery State of Health".to_string(),
-        unsigned16(0x23).to_string(),
+        unsigned16_a(0x23).to_string(),
     );
-    vals.insert("Inverter Fault".to_string(), unsigned32(0x40).to_string());
-    vals.insert("Charger Fault".to_string(), unsigned16(0x42).to_string());
-    vals.insert("Manager Fault".to_string(), unsigned16(0x43).to_string());
+    vals.insert("Inverter Fault".to_string(), unsigned32_b(0x40).to_string());
+    vals.insert("Charger Fault".to_string(), unsigned16_b(0x42).to_string());
+    vals.insert("Manager Fault".to_string(), unsigned16_b(0x43).to_string());
 
-    let measured_power = signed32(0x46);
+    let measured_power = signed32_b(0x46);
     vals.insert("Measured Power".to_string(), measured_power.to_string());
     vals.insert(
         "Feed In Energy".to_string(),
-        format!("{:.2}", unsigned32(0x48) as f64 / 100.0),
+        format!("{:.2}", unsigned32_b(0x48) as f64 / 100.0),
     );
     vals.insert(
         "Consumed Energy".to_string(),
-        format!("{:.2}", unsigned32(0x4A) as f64 / 100.0),
+        format!("{:.2}", unsigned32_b(0x4A) as f64 / 100.0),
     );
     vals.insert(
         "EPS Voltage".to_string(),
-        format!("{:.1}", unsigned16(0x4C) as f64 / 10.0),
+        format!("{:.1}", unsigned16_b(0x4C) as f64 / 10.0),
     );
     vals.insert(
         "EPS Current".to_string(),
-        format!("{:.1}", unsigned16(0x4D) as f64 / 10.0),
+        format!("{:.1}", unsigned16_b(0x4D) as f64 / 10.0),
     );
-    vals.insert("EPS VA".to_string(), unsigned16(0x4E).to_string());
+    vals.insert("EPS VA".to_string(), unsigned16_b(0x4E).to_string());
     vals.insert(
         "EPS Frequency".to_string(),
-        format!("{:.2}", unsigned16(0x4F) as f64 / 100.0),
+        format!("{:.2}", unsigned16_b(0x4F) as f64 / 100.0),
     );
     vals.insert(
         "Energy Today".to_string(),
-        format!("{:.1}", unsigned16(0x50) as f64 / 10.0),
+        format!("{:.1}", unsigned16_b(0x50) as f64 / 10.0),
     );
     vals.insert(
         "Energy Total".to_string(),
-        format!("{:.3}", unsigned32(0x52) as f64 / 1000.0),
+        format!("{:.3}", unsigned32_b(0x52) as f64 / 1000.0),
     );
     vals.insert(
         "Battery Temperature".to_string(),
-        format!("{:.1}", unsigned16(0x55) as f64 / 10.0),
-    );
-    vals.insert(
-        "Solar Energy Total".to_string(),
-        format!("{:.1}", unsigned32(0x70) as f64 / 10.0),
+        format!("{:.1}", unsigned16_b(0x55) as f64 / 10.0),
     );
 
-    let battery_power = signed16(0x16);
+    let battery_power = signed16_a(0x16);
     let power_budget = battery_power + measured_power;
     vals.insert("Power Budget".to_string(), power_budget.to_string());
 
-    let usage = signed16(0x02) - measured_power;
+    let usage = signed16_a(0x02) - measured_power;
     vals.insert("Usage".to_string(), usage.to_string());
 
     vals
@@ -426,14 +434,15 @@ mod tests {
 
     #[test]
     fn test_parse_solax_registers() {
-        let mut regs = vec![0u16; 114];
-        regs[0x00] = 2300; // Grid Voltage = 230.0V
-        regs[0x01] = 105; // Grid Current = 10.5A
-        regs[0x02] = 2000; // Inverter Power = 2000W
-        regs[0x1C] = 15; // Battery Capacity = 15%
-        regs[0x46] = 1000; // Measured Power = 1000W
+        let mut reg_a = vec![0u16; 39];
+        let mut reg_b = vec![0u16; 30];
+        reg_a[0x00] = 2300; // Grid Voltage = 230.0V
+        reg_a[0x01] = 105; // Grid Current = 10.5A
+        reg_a[0x02] = 2000; // Inverter Power = 2000W
+        reg_a[0x1C] = 15; // Battery Capacity = 15%
+        reg_b[0x46 - 0x40] = 1000; // Measured Power = 1000W
 
-        let parsed = parse_solax_registers(&regs, 500);
+        let parsed = parse_solax_registers(&reg_a, &reg_b, 500);
         assert_eq!(parsed.get("Grid Voltage").unwrap(), "230.0");
         assert_eq!(parsed.get("Grid Current").unwrap(), "10.5");
         assert_eq!(parsed.get("Inverter Power").unwrap(), "2000");

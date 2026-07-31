@@ -198,15 +198,18 @@ pub async fn run_solax_g3_driver(
                 // Split queries into three non-contiguous blocks to avoid address exceptions
                 let r_a = ctx.read_input_registers(0, 0x27).await;
                 let r_b = ctx.read_input_registers(0x40, 0x1E).await;
-                let r_c = ctx.read_input_registers(0x6A, 0x0E).await;
+                let r_c = ctx.read_input_registers(0x6A, 0x0C).await;
 
-                match (r_a, r_b, r_c) {
-                    (Ok(a), Ok(b), Ok(c)) => Ok((a, b, c)),
+                match (r_a, r_b) {
+                    (Ok(a), Ok(b)) => {
+                        let c = r_c.unwrap_or_default();
+                        Ok((a, b, c))
+                    }
                     _ => {
                         *lock = None;
                         Err(std::io::Error::new(
                             std::io::ErrorKind::ConnectionReset,
-                            "Failed to read one or more Modbus blocks",
+                            "Failed to read core Modbus blocks",
                         ))
                     }
                 }
@@ -220,7 +223,7 @@ pub async fn run_solax_g3_driver(
 
         match read_res {
             Ok((reg_a, reg_b, reg_c)) => {
-                if reg_a.len() >= 0x27 && reg_b.len() >= 0x1E && reg_c.len() >= 0x0E {
+                if reg_a.len() >= 0x27 && reg_b.len() >= 0x1E {
                     let mut vals = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power);
 
                     // Update global status for dashboard
