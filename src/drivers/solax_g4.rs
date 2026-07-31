@@ -155,9 +155,9 @@ pub async fn run_solax_g4_driver(
                         // 2. Write 30s to RemoteCtrlTimeOut (0x0088)
                         let _ = ctx.write_single_register(0x0088, 30).await;
                         // 3. Write requested power as int32 to 0x007E (Positive = charge, Negative = discharge)
-                        let low_word = (req_power & 0xFFFF) as u16;
                         let high_word = ((req_power >> 16) & 0xFFFF) as u16;
-                        if ctx.write_multiple_registers(0x007E, &[low_word, high_word]).await.is_ok() {
+                        let low_word = (req_power & 0xFFFF) as u16;
+                        if ctx.write_multiple_registers(0x007E, &[high_word, low_word]).await.is_ok() {
                             last_written_power = Some(req_power);
                             last_write_time = Some(std::time::Instant::now());
                         }
