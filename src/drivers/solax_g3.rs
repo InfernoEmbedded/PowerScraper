@@ -173,7 +173,7 @@ pub async fn run_solax_g3_driver(
                     let _ = ctx.write_single_register(0x9F, 30).await;
                     tokio::time::sleep(Duration::from_millis(200)).await;
                     // 3. Write target power to Modbus ActivePower (0x0052)
-                    let power_u16 = (-req_power) as u16;
+                    let power_u16 = req_power as u16;
                     if ctx.write_single_register(0x52, power_u16).await.is_ok() {
                         last_written_power = Some(req_power);
                         last_write_time = Some(std::time::Instant::now());
