@@ -77,6 +77,9 @@ pub async fn run_solax_modbus_driver(
     let req_power_clone = requested_battery_power.clone();
     let inverter_name_clone = inverter_name.clone();
     let cancel_token_clone = cancel_token.clone();
+    let mut last_power: Option<i32> = None;
+    let mut last_write_time: Option<std::time::Instant> = None;
+
     tokio::spawn(async move {
         loop {
             tokio::select! {
@@ -88,23 +91,38 @@ pub async fn run_solax_modbus_driver(
                                 if publish.topic == command_topic {
                                     let payload = String::from_utf8_lossy(&publish.payload);
                                     if let Ok(power) = payload.trim().parse::<i32>() {
-
                                         *req_power_clone.lock().await = power;
 
-                                        let power_u16 = power as u16;
-                                        let mut lock = ctx_clone.lock().await;
-                                        if lock.is_none() {
-                                            if let Ok(addr) = resolve_address(&hostname_clone).await {
-                                                if let Ok(ctx) = tcp::connect(addr).await {
-                                                    *lock = Some(ctx);
+                                        let needs_update = match (last_power, last_write_time) {
+                                            (Some(lp), Some(lt)) => lp != power || lt.elapsed() >= Duration::from_secs(10),
+                                            _ => true,
+                                        };
+
+                                        if needs_update {
+                                            if let Some(lt) = last_write_time {
+                                                let elapsed = lt.elapsed();
+                                                if elapsed < Duration::from_secs(1) {
+                                                    sleep(Duration::from_secs(1) - elapsed).await;
                                                 }
                                             }
-                                        }
-                                        if let Some(ref mut ctx) = *lock {
-                                            if ctx.write_single_register(0x51, power_u16).await.is_ok()
-                                                && power != 0
-                                            {
-                                                let _ = ctx.write_single_register(0x90, 1).await;
+
+                                            let power_u16 = power as u16;
+                                            let mut lock = ctx_clone.lock().await;
+                                            if lock.is_none() {
+                                                if let Ok(addr) = resolve_address(&hostname_clone).await {
+                                                    if let Ok(ctx) = tcp::connect(addr).await {
+                                                        *lock = Some(ctx);
+                                                    }
+                                                }
+                                            }
+                                            if let Some(ref mut ctx) = *lock {
+                                                if ctx.write_single_register(0x51, power_u16).await.is_ok() {
+                                                    last_power = Some(power);
+                                                    last_write_time = Some(std::time::Instant::now());
+                                                    if power != 0 {
+                                                        let _ = ctx.write_single_register(0x90, 1).await;
+                                                    }
+                                                }
                                             }
                                         }
                                     }
