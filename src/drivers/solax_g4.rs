@@ -341,7 +341,7 @@ fn parse_solax_registers(
         "Battery Current".to_string(),
         format!("{:.2}", signed16(0x15) as f64 / 100.0),
     );
-    vals.insert("Battery Power".to_string(), signed16(0x16).to_string());
+    vals.insert("Battery Power".to_string(), (-signed16(0x16)).to_string());
     vals.insert(
         "Charger Board Temperature".to_string(),
         signed16(0x17).to_string(),

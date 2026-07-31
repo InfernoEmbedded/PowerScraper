@@ -374,7 +374,7 @@ fn parse_hybrid_registers(
         "Battery Current".to_string(),
         format!("{:.1}", i16_a(0x15) as f64 / 10.0),
     );
-    vals.insert("Battery Power".to_string(), i16_a(0x16).to_string());
+    vals.insert("Battery Power".to_string(), (-i16_a(0x16)).to_string());
     vals.insert("BMS Connect State".to_string(), u16_a(0x17).to_string());
     vals.insert("Battery Temperature".to_string(), i16_a(0x18).to_string());
     vals.insert(
