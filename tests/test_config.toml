@@ -11,7 +11,7 @@ timeout = 5
 inverters = ["solax-modbus"]
 hostnames = ["127.0.0.1:5020"]
 
-[Solax-XHybrid-Modbus]
+[Solax-G3-Modbus]
 poll-period = 1
 timeout = 5
 inverters = ["solax-xhybrid"]

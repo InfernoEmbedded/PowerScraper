@@ -140,7 +140,7 @@ async function main() {
         }
         
         const inverterText = await page.innerText('#dash-inverters-list');
-        if (!inverterText.includes('solax-modbus') || !inverterText.includes('85 %') || !inverterText.includes('solax-xhybrid')) {
+        if (!inverterText.includes('solax-modbus') || !inverterText.includes('85 %') || !inverterText.includes('solax-x3')) {
             throw new Error(`Inverter telemetry rendered incorrectly: '${inverterText}'`);
         }
 
@@ -152,7 +152,7 @@ async function main() {
                 return idEl ? idEl.innerText.trim() : '';
             });
         });
-        if (renderedIds[0] !== 'solax-modbus' || renderedIds[1] !== 'solax-xhybrid') {
+        if (renderedIds[0] !== 'solax-modbus' || renderedIds[1] !== 'solax-x3') {
             throw new Error(`Expected inverters to be sorted alphabetically, got: ${JSON.stringify(renderedIds)}`);
         }
 

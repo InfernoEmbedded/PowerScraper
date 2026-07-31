@@ -28,19 +28,6 @@ pub struct SolaxModbusConfig {
     pub hostnames: Option<Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-#[serde(rename_all = "kebab-case")]
-pub struct SolaxXHybridModbusConfig {
-    #[serde(alias = "poll_period")]
-    pub poll_period: f64,
-    pub timeout: f64,
-    #[serde(alias = "power_budget_avg_samples")]
-    pub power_budget_avg_samples: Option<usize>,
-    #[serde(alias = "installer_password")]
-    pub installer_password: Option<u16>,
-    pub inverters: Vec<String>,
-    pub hostnames: Option<Vec<String>>,
-}
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
@@ -453,8 +440,6 @@ pub struct Config {
     #[serde(rename = "Solax-Modbus")]
     pub solax_modbus: Option<SolaxModbusConfig>,
 
-    #[serde(rename = "Solax-XHybrid-Modbus")]
-    pub solax_xhybrid_modbus: Option<SolaxXHybridModbusConfig>,
 
     #[serde(rename = "Solax-G4-Modbus")]
     pub solax_g4_modbus: Option<SolaxG4ModbusConfig>,
@@ -538,7 +523,6 @@ impl Config {
             history: None,
             solax_wifi: None,
             solax_modbus: None,
-            solax_xhybrid_modbus: None,
             solax_g4_modbus: None,
             solax_g3_modbus: None,
             sdm630_modbus_v2: None,
@@ -577,7 +561,7 @@ mod tests {
         );
         let config = config_res.unwrap();
         assert!(config.solax_modbus.is_some());
-        assert!(config.solax_xhybrid_modbus.is_some());
+        assert!(config.solax_g3_modbus.is_some());
     }
 
     #[test]

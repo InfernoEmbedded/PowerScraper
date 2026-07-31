@@ -332,8 +332,8 @@ async fn test_integration_loop() {
     if let Some(ref mut modbus) = config.solax_modbus {
         modbus.hostnames = Some(vec![format!("127.0.0.1:{}", modbus_port)]);
     }
-    if let Some(ref mut hybrid) = config.solax_xhybrid_modbus {
-        hybrid.hostnames = Some(vec![format!("127.0.0.1:{}", modbus_port)]);
+    if let Some(ref mut g3) = config.solax_g3_modbus {
+        g3.hostnames = Some(vec![format!("127.0.0.1:{}", modbus_port)]);
     }
     if let Some(ref mut wifi) = config.solax_wifi {
         wifi.inverters = vec![format!("127.0.0.1:{}", wifi_port)];
@@ -419,15 +419,15 @@ async fn test_integration_loop() {
                 });
             }
 
-            if let Some(hybrid_cfg) = current_cfg.solax_xhybrid_modbus.clone() {
+            if let Some(g3_cfg) = current_cfg.solax_g3_modbus.clone() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
-                let hostname = hybrid_cfg.hostnames.as_ref().and_then(|h| h.first()).cloned().unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
+                let hostname = g3_cfg.hostnames.as_ref().and_then(|h| h.first()).cloned().unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
                 tokio::spawn(async move {
-                    drivers::solax_xhybrid::run_solax_xhybrid_driver(
+                    drivers::solax_g3::run_solax_g3_driver(
                         "solax-xhybrid".to_string(),
                         hostname,
-                        hybrid_cfg,
+                        g3_cfg,
                         mqtt_clone,
                         token_clone,
                     )

@@ -103,7 +103,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             calculated_battery_capacity: Some(13.82),
             requested_power: Some(-1000),
         });
-        invs.insert("solax-xhybrid".to_string(), PowerScraper::web_server::InverterStatus {
+        invs.insert("solax-x3".to_string(), PowerScraper::web_server::InverterStatus {
             battery_capacity: 90,
             battery_power: 1000,
             pv_power: 1500,

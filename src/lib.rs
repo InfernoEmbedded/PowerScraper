@@ -16,7 +16,6 @@ pub mod drivers {
     pub mod sdm630;
     pub mod dtsu666;
     pub mod solax_modbus;
-    pub mod solax_xhybrid;
     pub mod solax_wifi;
     pub mod solax_g4;
     pub mod solax_g3;

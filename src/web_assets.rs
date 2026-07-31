@@ -873,7 +873,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <select id="new-driver-type" style="width: 100%; margin-top: 5px;">
                     <option value="Solax-Wifi">SolaX Wi-Fi HTTP API</option>
                     <option value="Solax-Modbus">SolaX Modbus TCP (Standard)</option>
-                    <option value="Solax-XHybrid-Modbus">SolaX XHybrid Modbus TCP</option>
+                    <option value="Solax-G3-Modbus">SolaX Generation 3 Modbus TCP</option>
+                    <option value="Solax-G4-Modbus">SolaX Generation 4 Modbus TCP</option>
                     <option value="SDM630Modbusv2">Eastron SDM630 Serial Meter</option>
                     <option value="DTSU666">Chint DTSU666 Serial Meter</option>
                     <option value="MQTTPowerMeter">MQTT Custom Power Meter Bridge</option>
@@ -1964,44 +1965,46 @@ function renderDriverCard(type, data = {}) {
                 </div>
             </div>
         `;
-    } else if (type === 'Solax-XHybrid-Modbus') {
-        const name = data.inverter || 'solax-xhybrid';
+    } else if (type === 'Solax-G3-Modbus' || type === 'Solax-G4-Modbus') {
+        const title = type === 'Solax-G3-Modbus' ? 'SolaX Generation 3 Modbus TCP' : 'SolaX Generation 4 Modbus TCP';
+        const defaultPrefix = type === 'Solax-G3-Modbus' ? 'solax-g3' : 'solax-g4';
+        const name = data.inverter || defaultPrefix;
         const host = data.hostname || '';
-        const poll = data.poll_period !== undefined ? data.poll_period : 10;
+        const poll = data.poll_period !== undefined ? data.poll_period : 1;
         const timeout = data.timeout !== undefined ? data.timeout : 5;
         const pwd = data.password !== undefined ? data.password : '';
         const avg = data.power_budget_avg_samples !== undefined ? data.power_budget_avg_samples : 30;
         content = `
             <div class="card-title">
-                <span>SolaX XHybrid Modbus TCP</span>
+                <span>${title}</span>
                 <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
             </div>
             <div class="form-row">
                 <div class="form-group">
                     <label>Inverter Name (Identifier)</label>
-                    <input type="text" class="driver-hybrid-name" value="${name}" placeholder="e.g. solax-xhybrid">
+                    <input type="text" class="driver-g3g4-name" value="${name}" placeholder="e.g. ${defaultPrefix}">
                 </div>
                 <div class="form-group">
                     <label>Inverter Host / IP (with optional port)</label>
-                    <input type="text" class="driver-hybrid-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
+                    <input type="text" class="driver-g3g4-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
                 </div>
                 <div class="form-group">
                     <label>Poll Period (s)</label>
-                    <input type="number" class="driver-hybrid-poll" value="${poll}">
+                    <input type="number" class="driver-g3g4-poll" value="${poll}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
                     <label>Timeout (s)</label>
-                    <input type="number" step="0.1" class="driver-hybrid-timeout" value="${timeout}">
+                    <input type="number" step="0.1" class="driver-g3g4-timeout" value="${timeout}">
                 </div>
                 <div class="form-group">
                     <label>Installer Password</label>
-                    <input type="number" class="driver-hybrid-password" value="${pwd}" placeholder="Optional">
+                    <input type="number" class="driver-g3g4-password" value="${pwd}" placeholder="Optional">
                 </div>
                 <div class="form-group">
                     <label>Power Budget Avg Samples</label>
-                    <input type="number" class="driver-hybrid-avg" value="${avg}">
+                    <input type="number" class="driver-g3g4-avg" value="${avg}">
                 </div>
             </div>
         `;
@@ -2361,27 +2364,30 @@ async function loadConfig(configData = null) {
             });
         }
 
-        // 3. Load Solax XHybrid Modbus
-        const hybrid = config["Solax-XHybrid-Modbus"];
-        if (hybrid && hybrid.inverters) {
-            const sortedHybrid = hybrid.inverters.map((name, idx) => {
-                return {
+        // 3. Load Solax G3 & G4 Modbus
+        const loadModbusDriverGroup = (type, key) => {
+            const drv = config[key];
+            if (drv && drv.inverters) {
+                const sorted = drv.inverters.map((name, idx) => ({
                     name: name,
-                    host: (hybrid.hostnames && hybrid.hostnames[idx]) ? hybrid.hostnames[idx] : ''
-                };
-            });
-            sortedHybrid.sort((a, b) => a.name.localeCompare(b.name));
-            sortedHybrid.forEach(item => {
-                renderDriverCard('Solax-XHybrid-Modbus', {
-                    inverter: item.name,
-                    hostname: item.host,
-                    poll_period: hybrid["poll-period"] || hybrid.poll_period || 10,
-                    timeout: hybrid.timeout || 5,
-                    password: hybrid["installer-password"] || hybrid.installer_password || '',
-                    power_budget_avg_samples: hybrid["power-budget-avg-samples"] || hybrid.power_budget_avg_samples || 30
+                    host: (drv.hostnames && drv.hostnames[idx]) ? drv.hostnames[idx] : ''
+                }));
+                sorted.sort((a, b) => a.name.localeCompare(b.name));
+                sorted.forEach(item => {
+                    renderDriverCard(type, {
+                        inverter: item.name,
+                        hostname: item.host,
+                        poll_period: drv["poll-period"] || drv.poll_period || 1,
+                        timeout: drv.timeout || 5,
+                        password: drv["installer-password"] || drv.installer_password || '',
+                        power_budget_avg_samples: drv["power-budget-avg-samples"] || drv.power_budget_avg_samples || 30
+                    });
                 });
-            });
-        }
+            }
+        };
+
+        loadModbusDriverGroup('Solax-G3-Modbus', 'Solax-G3-Modbus');
+        loadModbusDriverGroup('Solax-G4-Modbus', 'Solax-G4-Modbus');
 
         // 4. Load SDM630
         const sdm = config.SDM630Modbusv2;
@@ -2658,7 +2664,8 @@ function isConfigPopulated(config) {
     // Check if any hardware driver has configured items
     if (config["Solax-Wifi"] && config["Solax-Wifi"].inverters && config["Solax-Wifi"].inverters.length > 0) return true;
     if (config["Solax-Modbus"] && config["Solax-Modbus"].inverters && config["Solax-Modbus"].inverters.length > 0) return true;
-    if (config["Solax-XHybrid-Modbus"] && config["Solax-XHybrid-Modbus"].inverters && config["Solax-XHybrid-Modbus"].inverters.length > 0) return true;
+    if (config["Solax-G3-Modbus"] && config["Solax-G3-Modbus"].inverters && config["Solax-G3-Modbus"].inverters.length > 0) return true;
+    if (config["Solax-G4-Modbus"] && config["Solax-G4-Modbus"].inverters && config["Solax-G4-Modbus"].inverters.length > 0) return true;
     if (config.SDM630Modbusv2 && config.SDM630Modbusv2.ports && config.SDM630Modbusv2.ports.length > 0) return true;
     if (config.DTSU666 && config.DTSU666.ports && config.DTSU666.ports.length > 0) return true;
     if (config.MQTTPowerMeter && config.MQTTPowerMeter.meters && config.MQTTPowerMeter.meters.length > 0) return true;
@@ -3066,8 +3073,11 @@ function getDefinedInverters(config) {
     if (config["Solax-Modbus"] && config["Solax-Modbus"].inverters) {
         config["Solax-Modbus"].inverters.forEach(k => list.add(k));
     }
-    if (config["Solax-XHybrid-Modbus"] && config["Solax-XHybrid-Modbus"].inverters) {
-        config["Solax-XHybrid-Modbus"].inverters.forEach(k => list.add(k));
+    if (config["Solax-G3-Modbus"] && config["Solax-G3-Modbus"].inverters) {
+        config["Solax-G3-Modbus"].inverters.forEach(k => list.add(k));
+    }
+    if (config["Solax-G4-Modbus"] && config["Solax-G4-Modbus"].inverters) {
+        config["Solax-G4-Modbus"].inverters.forEach(k => list.add(k));
     }
     if (config["Solax-Wifi"] && config["Solax-Wifi"].inverters) {
         config["Solax-Wifi"].inverters.forEach(k => list.add(k));
@@ -3247,7 +3257,8 @@ async function saveConfiguration() {
 
     let wifiConfig = null;
     let modbusConfig = null;
-    let hybridConfig = null;
+    let g3Config = null;
+    let g4Config = null;
     let sdmConfig = null;
     let dtsuConfig = null;
     let mqttMeterConfig = null;
@@ -3291,17 +3302,18 @@ async function saveConfiguration() {
                 modbusConfig.inverters.push(name);
                 modbusConfig.hostnames.push(host);
             }
-        } else if (type === 'Solax-XHybrid-Modbus') {
-            const name = card.querySelector('.driver-hybrid-name').value.trim();
-            const host = card.querySelector('.driver-hybrid-host').value.trim();
-            const poll = parseInt(card.querySelector('.driver-hybrid-poll').value) || 10;
-            const timeout = parseFloat(card.querySelector('.driver-hybrid-timeout').value) || 5;
-            const pwdVal = card.querySelector('.driver-hybrid-password').value.trim();
+        } else if (type === 'Solax-G3-Modbus' || type === 'Solax-G4-Modbus') {
+            const name = card.querySelector('.driver-g3g4-name').value.trim();
+            const host = card.querySelector('.driver-g3g4-host').value.trim();
+            const poll = parseInt(card.querySelector('.driver-g3g4-poll').value) || 1;
+            const timeout = parseFloat(card.querySelector('.driver-g3g4-timeout').value) || 5;
+            const pwdVal = card.querySelector('.driver-g3g4-password').value.trim();
             const pwd = pwdVal ? parseInt(pwdVal) : null;
-            const avg = parseInt(card.querySelector('.driver-hybrid-avg').value) || 30;
+            const avg = parseInt(card.querySelector('.driver-g3g4-avg').value) || 30;
             if (name && host) {
-                if (!hybridConfig) {
-                    hybridConfig = {
+                let targetCfg = type === 'Solax-G3-Modbus' ? g3Config : g4Config;
+                if (!targetCfg) {
+                    targetCfg = {
                         "poll-period": poll,
                         timeout: timeout,
                         "installer-password": pwd,
@@ -3309,9 +3321,11 @@ async function saveConfiguration() {
                         inverters: [],
                         hostnames: []
                     };
+                    if (type === 'Solax-G3-Modbus') g3Config = targetCfg;
+                    else g4Config = targetCfg;
                 }
-                hybridConfig.inverters.push(name);
-                hybridConfig.hostnames.push(host);
+                targetCfg.inverters.push(name);
+                targetCfg.hostnames.push(host);
             }
         } else if (type === 'SDM630Modbusv2') {
             const port = card.querySelector('.driver-sdm-port').value.trim();
@@ -3454,7 +3468,8 @@ async function saveConfiguration() {
 
     cfg["Solax-Wifi"] = wifiConfig;
     cfg["Solax-Modbus"] = modbusConfig;
-    cfg["Solax-XHybrid-Modbus"] = hybridConfig;
+    cfg["Solax-G3-Modbus"] = g3Config;
+    cfg["Solax-G4-Modbus"] = g4Config;
     cfg.SDM630Modbusv2 = sdmConfig;
     cfg.DTSU666 = dtsuConfig;
     cfg.MQTTPowerMeter = mqttMeterConfig;

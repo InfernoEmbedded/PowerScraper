@@ -242,32 +242,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 5. Spawn Solax XHybrid Modbus TCP Drivers
-        if let Some(ref hybrid_cfg) = config.solax_xhybrid_modbus {
-            println!("Spawning Solax XHybrid Modbus TCP Drivers...");
-            let hostnames = hybrid_cfg.hostnames.clone().unwrap_or_default();
-            for (idx, inverter) in hybrid_cfg.inverters.iter().enumerate() {
-                let hostname = if idx < hostnames.len() {
-                    hostnames[idx].clone()
-                } else {
-                    format!("{}:502", inverter)
-                };
-                let inv_clone = inverter.clone();
-                let cfg_clone = hybrid_cfg.clone();
-                let mqtt_clone = mqtt_config.clone();
-                let cancel_clone = cancel_token.clone();
-                tokio::spawn(async move {
-                    drivers::solax_xhybrid::run_solax_xhybrid_driver(
-                        inv_clone,
-                        hostname,
-                        cfg_clone,
-                        mqtt_clone,
-                        cancel_clone,
-                    )
-                    .await;
-                });
-            }
-        }
 
         // 5b. Spawn Solax G4 Modbus TCP Drivers
         if let Some(ref g4_cfg) = config.solax_g4_modbus {
