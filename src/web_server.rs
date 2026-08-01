@@ -126,10 +126,50 @@ fn export_backup_dump(db_path: &str) -> Result<BackupDump, (axum::http::StatusCo
     })
 }
 
+fn export_telemetry_csv(db_path: &str) -> Result<([(header::HeaderName, String); 2], Vec<u8>), (axum::http::StatusCode, String)> {
+    let _ = crate::database::init_history_db(db_path);
+
+    let history_rows = crate::database::get_all_telemetry_since(db_path, 0)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to query telemetry history: {}", e)))?;
+
+    let mut wtr = csv::WriterBuilder::new().from_writer(Vec::new());
+    if let Err(e) = wtr.write_record(&["timestamp", "iso_time", "topic", "value"]) {
+        return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV write header error: {}", e)));
+    }
+
+    for (ts, topic, val) in history_rows {
+        let dt_str = match chrono::DateTime::from_timestamp(ts, 0) {
+            Some(dt) => dt.to_rfc3339(),
+            None => "".to_string(),
+        };
+        if let Err(e) = wtr.write_record(&[ts.to_string(), dt_str, topic, val.to_string()]) {
+            return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV write record error: {}", e)));
+        }
+    }
+
+    let csv_bytes = wtr.into_inner()
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV flush error: {}", e)))?;
+
+    let now_str = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let filename = format!("powerscraper_telemetry_{}.csv", now_str);
+
+    let headers = [
+        (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_string()),
+        (
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename=\"{}\"", filename),
+        ),
+    ];
+
+    Ok((headers, csv_bytes))
+}
+
 pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
     let db_path_clone = db_path.clone();
     let db_path_backup_export = db_path.clone();
     let db_path_backup_dl = db_path.clone();
+    let db_path_telemetry_csv = db_path.clone();
+    let db_path_telemetry_csv2 = db_path.clone();
     let db_path_backup_import = db_path.clone();
     let db_path_sim = db_path.clone();
     let db_path_train = db_path.clone();
@@ -264,6 +304,30 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                             }
                             Err(e) => Err(e),
                         }
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/telemetry/export.csv",
+            get({
+                let db_path = db_path_telemetry_csv.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move {
+                        export_telemetry_csv(&path)
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/backup/telemetry.csv",
+            get({
+                let db_path = db_path_telemetry_csv2.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move {
+                        export_telemetry_csv(&path)
                     }
                 }
             }),
@@ -1018,6 +1082,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+
+        // 9. Test GET /api/telemetry/export.csv
+        let response = app.clone()
+            .oneshot(Request::builder().uri("/api/telemetry/export.csv").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers().get("content-type").unwrap(), "text/csv; charset=utf-8");
+        assert!(response.headers().contains_key("content-disposition"));
 
         let _ = std::fs::remove_file(temp_db);
     }
