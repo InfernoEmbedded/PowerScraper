@@ -1,6 +1,13 @@
 config.toml
+config.toml.orig
+*.orig
+*.db
+*.db-wal
+*.db-shm
 *.pyc
 *~
+
+
 
 
 # Added by cargo

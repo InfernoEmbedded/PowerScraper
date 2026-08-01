@@ -444,7 +444,7 @@ pub struct Config {
     #[serde(rename = "Solax-G4-Modbus")]
     pub solax_g4_modbus: Option<SolaxG4ModbusConfig>,
 
-    #[serde(rename = "Solax-G3-Modbus")]
+    #[serde(rename = "Solax-G3-Modbus", alias = "Solax-XHybrid-Modbus")]
     pub solax_g3_modbus: Option<SolaxG3ModbusConfig>,
 
     #[serde(rename = "SDM630Modbusv2", alias = "SDM630ModbusV2")]
@@ -462,7 +462,7 @@ pub struct Config {
     #[serde(rename = "influx")]
     pub influx: Option<InfluxConfig>,
 
-    #[serde(rename = "MQTT")]
+    #[serde(rename = "MQTT", alias = "mqtt")]
     pub mqtt: Option<MqttBrokerConfig>,
 
     #[serde(rename = "Solax-BatteryControl")]
@@ -485,34 +485,32 @@ impl Config {
     pub fn load_from_db(db_path: &str) -> Result<Self, Box<dyn std::error::Error>> {
         match crate::database::load_config_from_db(db_path) {
             Ok(config) => Ok(config),
-            Err(_) => {
-                // Seed database from config.toml if present, else config-sample.toml, else empty config
-                let config = if Path::new("config.toml").exists() {
+            Err(e) => {
+                if Path::new("config.toml").exists() {
                     println!("Seeding SQLite database from config.toml...");
                     match Config::load_from_file("config.toml") {
-                        Ok(cfg) => cfg,
-                        Err(e) => {
-                            println!("Failed to load config.toml, using defaults: {}", e);
-                            Config::default_empty()
+                        Ok(cfg) => {
+                            cfg.save_to_db(db_path)?;
+                            Ok(cfg)
                         }
+                        Err(err) => Err(format!("Failed to load config.toml: {}", err).into()),
                     }
                 } else if Path::new("config-sample.toml").exists() {
                     println!("Seeding SQLite database from config-sample.toml...");
                     match Config::load_from_file("config-sample.toml") {
-                        Ok(cfg) => cfg,
-                        Err(e) => {
-                            println!("Failed to load config-sample.toml, using defaults: {}", e);
-                            Config::default_empty()
+                        Ok(cfg) => {
+                            cfg.save_to_db(db_path)?;
+                            Ok(cfg)
                         }
+                        Err(err) => Err(format!("Failed to load config-sample.toml: {}", err).into()),
                     }
                 } else {
-                    Config::default_empty()
-                };
-                config.save_to_db(db_path)?;
-                Ok(config)
+                    Err(e)
+                }
             }
         }
     }
+
 
     pub fn save_to_db(&self, db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         crate::database::save_config_to_db(db_path, self)
@@ -562,6 +560,20 @@ mod tests {
         let config = config_res.unwrap();
         assert!(config.solax_modbus.is_some());
         assert!(config.solax_g3_modbus.is_some());
+    }
+
+    #[test]
+    fn test_solax_xhybrid_alias() {
+        let config_str = r#"
+[Solax-XHybrid-Modbus]
+poll_period = 1
+timeout = 0.5
+inverters = ["solax-x1", "solax-x2", "solax-x3"]
+"#;
+        let config: Config = toml::from_str(config_str).unwrap();
+        assert!(config.solax_g3_modbus.is_some());
+        let g3 = config.solax_g3_modbus.unwrap();
+        assert_eq!(g3.inverters.len(), 3);
     }
 
     #[test]

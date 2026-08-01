@@ -1,6 +1,6 @@
 [package]
 name = "PowerScraper"
-version = "1.0.92"
+version = "1.0.93"
 edition = "2024"
 
 [dependencies]

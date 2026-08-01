@@ -14,45 +14,154 @@ pub fn open_db_conn<P: AsRef<Path>>(db_path: P) -> rusqlite::Result<Connection> 
     Ok(conn)
 }
 
-/// Loads the application settings configuration from the database.
-pub fn load_config_from_db(db_path: &str) -> Result<Config, Box<dyn std::error::Error>> {
-    let conn = open_db_conn(db_path)?;
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            config_json TEXT NOT NULL
-        )",
-        [],
-    )?;
-
-    let mut stmt = conn.prepare("SELECT config_json FROM settings WHERE id = 1")?;
-    let mut rows = stmt.query([])?;
-
-    if let Some(row) = rows.next()? {
-        let json_str: String = row.get(0)?;
-        let config: Config = serde_json::from_str(&json_str)?;
-        Ok(config)
-    } else {
-        Err("No configuration found in settings table".into())
+/// Flattens a serde_json::Value tree into dot-separated hierarchical key-value pairs.
+pub fn flatten_json_value(prefix: &str, val: &serde_json::Value, map: &mut std::collections::HashMap<String, String>) {
+    match val {
+        serde_json::Value::Object(obj) => {
+            for (k, v) in obj {
+                let new_key = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{}.{}", prefix, k)
+                };
+                flatten_json_value(&new_key, v, map);
+            }
+        }
+        _ => {
+            if !prefix.is_empty() {
+                if let Ok(serialized) = serde_json::to_string(val) {
+                    map.insert(prefix.to_string(), serialized);
+                }
+            }
+        }
     }
 }
 
-/// Saves the application settings configuration to the database.
-pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+/// Reconstructs a nested serde_json::Value object tree from dot-separated hierarchical key-value pairs.
+pub fn unflatten_json_map(map: &std::collections::HashMap<String, String>) -> serde_json::Value {
+    let mut root = serde_json::Value::Object(serde_json::Map::new());
+
+    for (key, val_str) in map {
+        let val: serde_json::Value = match serde_json::from_str(val_str) {
+            Ok(v) => v,
+            Err(_) => serde_json::Value::String(val_str.clone()),
+        };
+
+        let parts: Vec<&str> = key.split('.').collect();
+        let mut curr = &mut root;
+
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                if let serde_json::Value::Object(m) = curr {
+                    m.insert(part.to_string(), val.clone());
+                }
+            } else {
+                if let serde_json::Value::Object(m) = curr {
+                    if !m.contains_key(*part) || !m.get(*part).unwrap().is_object() {
+                        m.insert(part.to_string(), serde_json::Value::Object(serde_json::Map::new()));
+                    }
+                    curr = m.get_mut(*part).unwrap();
+                }
+            }
+        }
+
+    }
+
+    root
+}
+
+/// Loads application configuration from hierarchical key-value database (config_kv).
+/// Automatically migrates legacy single-JSON `settings` table to `config_kv` if detected.
+pub fn load_config_from_db(db_path: &str) -> Result<Config, Box<dyn std::error::Error>> {
     let conn = open_db_conn(db_path)?;
+
+    // Ensure config_kv table exists
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            config_json TEXT NOT NULL
+        "CREATE TABLE IF NOT EXISTS config_kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
         )",
         [],
     )?;
 
-    let json_str = serde_json::to_string_pretty(config)?;
+    // Check if legacy settings table exists
+    let has_settings_table: bool = conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='settings'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|c| c > 0)
+        .unwrap_or(false);
+
+    if has_settings_table {
+        let json_str: Option<String> = {
+            let mut stmt = conn.prepare("SELECT config_json FROM settings WHERE id = 1")?;
+            let mut rows = stmt.query([])?;
+            if let Some(row) = rows.next()? {
+                Some(row.get(0)?)
+            } else {
+                None
+            }
+        };
+
+        if let Some(ref json) = json_str {
+            if let Ok(config) = serde_json::from_str::<Config>(json) {
+                println!("Migrating legacy settings table to hierarchical config_kv key-value store...");
+                save_config_to_db(db_path, &config)?;
+                let _ = conn.execute_batch("DROP TABLE settings;");
+                return Ok(config);
+            }
+        }
+    }
+
+
+    // Query all key-value entries from config_kv
+    let mut stmt = conn.prepare("SELECT key, value FROM config_kv")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+
+    let mut map = std::collections::HashMap::new();
+    for r in rows {
+        if let Ok((k, v)) = r {
+            map.insert(k, v);
+        }
+    }
+
+    if map.is_empty() {
+        return Err("No configuration found in config_kv table".into());
+    }
+
+    let root = unflatten_json_map(&map);
+    let config: Config = serde_json::from_value(root)?;
+    Ok(config)
+}
+
+/// Saves application configuration into hierarchical key-value database (config_kv).
+pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    let mut conn = open_db_conn(db_path)?;
     conn.execute(
-        "INSERT OR REPLACE INTO settings (id, config_json) VALUES (1, ?1)",
-        params![json_str],
+        "CREATE TABLE IF NOT EXISTS config_kv (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        )",
+        [],
     )?;
+
+    let val = serde_json::to_value(config)?;
+    let mut map = std::collections::HashMap::new();
+    flatten_json_value("", &val, &mut map);
+
+    let tx = conn.transaction()?;
+    {
+        tx.execute("DELETE FROM config_kv", [])?;
+        let mut stmt = tx.prepare("INSERT INTO config_kv (key, value) VALUES (?1, ?2)")?;
+        for (k, v) in &map {
+            stmt.execute(params![k, v])?;
+        }
+    }
+    tx.commit()?;
 
     // Compact WAL file to prevent unbounded growth on embedded storage
     if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
@@ -60,6 +169,7 @@ pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn s
     }
     Ok(())
 }
+
 
 /// Initializes database tables and indices for telemetry history and solar forecasts.
 pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
@@ -372,4 +482,71 @@ mod tests {
         let res = delete_and_save_solar_forecast(invalid_path, &predictions);
         assert!(res.is_err());
     }
+
+    #[test]
+    fn test_hierarchical_config_db() {
+        let db_path = "./test_hierarchical_config_db.db";
+        let _ = std::fs::remove_file(db_path);
+
+        let cfg = Config::load_from_file("tests/test_config.toml").expect("failed to load test config file");
+        save_config_to_db(db_path, &cfg).expect("failed to save config to db");
+
+        let loaded = load_config_from_db(db_path).expect("failed to load config from db");
+        assert_eq!(loaded.solax_modbus.is_some(), cfg.solax_modbus.is_some());
+        assert_eq!(loaded.solax_g3_modbus.is_some(), cfg.solax_g3_modbus.is_some());
+        assert_eq!(loaded.mqtt.is_some(), cfg.mqtt.is_some());
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_legacy_settings_migration() {
+        let db_path = "./test_legacy_settings_migration.db";
+        let _ = std::fs::remove_file(db_path);
+
+        let conn = open_db_conn(db_path).unwrap();
+
+        // Create legacy settings table with raw json
+        conn.execute(
+            "CREATE TABLE settings (id INTEGER PRIMARY KEY CHECK (id = 1), config_json TEXT NOT NULL)",
+            [],
+        ).unwrap();
+
+        let cfg = Config::load_from_file("tests/test_config.toml").unwrap();
+        let json_str = serde_json::to_string(&cfg).unwrap();
+        conn.execute(
+            "INSERT INTO settings (id, config_json) VALUES (1, ?1)",
+            params![json_str],
+        ).unwrap();
+
+
+
+        drop(conn);
+
+        // load_config_from_db should detect settings table, migrate to config_kv, and drop settings
+        let loaded = load_config_from_db(db_path).expect("failed to load and migrate legacy settings");
+        assert_eq!(loaded.solax_g3_modbus.is_some(), true);
+
+        // Verify settings table was dropped and config_kv table contains rows
+        let conn2 = open_db_conn(db_path).unwrap();
+        let has_settings: bool = conn2
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='settings'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map(|c| c > 0)
+            .unwrap_or(false);
+        assert_eq!(has_settings, false);
+
+        let kv_count: i64 = conn2
+            .query_row("SELECT count(*) FROM config_kv", [], |row| row.get(0))
+            .unwrap();
+        assert!(kv_count > 0);
+
+        drop(conn2);
+        let _ = std::fs::remove_file(db_path);
+    }
+
 }
+
