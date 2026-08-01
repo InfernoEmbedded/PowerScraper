@@ -38,10 +38,55 @@ pub async fn run_solax_g3_driver(
     let ctx_opt: Arc<Mutex<Option<Context>>> = Arc::new(Mutex::new(None));
     let requested_battery_power = Arc::new(Mutex::new(0i32));
 
+    let command_topic = format!("{}/{}/command/charge_battery", base_topic, inverter_name);
+
+    // Spawn MQTT eventloop handler task first so poll() processes Network I/O
+    let req_power_clone = requested_battery_power.clone();
+    let inverter_name_clone = inverter_name.clone();
+    let cancel_token_clone = cancel_token.clone();
+    let command_topic_clone = command_topic.clone();
+
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_token_clone.cancelled() => break,
+                res = eventloop.poll() => {
+                    match res {
+                        Ok(notification) => {
+                            if let Event::Incoming(Packet::Publish(publish)) = notification {
+                                if publish.topic == command_topic_clone {
+                                    let payload = String::from_utf8_lossy(&publish.payload);
+                                    if let Ok(power) = payload.trim().parse::<i32>() {
+                                        *req_power_clone.lock().await = power;
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "[SolaxG3 Log] Driver [{}] MQTT eventloop error: {}",
+                                inverter_name_clone, e
+                            );
+                            tokio::select! {
+                                _ = cancel_token_clone.cancelled() => break,
+                                _ = sleep(Duration::from_secs(5)) => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // Seed status.inverters so the inverter appears in web UI immediately
+    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+        let inv = status.inverters.entry(inverter_name.clone()).or_default();
+        inv.run_mode = 0;
+    }
+
     // Handle handshake sequence for Hybrid
     let ctx_clone = ctx_opt.clone();
     let hostname_clone = hostname.clone();
-    let password = config.installer_password;
     let cancel_token_handshake = cancel_token.clone();
     tokio::spawn(async move {
         tokio::select! {
@@ -57,9 +102,6 @@ pub async fn run_solax_g3_driver(
             }
         }
         if let Some(ref mut ctx) = *lock {
-            if let Some(pwd) = password {
-                let _ = ctx.write_single_register(0x00, pwd).await;
-            }
             let _ = ctx.write_single_register(0x9F, 30).await;
             let _ = ctx.write_single_register(0x51, 1).await;
             let _ = ctx.write_single_register(0x53, 0).await;
@@ -68,13 +110,12 @@ pub async fn run_solax_g3_driver(
     });
 
     // Subscribe to command topic
-    let command_topic = format!("{}/{}/command/charge_battery", base_topic, inverter_name);
     if let Err(e) = mqtt_client
         .subscribe(&command_topic, QoS::AtLeastOnce)
         .await
     {
-        println!(
-            "Driver [{}] failed to subscribe to command topic: {}",
+        eprintln!(
+            "[SolaxG3 Log] Driver [{}] failed to subscribe to command topic: {}",
             inverter_name, e
         );
     }
@@ -89,49 +130,11 @@ pub async fn run_solax_g3_driver(
     )
     .await;
 
-    // Spawn MQTT command handler
-    let req_power_clone = requested_battery_power.clone();
-    let inverter_name_clone = inverter_name.clone();
-    let cancel_token_clone = cancel_token.clone();
-
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = cancel_token_clone.cancelled() => break,
-                res = eventloop.poll() => {
-                    match res {
-                        Ok(notification) => {
-                            if let Event::Incoming(Packet::Publish(publish)) = notification {
-                                if publish.topic == command_topic {
-                                    let payload = String::from_utf8_lossy(&publish.payload);
-                                    if let Ok(power) = payload.trim().parse::<i32>() {
-                                        *req_power_clone.lock().await = power;
-                                    }
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!(
-                                "Driver [{}] MQTT eventloop error: {}",
-                                inverter_name_clone, e
-                            );
-                            tokio::select! {
-                                _ = cancel_token_clone.cancelled() => break,
-                                _ = sleep(Duration::from_secs(5)) => {}
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    });
-
     // Main poll loop for G3
     let mut power_budgets = VecDeque::new();
     let avg_samples = config.power_budget_avg_samples.unwrap_or(30);
     let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut discovered_metrics = std::collections::HashSet::new();
-    let mut consecutive_errors = 0u32;
     let mut last_written_power: Option<i32> = None;
     let mut last_write_time: Option<std::time::Instant> = None;
 
@@ -146,9 +149,18 @@ pub async fn run_solax_g3_driver(
             if lock.is_none() {
                 match resolve_address(&hostname).await {
                     Ok(addr) => match tcp::connect(addr).await {
-                        Ok(ctx) => {
+                        Ok(mut ctx) => {
+                            let pwd = config.installer_password.unwrap_or(2014);
+                            let _ = ctx.write_single_register(0x00, pwd).await;
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+
+                            let _ = ctx.write_single_register(0x51, 1).await;
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+
+                            let _ = ctx.write_single_register(0x9F, 30).await;
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+
                             *lock = Some(ctx);
-                            consecutive_errors = 0;
                         }
                         Err(e) => {
                             println!("Driver [{}] failed to connect: {}", inverter_name, e);
@@ -159,6 +171,9 @@ pub async fn run_solax_g3_driver(
                     }
                 }
             }
+            let mut reset_connection = false;
+            let mut read_data = None;
+
             if let Some(ref mut ctx) = *lock {
                 let needs_update = match (last_written_power, last_write_time) {
                     (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
@@ -166,54 +181,81 @@ pub async fn run_solax_g3_driver(
                 };
 
                 if needs_update {
-                    // 1. Enable power control (0x0051)
-                    let _ = ctx.write_single_register(0x51, 1).await;
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    // 2. Set keepalive timeout (0x009F)
-                    let _ = ctx.write_single_register(0x9F, 30).await;
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                    // 3. Write target power to Modbus ActivePower (0x0052)
-                    let power_u16 = req_power as u16;
-                    if ctx.write_single_register(0x52, power_u16).await.is_ok() {
-                        last_written_power = Some(req_power);
-                        last_write_time = Some(std::time::Instant::now());
+                    last_written_power = Some(req_power);
+                    last_write_time = Some(std::time::Instant::now());
+
+                    // Write target power to Modbus ActivePower (0x0052)
+                    // Sign convention: positive req_power = Charge, negative req_power = Discharge
+                    let power_u16 = (req_power as i16) as u16;
+                    if let Err(e) = ctx.write_single_register(0x52, power_u16).await {
+                        eprintln!("[SolaxG3 Log] Driver [{}] write_single_register(0x52, {}) failed: {}", inverter_name, req_power, e);
+                        reset_connection = true;
                     }
                 }
 
-                // Split queries into three non-contiguous blocks to avoid address exceptions
-                let r_a = ctx.read_input_registers(0, 0x27).await;
-                let r_b = ctx.read_input_registers(0x40, 0x1E).await;
-                let r_c = ctx.read_input_registers(0x6A, 0x0C).await;
+                if !reset_connection {
+                    // Split queries into smaller non-contiguous blocks to avoid Modbus address exceptions
+                    let r_a = ctx.read_input_registers(0, 0x29).await;
+                    let r_b1 = ctx.read_input_registers(0x40, 20).await;
+                    let r_b2 = ctx.read_input_registers(0x66, 4).await;
+                    let r_c1 = ctx.read_input_registers(0x6A, 0x0C).await;
+                    let r_c2 = ctx.read_input_registers(0xBC, 18).await;
 
-                match (r_a, r_b) {
-                    (Ok(a), Ok(b)) => {
-                        let c = r_c.unwrap_or_default();
-                        consecutive_errors = 0;
-                        Ok((a, b, c))
-                    }
-                    _ => {
-                        consecutive_errors += 1;
-                        if consecutive_errors >= 3 {
-                            *lock = None;
+                    if let Ok(a) = r_a {
+                        let mut b = vec![0u16; 42];
+                        if let Ok(ref b1) = r_b1 {
+                            let len = b1.len().min(30);
+                            b[0..len].copy_from_slice(&b1[0..len]);
                         }
-                        Err(std::io::Error::new(
-                            std::io::ErrorKind::ConnectionReset,
-                            "Failed to read core Modbus blocks",
-                        ))
+                        if let Ok(ref b2) = r_b2 {
+                            let len = b2.len().min(4);
+                            b[38..38 + len].copy_from_slice(&b2[0..len]);
+                        }
+                        let mut c = vec![0u16; 100];
+                        if let Ok(ref c1) = r_c1 {
+                            let len = c1.len().min(12);
+                            c[0..len].copy_from_slice(&c1[0..len]);
+                        }
+                        if let Ok(ref c2) = r_c2 {
+                            let len = c2.len().min(18);
+                            let start = 0xBC - 0x6A; // 82
+                            c[start..start + len].copy_from_slice(&c2[0..len]);
+                        }
+                        read_data = Some((a, b, c));
+                    } else {
+                        println!(
+                            "Driver [{}] Modbus read fail: r_a={:?}",
+                            inverter_name,
+                            r_a.as_ref().err()
+                        );
+                        reset_connection = true;
                     }
                 }
+            }
+
+            if reset_connection {
+                *lock = None;
+            }
+
+            if let Some((a, b, c)) = read_data {
+                Ok((a, b, c))
             } else {
                 Err(std::io::Error::new(
-                    std::io::ErrorKind::NotConnected,
-                    "Not connected",
+                    std::io::ErrorKind::ConnectionReset,
+                    "Failed to read core Modbus blocks",
                 ))
             }
         };
 
         match read_res {
             Ok((reg_a, reg_b, reg_c)) => {
-                if reg_a.len() >= 0x27 && reg_b.len() >= 0x1E {
+                if reg_a.len() >= 0x1D {
                     let mut vals = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power);
+                    eprintln!(
+                        "[SolaxG3 Log] Driver [{}] parsed {} metrics",
+                        inverter_name,
+                        vals.len()
+                    );
 
                     // Update global status for dashboard
                     let bat_cap = vals
@@ -286,6 +328,7 @@ pub async fn run_solax_g3_driver(
             }
             Err(e) => {
                 println!("Driver [{}] failed to poll: {}", inverter_name, e);
+                tokio::time::sleep(Duration::from_secs(2)).await;
             }
         }
 
@@ -323,7 +366,7 @@ fn parse_hybrid_registers(
 
     let u16_c = |addr: usize| -> u32 { reg_c[addr - 0x6A] as u32 };
     let i16_c = |addr: usize| -> i32 { reg_c[addr - 0x6A] as i16 as i32 };
-    let _u32_c = |addr: usize| -> u32 {
+    let u32_c = |addr: usize| -> u32 {
         let low = reg_c[addr - 0x6A] as u32;
         let high = reg_c[addr + 1 - 0x6A] as u32;
         low | (high << 16)
@@ -333,35 +376,37 @@ fn parse_hybrid_registers(
         "Requested Battery Power".to_string(),
         requested_battery_power.to_string(),
     );
-    vals.insert(
-        "Grid Voltage".to_string(),
-        format!("{:.1}", u16_a(0x00) as f64 / 10.0),
-    );
-    vals.insert(
-        "Grid Current".to_string(),
-        format!("{:.1}", i16_a(0x01) as f64 / 10.0),
-    );
-    vals.insert("Inverter Power".to_string(), i16_a(0x02).to_string());
-    vals.insert(
-        "PV1 Voltage".to_string(),
-        format!("{:.1}", u16_a(0x03) as f64 / 10.0),
-    );
-    vals.insert(
-        "PV2 Voltage".to_string(),
-        format!("{:.1}", u16_a(0x04) as f64 / 10.0),
-    );
-    vals.insert(
-        "PV1 Current".to_string(),
-        format!("{:.1}", u16_a(0x05) as f64 / 10.0),
-    );
-    vals.insert(
-        "PV2 Current".to_string(),
-        format!("{:.1}", u16_a(0x06) as f64 / 10.0),
-    );
-    vals.insert(
-        "Grid Frequency".to_string(),
-        format!("{:.2}", u16_a(0x07) as f64 / 100.0),
-    );
+    let grid_v = format!("{:.1}", u16_a(0x00) as f64 / 10.0);
+    vals.insert("Grid Voltage".to_string(), grid_v.clone());
+    vals.insert("Grid Voltage X1".to_string(), grid_v);
+
+    let grid_c = format!("{:.1}", i16_a(0x01) as f64 / 10.0);
+    vals.insert("Grid Current".to_string(), grid_c.clone());
+    vals.insert("Grid Current X1".to_string(), grid_c);
+
+    let inv_p = i16_a(0x02).to_string();
+    vals.insert("Inverter Power".to_string(), inv_p.clone());
+    vals.insert("Inverter Power X1".to_string(), inv_p);
+
+    let pv1_v = format!("{:.1}", u16_a(0x03) as f64 / 10.0);
+    vals.insert("PV1 Voltage".to_string(), pv1_v.clone());
+    vals.insert("PV1 Voltage Hybrid".to_string(), pv1_v);
+
+    let pv2_v = format!("{:.1}", u16_a(0x04) as f64 / 10.0);
+    vals.insert("PV2 Voltage".to_string(), pv2_v.clone());
+    vals.insert("PV2 Voltage Hybrid".to_string(), pv2_v);
+
+    let pv1_c = format!("{:.1}", u16_a(0x05) as f64 / 10.0);
+    vals.insert("PV1 Current".to_string(), pv1_c.clone());
+    vals.insert("PV1 Current Hybrid".to_string(), pv1_c);
+
+    let pv2_c = format!("{:.1}", u16_a(0x06) as f64 / 10.0);
+    vals.insert("PV2 Current".to_string(), pv2_c.clone());
+    vals.insert("PV2 Current Hybrid".to_string(), pv2_c);
+
+    let grid_f = format!("{:.2}", u16_a(0x07) as f64 / 100.0);
+    vals.insert("Grid Frequency".to_string(), grid_f.clone());
+    vals.insert("Grid Frequency X1".to_string(), grid_f);
     vals.insert("Inner Temp".to_string(), i16_a(0x08).to_string());
     vals.insert("Run Mode".to_string(), u16_a(0x09).to_string());
     vals.insert("PV1 Power".to_string(), u16_a(0x0a).to_string());
@@ -410,9 +455,16 @@ fn parse_hybrid_registers(
         "BMS Max Discharge Current".to_string(),
         format!("{:.1}", u16_a(0x25) as f64 / 10.0),
     );
+    if reg_a.len() >= 0x29 {
+        vals.insert(
+            "Battery State of Health".to_string(),
+            u16_a(0x28).to_string(),
+        );
+    }
 
     // Block B
     vals.insert("Inverter Fault".to_string(), u32_b(0x40).to_string());
+    vals.insert("Charger Fault".to_string(), u16_b(0x42).to_string());
     vals.insert("Manager Fault".to_string(), u16_b(0x43).to_string());
     let measured_power = i32_b(0x46);
     vals.insert("Measured Power".to_string(), measured_power.to_string());
@@ -445,8 +497,25 @@ fn parse_hybrid_registers(
         "Energy Total".to_string(),
         format!("{:.3}", u32_b(0x52) as f64 / 1000.0),
     );
+    if reg_b.len() >= (0x69 - 0x40 + 1) {
+        vals.insert(
+            "Bus Voltage".to_string(),
+            format!("{:.1}", u16_b(0x66) as f64 / 10.0),
+        );
+        vals.insert(
+            "DC Voltage Fault".to_string(),
+            format!("{:.1}", u16_b(0x67) as f64 / 10.0),
+        );
+        vals.insert("Overload Fault".to_string(), u16_b(0x68).to_string());
+        vals.insert("Battery Voltage Fault".to_string(), u16_b(0x69).to_string());
+    } else if reg_b.len() >= 39 {
+        vals.insert(
+            "Bus Voltage".to_string(),
+            format!("{:.1}", u16_b(0x66) as f64 / 10.0),
+        );
+    }
 
-    // Block C: Three Phase Grid Telemetry (R=0x6A..0x6D, S=0x6E..0x71, T=0x72..0x75)
+    // Block C: Three Phase Grid Telemetry & BMS (0x6A..0xCD)
     if reg_c.len() >= 0x0C {
         vals.insert(
             "Phase 1 Grid Voltage".to_string(),
@@ -486,12 +555,40 @@ fn parse_hybrid_registers(
         );
     }
 
-    let battery_power = i16_a(0x16);
-    let power_budget = battery_power + measured_power;
-    vals.insert("Power Budget".to_string(), power_budget.to_string());
+    if reg_c.len() >= 96 {
+        let battery_power_c = i16_c(0xC4);
+        let measured_power_x3_p1 = i16_c(0xBE);
+        let measured_power_x3_p2 = i16_c(0xBF);
+        let measured_power_x3_p3 = i16_c(0xC0);
+        vals.insert("Grid Power (P1)".to_string(), measured_power_x3_p1.to_string());
+        vals.insert("Grid Power (P2)".to_string(), measured_power_x3_p2.to_string());
+        vals.insert("Grid Power (P3)".to_string(), measured_power_x3_p3.to_string());
+        vals.insert("Battery Temperature (Hybrid)".to_string(), i16_c(0xC6).to_string());
+        vals.insert("Inner Temp (Hybrid)".to_string(), i16_c(0xC8).to_string());
+        vals.insert("Inverter Power (X3)".to_string(), i16_c(0xC5).to_string());
+        vals.insert("Run Mode 2".to_string(), u16_c(0xBF).to_string());
+        vals.insert("BMS Connected".to_string(), u16_c(0xC5).to_string());
 
-    let usage = i16_a(0x02) - measured_power;
-    vals.insert("Usage".to_string(), usage.to_string());
+        if reg_c.len() >= (0xCD - 0x6A + 1) {
+            vals.insert("BMS Error".to_string(), u16_c(0xCA).to_string());
+            vals.insert("BMS Warning (Hybrid)".to_string(), u16_c(0xCB).to_string());
+            vals.insert("BMS Energy Throughput".to_string(), u32_c(0xCC).to_string());
+        }
+
+        let power_budget = battery_power_c + measured_power + measured_power_x3_p1 + measured_power_x3_p2 + measured_power_x3_p3;
+        vals.insert("Power Budget".to_string(), power_budget.to_string());
+
+        let grid_power = i16_c(0xBC);
+        let usage = grid_power - measured_power;
+        vals.insert("Usage".to_string(), usage.to_string());
+    } else {
+        let battery_power = i16_a(0x16);
+        let power_budget = battery_power + measured_power;
+        vals.insert("Power Budget".to_string(), power_budget.to_string());
+
+        let usage = i16_a(0x02) - measured_power;
+        vals.insert("Usage".to_string(), usage.to_string());
+    }
 
     vals
 }
@@ -502,7 +599,7 @@ mod tests {
 
     #[test]
     fn test_parse_solax_g3_registers() {
-        let mut reg_a = vec![0u16; 39];
+        let mut reg_a = vec![0u16; 41];
         let mut reg_b = vec![0u16; 30];
         let mut reg_c = vec![0u16; 14];
 
@@ -510,6 +607,7 @@ mod tests {
         reg_a[0x01] = 105; // Grid Current = 10.5A
         reg_a[0x02] = 2000; // Inverter Power = 2000W
         reg_a[0x1C] = 15; // Battery Capacity = 15%
+        reg_a[0x28] = 99; // Battery State of Health = 99%
         reg_b[0x46 - 0x40] = 1000; // Measured Power = 1000W
 
         // 3-Phase Grid Telemetry (R=0x6A..0x6D, S=0x6E..0x71, T=0x72..0x75)
@@ -528,6 +626,7 @@ mod tests {
         assert_eq!(parsed.get("Grid Current").unwrap(), "10.5");
         assert_eq!(parsed.get("Inverter Power").unwrap(), "2000");
         assert_eq!(parsed.get("Battery Capacity").unwrap(), "15");
+        assert_eq!(parsed.get("Battery State of Health").unwrap(), "99");
         assert_eq!(parsed.get("Measured Power").unwrap(), "1000");
         assert_eq!(parsed.get("Requested Battery Power").unwrap(), "500");
         assert_eq!(parsed.get("Phase 1 Grid Voltage").unwrap(), "231.0");
