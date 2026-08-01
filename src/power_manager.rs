@@ -2146,11 +2146,10 @@ pub async fn run_power_manager_task(
 
                                                 // Save to SQLite DB
                                                 if let Ok(mut db_cfg) = crate::config::Config::load_from_db(&db_path) {
-                                                    if let Some(ref mut bat_ctrl) = db_cfg.battery_control {
-                                                        bat_ctrl.grid_target = Some(target);
-                                                        if let Err(e) = db_cfg.save_to_db(&db_path) {
-                                                            eprintln!("Failed to save config to DB on target change: {}", e);
-                                                        }
+                                                    let bat_ctrl = db_cfg.battery_control.get_or_insert_with(Default::default);
+                                                    bat_ctrl.grid_target = Some(target);
+                                                    if let Err(e) = db_cfg.save_to_db(&db_path) {
+                                                        eprintln!("Failed to save config to DB on target change: {}", e);
                                                     }
                                                 }
 
@@ -4857,5 +4856,31 @@ mod tests {
 
         let _ = std::fs::remove_file(temp_db_overlap);
     }
+
+    #[test]
+    fn test_grid_target_persistence_in_db() {
+        let temp_db = "temp_test_grid_target_persistence.db";
+        let _ = std::fs::remove_file(temp_db);
+
+        // 1. Save config with grid_target
+        let mut cfg = crate::config::Config::default_empty();
+        let mut bat_ctrl = crate::config::SolaxBatteryControlConfig::default();
+        bat_ctrl.grid_target = Some(-250.0);
+        cfg.battery_control = Some(bat_ctrl);
+
+        cfg.save_to_db(temp_db).unwrap();
+
+        // 2. Reload config from DB and verify grid_target persistence
+        let loaded_cfg = crate::config::Config::load_from_db(temp_db).unwrap();
+        let bat_ctrl_loaded = loaded_cfg.battery_control.as_ref().unwrap();
+        assert_eq!(bat_ctrl_loaded.grid_target, Some(-250.0));
+
+        // 3. Verify PowerManager initializes grid_target from reloaded config
+        let pm = PowerManager::new(bat_ctrl_loaded.clone(), "sensors".to_string());
+        assert_eq!(pm.grid_target, -250.0);
+
+        let _ = std::fs::remove_file(temp_db);
+    }
 }
+
 
