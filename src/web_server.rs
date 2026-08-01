@@ -318,19 +318,23 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                         match export_backup_dump(&path) {
                             Ok(dump) => {
                                 let now_str = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-                                let filename = format!("powerscraper_backup_{}.json", now_str);
-                                let body_str = match serde_json::to_string_pretty(&dump) {
-                                    Ok(s) => s,
+                                let filename = format!("powerscraper_backup_{}.json.xz", now_str);
+                                let json_bytes = match serde_json::to_vec_pretty(&dump) {
+                                    Ok(b) => b,
                                     Err(e) => return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
                                 };
+                                let mut compressed_bytes = Vec::new();
+                                if let Err(e) = lzma_rs::xz_compress(&mut std::io::Cursor::new(json_bytes), &mut compressed_bytes) {
+                                    return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("XZ compression failed: {}", e)));
+                                }
                                 let headers = [
-                                    (header::CONTENT_TYPE, "application/json".to_string()),
+                                    (header::CONTENT_TYPE, "application/x-xz".to_string()),
                                     (
                                         header::CONTENT_DISPOSITION,
                                         format!("attachment; filename=\"{}\"", filename),
                                     ),
                                 ];
-                                Ok((headers, body_str))
+                                Ok((headers, compressed_bytes))
                             }
                             Err(e) => Err(e),
                         }
@@ -367,21 +371,39 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
             post({
                 let db_path = db_path_backup_import.clone();
                 let reload_channel = state.clone();
-                move |Json(dump): Json<BackupDump>| {
+                move |body_bytes: axum::body::Bytes| {
                     let path = db_path.clone();
                     let reload_channel = reload_channel.clone();
                     async move {
-                        if let Err(e) = dump.config.save_to_db(&path) {
+                        let mut decompressed_bytes = Vec::new();
+                        let data_slice: &[u8] = if lzma_rs::xz_decompress(&mut std::io::Cursor::new(&body_bytes), &mut decompressed_bytes).is_ok() {
+                            &decompressed_bytes
+                        } else {
+                            &body_bytes
+                        };
+
+                        let (cfg, records) = match serde_json::from_slice::<BackupDump>(data_slice) {
+                            Ok(dump) => {
+                                let recs: Vec<(i64, String, f64)> = dump
+                                    .telemetry_history
+                                    .into_iter()
+                                    .map(|r| (r.timestamp, r.topic, r.value))
+                                    .collect();
+                                (dump.config, recs)
+                            }
+                            Err(_) => {
+                                let cfg = serde_json::from_slice::<Config>(data_slice)
+                                    .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, format!("Failed to parse backup JSON: {}", e)))?;
+                                (cfg, Vec::new())
+                            }
+                        };
+
+                        if let Err(e) = cfg.save_to_db(&path) {
                             return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save config: {}", e)));
                         }
 
-                        let count = dump.telemetry_history.len();
+                        let count = records.len();
                         if count > 0 {
-                            let records: Vec<(i64, String, f64)> = dump
-                                .telemetry_history
-                                .into_iter()
-                                .map(|r| (r.timestamp, r.topic, r.value))
-                                .collect();
                             if let Err(e) = crate::database::insert_telemetry_history_batch(&path, &records) {
                                 return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to import telemetry history: {}", e)));
                             }
@@ -1091,7 +1113,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert!(response.headers().contains_key("content-disposition"));
 
-        // 8. Test POST /api/backup/import
+        // 8. Test POST /api/backup/import (uncompressed JSON and compressed XZ)
         let dump_json = serde_json::json!({
             "version": "1.0.84",
             "exported_at": "2026-08-01T00:00:00Z",
@@ -1100,13 +1122,32 @@ mod tests {
                 { "timestamp": 1000, "topic": "test/topic", "value": 42.0 }
             ]
         });
+        let raw_json_bytes = dump_json.to_string().into_bytes();
+
+        // 8a. Test uncompressed JSON import
         let response = app.clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
                     .uri("/api/backup/import")
-                    .header("content-type", "application/json")
-                    .body(Body::from(dump_json.to_string()))
+                    .header("content-type", "application/octet-stream")
+                    .body(Body::from(raw_json_bytes.clone()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 8b. Test XZ compressed backup import
+        let mut xz_bytes = Vec::new();
+        lzma_rs::xz_compress(&mut std::io::Cursor::new(raw_json_bytes), &mut xz_bytes).unwrap();
+        let response = app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/backup/import")
+                    .header("content-type", "application/octet-stream")
+                    .body(Body::from(xz_bytes))
                     .unwrap(),
             )
             .await

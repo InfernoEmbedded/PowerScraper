@@ -846,7 +846,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div style="display: flex; gap: 15px; flex-wrap: wrap;">
                     <a href="/api/backup/download" download class="btn-apply" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                        Download Full Backup (Config + Telemetry)
+                        Download Full Backup (XZ Compressed)
                     </a>
                     <a href="/api/telemetry/export.csv" download class="sub-btn" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
@@ -865,12 +865,12 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     Restore System Backup
                 </h3>
                 <p class="text-muted" style="margin-bottom: 20px;">
-                    Restore configuration and telemetry history from a previously exported PowerScraper backup JSON file.
+                    Restore configuration and telemetry history from a previously exported backup file (.json.xz or .json).
                 </p>
                 <div style="display: flex; flex-direction: column; gap: 15px; max-width: 600px;">
                     <div class="form-group">
-                        <label>Select Backup File (.json)</label>
-                        <input type="file" id="restore-file-input" accept=".json" style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; color: #fff;">
+                        <label>Select Backup File (.json.xz or .json)</label>
+                        <input type="file" id="restore-file-input" accept=".json,.xz,.json.xz" style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; color: #fff;">
                     </div>
                     <button class="btn-apply" onclick="restoreBackupFromFile()" style="align-self: flex-start;">
                         Restore System Backup
@@ -4847,45 +4847,29 @@ async function exportConfigOnlyJSON() {
 async function restoreBackupFromFile() {
     const input = document.getElementById('restore-file-input');
     if (!input || !input.files || input.files.length === 0) {
-        return alert("Please select a valid backup .json file first.");
+        return alert("Please select a valid backup file (.json.xz or .json) first.");
     }
     const file = input.files[0];
     const reader = new FileReader();
     reader.onload = async function(e) {
         try {
-            const data = JSON.parse(e.target.result);
-            if (data.config && data.telemetry_history !== undefined) {
-                const resp = await fetch('/api/backup/import', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                if (resp.ok) {
-                    const result = await resp.json();
-                    alert(`Backup restored successfully! (${result.imported_telemetry_records || 0} telemetry history records imported)`);
-                    location.reload();
-                } else {
-                    const errText = await resp.text();
-                    alert("Backup restore failed: " + errText);
-                }
+            const resp = await fetch('/api/backup/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/octet-stream' },
+                body: e.target.result
+            });
+            if (resp.ok) {
+                const result = await resp.json();
+                alert(`Backup restored successfully! (${result.imported_telemetry_records || 0} telemetry history records imported)`);
+                location.reload();
             } else {
-                const resp = await fetch('/api/config', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(data)
-                });
-                if (resp.ok) {
-                    alert("Configuration restored and reloaded successfully!");
-                    location.reload();
-                } else {
-                    const errText = await resp.text();
-                    alert("Config restore failed: " + errText);
-                }
+                const errText = await resp.text();
+                alert("Backup restore failed: " + errText);
             }
         } catch (err) {
-            alert("Failed to parse backup JSON file: " + err.message);
+            alert("Failed to upload backup file: " + err.message);
         }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
 }
 "###;
