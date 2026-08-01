@@ -2,6 +2,34 @@ use crate::config::Config;
 use crate::power_manager::HistoryRecord;
 use rusqlite::{Connection, params};
 use std::path::Path;
+use std::sync::{Mutex, LazyLock};
+
+static PENDING_HISTORY: LazyLock<Mutex<Vec<HistoryRecord>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+
+pub fn push_pending_history_record(rec: HistoryRecord) {
+    if let Ok(mut lock) = PENDING_HISTORY.lock() {
+        lock.push(rec);
+    }
+}
+
+pub fn push_pending_history_records(records: impl IntoIterator<Item = HistoryRecord>) {
+    if let Ok(mut lock) = PENDING_HISTORY.lock() {
+        lock.extend(records);
+    }
+}
+
+pub fn flush_pending_history_to_db(db_path: &str, retention_days: Option<u32>) {
+    let mut buffer = Vec::new();
+    if let Ok(mut lock) = PENDING_HISTORY.lock() {
+        if lock.is_empty() {
+            return;
+        }
+        std::mem::swap(&mut *lock, &mut buffer);
+    }
+    if !buffer.is_empty() {
+        flush_history_to_db(db_path, &mut buffer, retention_days);
+    }
+}
 
 /// Opens a database connection with Write-Ahead Logging (WAL) and a 5-second busy timeout.
 pub fn open_db_conn<P: AsRef<Path>>(db_path: P) -> rusqlite::Result<Connection> {
@@ -178,17 +206,54 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
         "CREATE TABLE IF NOT EXISTS telemetry_history (
             timestamp INTEGER NOT NULL,
             topic TEXT NOT NULL,
+            device TEXT NOT NULL DEFAULT '',
+            field TEXT NOT NULL DEFAULT '',
             value REAL NOT NULL,
             PRIMARY KEY (timestamp, topic)
         )",
         [],
     )?;
+
+    // Migration: add device and field columns if table existed without them
+    let has_device: bool = conn
+        .prepare("PRAGMA table_info(telemetry_history)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|col| col == "device");
+
+    if !has_device {
+        let _ = conn.execute("ALTER TABLE telemetry_history ADD COLUMN device TEXT NOT NULL DEFAULT ''", []);
+        let _ = conn.execute("ALTER TABLE telemetry_history ADD COLUMN field TEXT NOT NULL DEFAULT ''", []);
+        loop {
+            let updated = conn.execute(
+                "UPDATE telemetry_history SET 
+                    device = CASE WHEN instr(topic, '/') > 0 THEN substr(topic, 1, instr(topic, '/') - 1) ELSE '' END,
+                    field = CASE WHEN instr(topic, '/') > 0 THEN substr(topic, instr(topic, '/') + 1) ELSE topic END
+                WHERE rowid IN (
+                    SELECT rowid FROM telemetry_history WHERE device = '' AND field = '' LIMIT 50000
+                )",
+                [],
+            ).unwrap_or(0);
+            if updated == 0 {
+                break;
+            }
+        }
+    }
+
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_telemetry_history_timestamp ON telemetry_history (timestamp)",
         [],
     )?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_telemetry_history_topic_timestamp ON telemetry_history (topic, timestamp)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_field_timestamp ON telemetry_history (field, timestamp)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_device_field_timestamp ON telemetry_history (device, field, timestamp)",
         [],
     )?;
     conn.execute(
@@ -222,7 +287,7 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
     };
     {
         let mut stmt = match tx.prepare(
-            "INSERT OR REPLACE INTO telemetry_history (timestamp, topic, value) VALUES (?1, ?2, ?3)"
+            "INSERT OR REPLACE INTO telemetry_history (timestamp, topic, device, field, value) VALUES (?1, ?2, ?3, ?4, ?5)"
         ) {
             Ok(s) => s,
             Err(e) => {
@@ -231,7 +296,12 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
             }
         };
         for rec in buffer.iter() {
-            if let Err(e) = stmt.execute(params![rec.timestamp, rec.topic, rec.value]) {
+            let (device, field) = if let Some(idx) = rec.topic.find('/') {
+                (&rec.topic[..idx], &rec.topic[idx + 1..])
+            } else {
+                ("", rec.topic.as_str())
+            };
+            if let Err(e) = stmt.execute(params![rec.timestamp, rec.topic, device, field, rec.value]) {
                 eprintln!("Failed to insert telemetry record: {}", e);
             }
         }
@@ -351,6 +421,173 @@ pub fn get_all_telemetry_in_range(db_path: &str, start_ts: i64, end_ts: i64) -> 
         }
     }
     Ok(records)
+}
+
+/// Decimates time-series records per topic to fit within `max_pixels` resolution using min-max chronological bucket preserving.
+pub fn decimate_telemetry_records(
+    records: Vec<(i64, String, f64)>,
+    start_ts: i64,
+    end_ts: i64,
+    max_pixels: usize,
+) -> Vec<(i64, String, f64)> {
+    if max_pixels == 0 || records.is_empty() {
+        return records;
+    }
+
+    // Group records by topic
+    let mut topic_map: std::collections::HashMap<String, Vec<(i64, f64)>> = std::collections::HashMap::new();
+    for (ts, topic, val) in records {
+        topic_map.entry(topic).or_default().push((ts, val));
+    }
+
+    let mut result = Vec::new();
+    let duration = (end_ts - start_ts).max(1) as f64;
+
+    for (topic, points) in topic_map {
+        if points.len() <= max_pixels {
+            for (ts, val) in points {
+                result.push((ts, topic.clone(), val));
+            }
+            continue;
+        }
+
+        // Divide into buckets where each bucket outputs at most 2 points (min and max)
+        let num_buckets = (max_pixels / 2).max(1);
+        let bucket_width = duration / (num_buckets as f64);
+        let mut buckets: std::collections::BTreeMap<i64, Vec<(i64, f64)>> = std::collections::BTreeMap::new();
+
+        for (ts, val) in points {
+            let bucket_idx = (((ts - start_ts) as f64) / bucket_width).floor() as i64;
+            buckets.entry(bucket_idx).or_default().push((ts, val));
+        }
+
+        for (_idx, b_points) in buckets {
+            if b_points.len() == 1 {
+                result.push((b_points[0].0, topic.clone(), b_points[0].1));
+            } else if b_points.len() > 1 {
+                let mut min_pt = b_points[0];
+                let mut max_pt = b_points[0];
+                for &pt in &b_points[1..] {
+                    if pt.1 < min_pt.1 {
+                        min_pt = pt;
+                    }
+                    if pt.1 > max_pt.1 {
+                        max_pt = pt;
+                    }
+                }
+                if min_pt.0 == max_pt.0 || (min_pt.1 - max_pt.1).abs() < f64::EPSILON {
+                    result.push((b_points[0].0, topic.clone(), b_points[0].1));
+                } else if min_pt.0 < max_pt.0 {
+                    result.push((min_pt.0, topic.clone(), min_pt.1));
+                    result.push((max_pt.0, topic.clone(), max_pt.1));
+                } else {
+                    result.push((max_pt.0, topic.clone(), max_pt.1));
+                    result.push((min_pt.0, topic.clone(), min_pt.1));
+                }
+            }
+        }
+    }
+
+    result.sort_by_key(|(ts, _, _)| *ts);
+    result
+}
+
+/// Queries telemetry records in a specific window range, with optional topic filtering.
+pub fn get_telemetry_in_range_filtered(
+    db_path: &str,
+    start_ts: i64,
+    end_ts: i64,
+    topics: Option<&[String]>,
+) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
+    let conn = open_db_conn(db_path)?;
+    if let Some(topic_list) = topics {
+        if !topic_list.is_empty() {
+            let placeholders = vec!["?"; topic_list.len()].join(",");
+            let sql = format!(
+                "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ? AND timestamp <= ? AND topic IN ({}) ORDER BY timestamp ASC",
+                placeholders
+            );
+            let mut stmt = conn.prepare(&sql)?;
+            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            params_vec.push(Box::new(start_ts));
+            params_vec.push(Box::new(end_ts));
+            for t in topic_list {
+                params_vec.push(Box::new(t.clone()));
+            }
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt.query_map(params_refs.as_slice(), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+            })?;
+            let mut records = Vec::new();
+            for r in rows {
+                if let Ok(val) = r {
+                    records.push(val);
+                }
+            }
+            return Ok(records);
+        }
+    }
+
+    let default_fields = [
+        "PV1 Power", "PV2 Power", "PV Power", "Solar Power",
+        "Battery Capacity", "Battery SOC", "SOC", "Battery Power",
+        "Total active power", "Grid Power", "Grid Power (P1)", "Grid Power (P2)", "Grid Power (P3)", "Measured Power",
+        "Usage"
+    ];
+    let placeholders = vec!["?"; default_fields.len()].join(",");
+    let sql = format!(
+        "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ? AND timestamp <= ? AND field IN ({}) ORDER BY timestamp ASC",
+        placeholders
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    params_vec.push(Box::new(start_ts));
+    params_vec.push(Box::new(end_ts));
+    for f in default_fields {
+        params_vec.push(Box::new(f));
+    }
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+    })?;
+    let mut records = Vec::new();
+    for r in rows {
+        if let Ok(val) = r {
+            records.push(val);
+        }
+    }
+    Ok(records)
+}
+
+/// Queries and decimates telemetry records in a specific window range, returning timing profiling data.
+pub fn get_decimated_telemetry_in_range_profiled(
+    db_path: &str,
+    start_ts: i64,
+    end_ts: i64,
+    max_pixels: usize,
+    topics: Option<&[String]>,
+) -> Result<(Vec<(i64, String, f64)>, usize, f64, f64), rusqlite::Error> {
+    let t0 = std::time::Instant::now();
+    let records = get_telemetry_in_range_filtered(db_path, start_ts, end_ts, topics)?;
+    let db_dur = t0.elapsed().as_secs_f64() * 1000.0;
+    let raw_count = records.len();
+
+    let t1 = std::time::Instant::now();
+    let decimated = decimate_telemetry_records(records, start_ts, end_ts, max_pixels);
+    let decimate_dur = t1.elapsed().as_secs_f64() * 1000.0;
+
+    Ok((decimated, raw_count, db_dur, decimate_dur))
+}
+
+/// Queries and decimates telemetry records in a specific window range.
+pub fn get_decimated_telemetry_in_range(
+    db_path: &str,
+    start_ts: i64,
+    end_ts: i64,
+    max_pixels: usize,
+) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
+    let (decimated, _, _, _) = get_decimated_telemetry_in_range_profiled(db_path, start_ts, end_ts, max_pixels, None)?;
+    Ok(decimated)
 }
 
 /// Queries the maximum value for a telemetry topic since a given timestamp.
@@ -548,5 +785,28 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 
+    #[test]
+    fn test_decimate_telemetry_records() {
+        let start_ts = 1000i64;
+        let end_ts = 2000i64;
+        let topic = "solax1/PV1 Power".to_string();
+
+        // Create 500 records
+        let mut records = Vec::new();
+        for i in 0..500 {
+            let ts = start_ts + (i * 2);
+            let val = (i as f64) % 50.0;
+            records.push((ts, topic.clone(), val));
+        }
+
+        // Decimate to max 50 points
+        let decimated = decimate_telemetry_records(records.clone(), start_ts, end_ts, 50);
+        assert!(decimated.len() <= 50);
+        assert!(!decimated.is_empty());
+
+        // Under limit (max_pixels = 1000): returns all records
+        let undecimated = decimate_telemetry_records(records.clone(), start_ts, end_ts, 1000);
+        assert_eq!(undecimated.len(), 500);
+    }
 }
 

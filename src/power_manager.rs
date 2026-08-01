@@ -100,14 +100,6 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
     crate::database::init_history_db(db_path)
 }
 
-fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, retention_days: Option<u32>) {
-    let len = buffer.len();
-    crate::database::flush_history_to_db(db_path, buffer, retention_days);
-    if len > 0 {
-        println!("Flushed {} telemetry records to SQLite database", len);
-    }
-}
-
 fn get_price_history(db_path: &str, topic: &str, since_timestamp: i64) -> Result<Vec<f64>, rusqlite::Error> {
     crate::database::get_price_history(db_path, topic, since_timestamp)
 }
@@ -1870,7 +1862,6 @@ pub async fn run_power_manager_task(
     }
 
     let mut latest_telemetry: HashMap<String, f64> = HashMap::new();
-    let mut history_buffer: Vec<HistoryRecord> = Vec::new();
     let mut history_ticker = tokio::time::interval(Duration::from_secs(10));
     history_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut last_flush = std::time::Instant::now();
@@ -2057,16 +2048,18 @@ pub async fn run_power_manager_task(
                     latest_telemetry.insert("tariff/export_price".to_string(), rates.export_rate);
 
                     let now_ts = Utc::now().timestamp();
-                    for (topic, &value) in &latest_telemetry {
-                        history_buffer.push(HistoryRecord {
+                    let new_recs: Vec<HistoryRecord> = latest_telemetry
+                        .iter()
+                        .map(|(topic, &value)| HistoryRecord {
                             timestamp: now_ts,
                             topic: topic.clone(),
                             value,
-                        });
-                    }
+                        })
+                        .collect();
+                    crate::database::push_pending_history_records(new_recs);
 
                     if last_flush.elapsed() >= Duration::from_secs(flush_interval_mins as u64 * 60) {
-                        flush_history_to_db(&db_path, &mut history_buffer, retention_days);
+                        crate::database::flush_pending_history_to_db(&db_path, retention_days);
                         last_flush = std::time::Instant::now();
                     }
                 }
@@ -2293,9 +2286,9 @@ pub async fn run_power_manager_task(
         }
     }
 
-    if history_enabled && !history_buffer.is_empty() {
-        println!("Shutting down Power Manager. Flushing remaining {} telemetry records to DB...", history_buffer.len());
-        flush_history_to_db(&db_path, &mut history_buffer, retention_days);
+    if history_enabled {
+        println!("Shutting down Power Manager. Flushing remaining pending telemetry records to DB...");
+        crate::database::flush_pending_history_to_db(&db_path, retention_days);
     }
 }
 

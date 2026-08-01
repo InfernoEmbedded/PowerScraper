@@ -313,6 +313,8 @@ pub struct DemandConfig {
 #[serde(rename_all = "kebab-case")]
 pub struct PvArrayConfig {
     pub name: String,
+    #[serde(rename = "capacity-w")]
+    pub capacity_w: Option<f64>,
     pub tilt: f64,
     pub azimuth: f64,
     pub brand: Option<String>,
@@ -331,11 +333,16 @@ pub struct PvArrayConfig {
 
 impl PvArrayConfig {
     pub fn capacity_w(&self) -> f64 {
-        let series = self.series_modules.unwrap_or(0) as f64;
-        let parallel = self.parallel_strings.unwrap_or(0) as f64;
-        let vmp = self.vmp.unwrap_or(0.0);
-        let imp = self.imp.unwrap_or(0.0);
-        series * parallel * vmp * imp
+        if let (Some(series), Some(parallel), Some(vmp), Some(imp)) = (
+            self.series_modules,
+            self.parallel_strings,
+            self.vmp,
+            self.imp,
+        ) {
+            (series as f64) * (parallel as f64) * vmp * imp
+        } else {
+            self.capacity_w.unwrap_or(0.0)
+        }
     }
 
     pub fn quantity(&self) -> u32 {

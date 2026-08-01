@@ -49,8 +49,17 @@ fn systemd_notify(_state: &str) {
     // No-op on non-Unix platforms
 }
 
+extern "C" fn flush_on_exit() {
+    println!("Process exit triggered. Flushing pending telemetry to SQLite...");
+    PowerScraper::database::flush_pending_history_to_db("config.db", None);
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    unsafe {
+        libc::atexit(flush_on_exit);
+    }
+
     println!("Starting PowerScraper (Rust Next Branch)...");
 
     #[cfg(unix)]
@@ -497,17 +506,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } => {}
                     }
-                    println!("Shutdown signal received. Canceling tasks...");
+                    println!("Shutdown signal received. Flushing pending history and canceling tasks...");
+                    systemd_notify("STOPPING=1");
                     cancel_token.cancel();
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    PowerScraper::database::flush_pending_history_to_db(&db_path, None);
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                     break;
                 }
             }
             _ = signal::ctrl_c() => {
-                println!("Shutdown signal (Ctrl-C) received. Canceling tasks...");
+                println!("Shutdown signal (Ctrl-C) received. Flushing pending history and canceling tasks...");
                 systemd_notify("STOPPING=1");
                 cancel_token.cancel();
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                PowerScraper::database::flush_pending_history_to_db(&db_path, None);
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 break;
             }
             _ = async {
@@ -520,10 +532,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     tokio::time::sleep(std::time::Duration::from_secs(999999)).await;
                 }
             } => {
-                println!("Shutdown signal (SIGTERM) received. Canceling tasks...");
+                println!("Shutdown signal (SIGTERM) received. Flushing pending history and canceling tasks...");
                 systemd_notify("STOPPING=1");
                 cancel_token.cancel();
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                PowerScraper::database::flush_pending_history_to_db(&db_path, None);
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                 break;
             }
         }

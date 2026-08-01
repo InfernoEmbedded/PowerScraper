@@ -201,6 +201,7 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
     let db_path_telemetry_csv = db_path.clone();
     let db_path_telemetry_csv2 = db_path.clone();
     let db_path_backup_import = db_path.clone();
+    let db_path_history_api = db_path.clone();
     let db_path_sim = db_path.clone();
     let db_path_train = db_path.clone();
     let db_path_apply = db_path.clone();
@@ -415,6 +416,78 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                             "status": "success",
                             "imported_telemetry_records": count
                         })))
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/history",
+            get({
+                let db_path = db_path_history_api.clone();
+                move |axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>| {
+                    let path = db_path.clone();
+                    async move {
+                        let now = chrono::Utc::now().timestamp();
+                        let start_ts = params.get("start")
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(now - 86400);
+                        let end_ts = params.get("end")
+                            .and_then(|s| s.parse::<i64>().ok())
+                            .unwrap_or(now);
+
+                        let max_pixels = params.get("max_pixels")
+                            .or_else(|| params.get("pixels"))
+                            .or_else(|| params.get("width"))
+                            .and_then(|s| s.parse::<usize>().ok())
+                            .unwrap_or(1200);
+
+                        let topics_opt: Option<Vec<String>> = params.get("topics")
+                            .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect());
+
+                        let req_start = std::time::Instant::now();
+                        // Flush any buffered in-memory telemetry records to SQLite DB before querying
+                        crate::database::flush_pending_history_to_db(&path, None);
+                        match crate::database::get_decimated_telemetry_in_range_profiled(&path, start_ts, end_ts, max_pixels, topics_opt.as_deref()) {
+                            Ok((records, raw_count, db_dur, decimate_dur)) => {
+                                let t_fmt = std::time::Instant::now();
+                                #[derive(serde::Serialize)]
+                                struct TelemetryRecordRef<'a> {
+                                    timestamp: i64,
+                                    topic: &'a str,
+                                    value: f64,
+                                }
+                                let refs: Vec<TelemetryRecordRef> = records
+                                    .iter()
+                                    .map(|(ts, topic, val)| TelemetryRecordRef {
+                                        timestamp: *ts,
+                                        topic: topic.as_str(),
+                                        value: *val,
+                                    })
+                                    .collect();
+                                let json_body = serde_json::to_string(&refs).unwrap_or_else(|_| "[]".to_string());
+                                let fmt_dur = t_fmt.elapsed().as_secs_f64() * 1000.0;
+                                let total_dur = req_start.elapsed().as_secs_f64() * 1000.0;
+
+                                println!(
+                                    "[Profile /api/history] DB Query: {:.2}ms ({} rows), Decimation: {:.2}ms ({} decimated rows), Format: {:.2}ms, Total Server: {:.2}ms, Payload: {} bytes",
+                                    db_dur, raw_count, decimate_dur, refs.len(), fmt_dur, total_dur, json_body.len()
+                                );
+
+                                let server_timing = format!(
+                                    "db;dur={:.2};desc=\"DB Query\", decimate;dur={:.2};desc=\"Decimation\", format;dur={:.2};desc=\"JSON Format\", total;dur={:.2};desc=\"Total Server\"",
+                                    db_dur, decimate_dur, fmt_dur, total_dur
+                                );
+
+                                Ok((
+                                    [
+                                        (axum::http::header::HeaderName::from_static("server-timing"), server_timing),
+                                        (axum::http::header::CONTENT_TYPE, "application/json".to_string()),
+                                    ],
+                                    json_body,
+                                ))
+                            }
+                            Err(e) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Database query error: {}", e))),
+                        }
                     }
                 }
             }),
