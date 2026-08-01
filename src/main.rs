@@ -175,10 +175,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(ref cfg) => cfg.clone(),
             None => {
                 println!(
-                    "Warning: [MQTT] section not found in configuration. Defaulting to local broker at homeautemation.lan."
+                    "Warning: [MQTT] section not found in configuration. Defaulting to local broker at homeautomation.lan."
                 );
                 config::MqttBrokerConfig {
-                    broker: "homeautemation.lan".to_string(),
+                    broker: "homeautomation.lan".to_string(),
                     port: Some(1883),
                     base_topic: Some("sensors".to_string()),
                     username: Some("power".to_string()),

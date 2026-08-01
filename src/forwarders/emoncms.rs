@@ -42,25 +42,23 @@ pub async fn forward_to_emoncms(
         let client = client.clone();
         let timeout_sec = config.timeout;
         let cancel_token_emon = cancel_token.clone();
+        let device_name_log = device_name.to_string();
         tokio::spawn(async move {
             tokio::select! {
                 _ = cancel_token_emon.cancelled() => {}
                 res = client
-                    .get(&emon_url)
-                    .query(&query_params)
+                    .post(&emon_url)
+                    .form(&query_params)
                     .timeout(Duration::from_secs_f64(timeout_sec))
                     .send() => {
                         match res {
                             Ok(resp) => {
-                                if !resp.status().is_success() {
-                                    println!(
-                                        "EmonCMS forward failed with status: {}",
-                                        resp.status()
-                                    );
-                                }
+                                let status = resp.status();
+                                let body = resp.text().await.unwrap_or_default();
+                                eprintln!("[EmonCMS Log] node={}: status={}, body={}", device_name_log, status, body);
                             }
                             Err(e) => {
-                                println!("EmonCMS request error: {}", e);
+                                eprintln!("[EmonCMS Log] node={} error: {}", device_name_log, e);
                             }
                         }
                     }

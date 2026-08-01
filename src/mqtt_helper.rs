@@ -23,7 +23,7 @@ pub fn create_mqtt_client(client_id: &str, config: &MqttBrokerConfig) -> (AsyncC
             options.set_credentials(username, password);
         }
     }
-    AsyncClient::new(options, 100)
+    AsyncClient::new(options, 10000)
 }
 
 pub fn sanitize_id(id: &str) -> String {

@@ -31,13 +31,57 @@ pub async fn run_forwarders_task(
     // Structure: device_name -> (metric_key -> metric_value)
     let buffer = Arc::new(Mutex::new(HashMap::<String, HashMap<String, String>>::new()));
 
-    // Subscribe to all status topics
+    let buffer_clone = buffer.clone();
+    let cancel_token_mqtt = cancel_token.clone();
+    let base_topic_clone = base_topic.clone();
+
+    // 1. Spawn MQTT eventloop receiver task FIRST so eventloop.poll() runs
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_token_mqtt.cancelled() => break,
+                res = eventloop.poll() => {
+                    match res {
+                        Ok(notification) => {
+                            if let Event::Incoming(Packet::Publish(publish)) = notification {
+                                let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic_clone));
+                                if let Some(suffix) = topic_suffix {
+                                    let parts: Vec<&str> = suffix.split('/').collect();
+                                    if parts.len() >= 2 {
+                                        let device_name = parts[0];
+                                        let metric = parts[1..].join("/");
+                                        let payload =
+                                            String::from_utf8_lossy(&publish.payload).trim().to_string();
+
+                                        let mut buf_lock = buffer_clone.lock().await;
+                                        buf_lock
+                                            .entry(device_name.to_string())
+                                            .or_default()
+                                            .insert(metric, payload);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("[Forwarder Log] MQTT error: {}", e);
+                            tokio::select! {
+                                _ = cancel_token_mqtt.cancelled() => break,
+                                _ = sleep(Duration::from_secs(5)) => {}
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    // 2. Now subscribe safely to status topics
     let status_wildcard = format!("{}/#", base_topic);
     if let Err(e) = mqtt_client
         .subscribe(&status_wildcard, QoS::AtLeastOnce)
         .await
     {
-        println!("Forwarder failed to subscribe: {}", e);
+        eprintln!("[Forwarder Log] Failed to subscribe: {}", e);
         return;
     }
 
@@ -46,88 +90,42 @@ pub async fn run_forwarders_task(
         status_wildcard
     );
 
-    // Spawn the periodic flush loop
-    let buffer_clone = buffer.clone();
-    let emon_clone = emoncms_config.clone();
-    let influx_clone = influx_config.clone();
-    let cancel_token_flush = cancel_token.clone();
-    tokio::spawn(async move {
-        let http_client = reqwest::Client::new();
-        #[cfg(test)]
-        let flush_interval = Duration::from_secs(1);
-        #[cfg(not(test))]
-        let flush_interval = Duration::from_secs(10);
+    // 3. Periodic flush loop in main forwarder task
+    let http_client = reqwest::Client::new();
+    #[cfg(test)]
+    let flush_interval = Duration::from_secs(1);
+    #[cfg(not(test))]
+    let flush_interval = Duration::from_secs(5);
 
-        loop {
-            tokio::select! {
-                _ = cancel_token_flush.cancelled() => break,
-                _ = sleep(flush_interval) => {}
-            }
-
-            let mut data_to_flush = HashMap::new();
-            {
-                let mut buf_lock = buffer_clone.lock().await;
-                // Swap buffer to release lock quickly
-                std::mem::swap(&mut *buf_lock, &mut data_to_flush);
-            }
-
-            if data_to_flush.is_empty() {
-                continue;
-            }
-
-            for (device_name, metrics) in data_to_flush {
-                if metrics.is_empty() {
-                    continue;
-                }
-
-                // 1. Flush to EmonCMS
-                if let Some(ref emon) = emon_clone {
-                    emoncms::forward_to_emoncms(&http_client, emon, &device_name, &metrics, &cancel_token_flush).await;
-                }
-
-                // 2. Flush to InfluxDB v2
-                if let Some(ref influx) = influx_clone {
-                    influx::forward_to_influx(&http_client, influx, &device_name, &metrics, &cancel_token_flush).await;
-                }
-            }
-        }
-    });
-
-    // Main MQTT subscription polling loop
     loop {
         tokio::select! {
             _ = cancel_token.cancelled() => break,
-            res = eventloop.poll() => {
-                match res {
-                    Ok(notification) => {
-                        if let Event::Incoming(Packet::Publish(publish)) = notification {
-                            let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
-                            if let Some(suffix) = topic_suffix {
-                                let parts: Vec<&str> = suffix.split('/').collect();
-                                if parts.len() >= 2 {
-                                    let device_name = parts[0];
-                                    let metric = parts[1..].join("/");
-                                    let payload =
-                                        String::from_utf8_lossy(&publish.payload).trim().to_string();
+            _ = sleep(flush_interval) => {}
+        }
 
-                                    // Buffer the metric
-                                    let mut buf_lock = buffer.lock().await;
-                                    buf_lock
-                                        .entry(device_name.to_string())
-                                        .or_default()
-                                        .insert(metric, payload);
-                                }
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        println!("Forwarder MQTT error: {}", e);
-                        tokio::select! {
-                            _ = cancel_token.cancelled() => break,
-                            _ = sleep(Duration::from_secs(5)) => {}
-                        }
-                    }
-                }
+        let mut data_to_flush = HashMap::new();
+        {
+            let mut buf_lock = buffer.lock().await;
+            std::mem::swap(&mut *buf_lock, &mut data_to_flush);
+        }
+
+        if data_to_flush.is_empty() {
+            continue;
+        }
+
+        for (device_name, metrics) in data_to_flush {
+            if metrics.is_empty() {
+                continue;
+            }
+
+            // 1. Flush to EmonCMS
+            if let Some(ref emon) = emoncms_config {
+                emoncms::forward_to_emoncms(&http_client, emon, &device_name, &metrics, &cancel_token).await;
+            }
+
+            // 2. Flush to InfluxDB v2
+            if let Some(ref influx) = influx_config {
+                influx::forward_to_influx(&http_client, influx, &device_name, &metrics, &cancel_token).await;
             }
         }
     }

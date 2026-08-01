@@ -1,6 +1,6 @@
 [package]
 name = "PowerScraper"
-version = "1.0.81"
+version = "1.0.91"
 edition = "2024"
 
 [dependencies]
@@ -21,4 +21,9 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 tokio-util = "0.7"
 csv = "1.3"
 libc = "0.2"
+
+[[bin]]
+name = "PowerScraper"
+path = "src/main.rs"
+
 

@@ -224,7 +224,7 @@ async fn run_mock_wifi_server(
                                         );
                                         let _ = stream.write_all(response.as_bytes()).await;
                                     }
-                                } else if request.contains("GET /input/post") {
+                                } else if request.contains("/input/post") {
                                     http_clone.lock().unwrap().push(request.to_string());
                                     let req_num = emon_count_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                                     if req_num == 1 {
