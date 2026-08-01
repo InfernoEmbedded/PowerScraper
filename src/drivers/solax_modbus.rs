@@ -128,7 +128,14 @@ pub async fn run_solax_modbus_driver(
             if lock.is_none() {
                 match resolve_address(&hostname).await {
                     Ok(addr) => match tcp::connect(addr).await {
-                        Ok(ctx) => {
+                        Ok(mut ctx) => {
+                            let pwd = config.installer_password.unwrap_or(2014);
+                            let _ = ctx.write_single_register(0x00, pwd).await;
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+
+                            let _ = ctx.write_single_register(0x51, 1).await;
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+
                             *lock = Some(ctx);
                             consecutive_errors = 0;
                         }
@@ -147,20 +154,29 @@ pub async fn run_solax_modbus_driver(
                     _ => true,
                 };
 
+                let mut write_failed = false;
                 if needs_update {
-                    let power_u16 = req_power as u16;
-                    if ctx.write_single_register(0x51, power_u16).await.is_ok() {
-                        last_written_power = Some(req_power);
-                        last_write_time = Some(std::time::Instant::now());
-                        if req_power != 0 {
-                            tokio::time::sleep(Duration::from_millis(200)).await;
-                            let _ = ctx.write_single_register(0x90, 1).await;
-                        }
+                    last_written_power = Some(req_power);
+                    last_write_time = Some(std::time::Instant::now());
+
+                    // Gen 2 SK-SU Protocol: Write power target to register 0x0051 (positive = charge, negative = discharge)
+                    // and trigger execution via register 0x0090 = 1
+                    let power_u16 = (req_power as i16) as u16;
+                    if let Err(e) = ctx.write_single_register(0x51, power_u16).await {
+                        eprintln!("[SolaxModbus Log] Driver [{}] write_single_register(0x51, {}) failed: {}", inverter_name, req_power, e);
+                        write_failed = true;
+                    } else if req_power != 0 {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        let _ = ctx.write_single_register(0x90, 1).await;
                     }
                 }
 
                 let r_a = ctx.read_input_registers(0, 0x27).await;
                 let r_b = ctx.read_input_registers(0x40, 0x1E).await;
+
+                if write_failed {
+                    *lock = None;
+                }
 
                 match (r_a, r_b) {
                     (Ok(a), Ok(b)) => {
