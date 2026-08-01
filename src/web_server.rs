@@ -129,20 +129,50 @@ fn export_backup_dump(db_path: &str) -> Result<BackupDump, (axum::http::StatusCo
 fn export_telemetry_csv(db_path: &str) -> Result<([(header::HeaderName, String); 2], Vec<u8>), (axum::http::StatusCode, String)> {
     let _ = crate::database::init_history_db(db_path);
 
+    let cfg = Config::load_from_db(db_path).unwrap_or_else(|_| Config::default_empty());
+    let tz_offset = crate::power_manager::get_timezone_offset(cfg.battery_control.as_ref().and_then(|bc| bc.timezone.as_deref()));
+
     let history_rows = crate::database::get_all_telemetry_since(db_path, 0)
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to query telemetry history: {}", e)))?;
 
+    let mut topics_set = std::collections::BTreeSet::new();
+    let mut time_map: std::collections::BTreeMap<i64, std::collections::HashMap<String, f64>> = std::collections::BTreeMap::new();
+
+    for (ts, topic, val) in history_rows {
+        topics_set.insert(topic.clone());
+        time_map.entry(ts).or_default().insert(topic, val);
+    }
+
+    let topics: Vec<String> = topics_set.into_iter().collect();
+
     let mut wtr = csv::WriterBuilder::new().from_writer(Vec::new());
-    if let Err(e) = wtr.write_record(&["timestamp", "iso_time", "topic", "value"]) {
+
+    let mut header_row = vec!["timestamp".to_string(), "datetime".to_string()];
+    header_row.extend(topics.clone());
+
+    if let Err(e) = wtr.write_record(&header_row) {
         return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV write header error: {}", e)));
     }
 
-    for (ts, topic, val) in history_rows {
+    for (ts, vals) in time_map {
         let dt_str = match chrono::DateTime::from_timestamp(ts, 0) {
-            Some(dt) => dt.to_rfc3339(),
+            Some(dt) => dt.with_timezone(&tz_offset).to_rfc3339(),
             None => "".to_string(),
         };
-        if let Err(e) = wtr.write_record(&[ts.to_string(), dt_str, topic, val.to_string()]) {
+
+        let mut row = Vec::with_capacity(2 + topics.len());
+        row.push(ts.to_string());
+        row.push(dt_str);
+
+        for topic in &topics {
+            if let Some(val) = vals.get(topic) {
+                row.push(val.to_string());
+            } else {
+                row.push("".to_string());
+            }
+        }
+
+        if let Err(e) = wtr.write_record(&row) {
             return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV write record error: {}", e)));
         }
     }
@@ -150,7 +180,7 @@ fn export_telemetry_csv(db_path: &str) -> Result<([(header::HeaderName, String);
     let csv_bytes = wtr.into_inner()
         .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV flush error: {}", e)))?;
 
-    let now_str = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+    let now_str = chrono::Utc::now().with_timezone(&tz_offset).format("%Y%m%d_%H%M%S").to_string();
     let filename = format!("powerscraper_telemetry_{}.csv", now_str);
 
     let headers = [
