@@ -2894,6 +2894,7 @@ pub async fn run_weather_fetcher_task(db_path: String, cancel_token: tokio_util:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::database::flush_history_to_db;
     use chrono::Local;
 
     #[test]

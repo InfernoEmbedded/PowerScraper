@@ -4,6 +4,32 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.106] - 2026-08-01
+
+### Added
+* **History Chart Redesign & Unit Standardization**:
+  - Standardized Solar Generation, Battery Power, Grid Power, and Household Usage history graphs to display in **kW** instead of Watts.
+  - Converted Battery Capacity history graph from percentage (%) to stored energy in **kWh** using inferred capacity or configured battery rating.
+  - Added stacked per-PV array rendering (PV1, PV2) on Solar Generation graph.
+  - Added split color coding on Grid Power graph: **Green** for feed-in (<0 kW) and **Red** for grid draw (>0 kW).
+  - Added smooth **Green-to-Red** color gradation to Household Usage graph.
+  - Added conditional hiding of PV array details in Location tab and History charts when an inverter has 'no pv' enabled.
+* **Server-Side Telemetry Decimation & Profiling**:
+  - Implemented server-side mean-average bucket decimation using the `max_pixels` parameter to avoid over-fetching telemetry data.
+  - Added microsecond profiling logs and `Server-Timing` HTTP response headers (`db`, `decimate`, `format`, `total`).
+* **Automatic Pre-Fetch Telemetry Flush**:
+  - Added thread-safe `PENDING_HISTORY` buffer in `database.rs`.
+  - Automatically flushes all pending in-memory telemetry to SQLite DB prior to serving `/api/history` queries.
+  - Flushes pending telemetry to SQLite on process shutdown, signal receipt (SIGTERM, SIGINT), and via `libc::atexit` hook.
+
+### Optimized
+* **Database Schema & Indexing**:
+  - Split `telemetry_history` topic into `device` and `field` columns with compound indices `idx_telemetry_history_field_timestamp` and `idx_telemetry_history_device_field_timestamp`.
+  - Added non-blocking batched schema migration (`LIMIT 50000`) on startup to prevent SQLite database locks.
+  - Replaced serde_json allocations with zero-copy `TelemetryRecordRef` serialization, reducing `/api/history` query duration from >4.6s to ~30ms (**~160x speedup**).
+
+---
+
 ## [1.0.79] - 2026-07-31
 
 ### Fixed
