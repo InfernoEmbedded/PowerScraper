@@ -666,7 +666,11 @@ impl PowerManager {
             let state = self.inverters.get(name).cloned().unwrap_or_default();
             let cap_kwh = inv_cfg.battery_capacity.filter(|&c| c > 0.0).unwrap_or(13.8);
             let soc = state.battery_capacity as f64;
-            let min_pct = period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64;
+            let min_pct = if self.mode == PowerManagerMode::MaximumFeedin {
+                inv_cfg.min_charge_pct.unwrap_or(10) as f64
+            } else {
+                period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64
+            };
             let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
 
             let battery = crate::battery_group::Battery {
@@ -1383,7 +1387,11 @@ impl PowerManager {
                     .or_else(|| inv_cfg.battery_capacity.filter(|&c| c > 0.0))
                     .unwrap_or(13.8);
                 let soc = state.battery_capacity as f64;
-                let min_pct = period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64;
+                let min_pct = if self.mode == PowerManagerMode::MaximumFeedin {
+                    inv_cfg.min_charge_pct.unwrap_or(10) as f64
+                } else {
+                    period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64
+                };
                 let max_pct = inv_cfg.max_charge_pct.unwrap_or(95) as f64;
 
                 let battery = crate::battery_group::Battery {
@@ -1461,7 +1469,11 @@ impl PowerManager {
                             .or_else(|| cfg.battery_capacity.filter(|&c| c > 0.0))
                             .unwrap_or(13.8);
                         let soc = state.battery_capacity as f64;
-                        let min_pct = period.min_charge.max(cfg.min_charge_pct.unwrap_or(0)) as f64;
+                        let min_pct = if self.mode == PowerManagerMode::MaximumFeedin {
+                            cfg.min_charge_pct.unwrap_or(10) as f64
+                        } else {
+                            period.min_charge.max(cfg.min_charge_pct.unwrap_or(0)) as f64
+                        };
                         let max_pct = cfg.max_charge_pct.unwrap_or(95) as f64;
 
                         let battery = crate::battery_group::Battery {
