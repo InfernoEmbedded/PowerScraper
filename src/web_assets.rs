@@ -65,6 +65,10 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.5 1z"></path></svg>
                 Model Tuning
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-backup', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Backup & Restore
+            </button>
             <button class="nav-btn" onclick="switchTab('tab-about', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
                 About
@@ -820,6 +824,53 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div style="display: flex; gap: 15px; align-items: center;">
                     <button class="btn-apply" id="btn-apply-tuning" onclick="applyTuning()" style="display: inline-block;">Apply Evolved Parameters</button>
                     <span id="tune-apply-status" style="font-weight: 500; font-size: 0.9rem; color: var(--accent); transition: all 0.3s ease;"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- BACKUP TAB -->
+        <div id="tab-backup" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <h2 style="font-size: 1.5rem; font-weight: 600;">System Backup & Restore</h2>
+            </div>
+
+            <!-- EXPORT CARD -->
+            <div class="glass-card" style="margin-bottom: 25px; padding: 25px;">
+                <h3 style="margin-bottom: 10px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    Export System Backup
+                </h3>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Download a full system backup containing your configuration (key-value database, drivers, tariffs, and location) alongside recorded telemetry history.
+                </p>
+                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                    <a href="/api/backup/download" download class="btn-apply" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        Download Full Backup (Config + Telemetry)
+                    </a>
+                    <button class="sub-btn" onclick="exportConfigOnlyJSON()">
+                        Export Config Only (JSON)
+                    </button>
+                </div>
+            </div>
+
+            <!-- IMPORT CARD -->
+            <div class="glass-card" style="padding: 25px;">
+                <h3 style="margin-bottom: 10px; color: var(--accent); display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    Restore System Backup
+                </h3>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Restore configuration and telemetry history from a previously exported PowerScraper backup JSON file.
+                </p>
+                <div style="display: flex; flex-direction: column; gap: 15px; max-width: 600px;">
+                    <div class="form-group">
+                        <label>Select Backup File (.json)</label>
+                        <input type="file" id="restore-file-input" accept=".json" style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; color: #fff;">
+                    </div>
+                    <button class="btn-apply" onclick="restoreBackupFromFile()" style="align-self: flex-start;">
+                        Restore System Backup
+                    </button>
                 </div>
             </div>
         </div>
@@ -3413,26 +3464,33 @@ async function saveConfiguration() {
                 }
             }
         } else if (type === 'MQTTInverter') {
-            const name = card.querySelector('.driver-mqtt-inv-name').value.trim();
-            const broker = card.querySelector('.driver-mqtt-inv-broker').value.trim() || null;
-            const port = parseInt(card.querySelector('.driver-mqtt-inv-port').value) || 1883;
-            const user = card.querySelector('.driver-mqtt-inv-user').value.trim() || null;
-            const pass = card.querySelector('.driver-mqtt-inv-pass').value.trim() || null;
-            const topicPV1Power = card.querySelector('.driver-mqtt-inv-topic-pv1-power').value.trim() || null;
-            const topicPV2Power = card.querySelector('.driver-mqtt-inv-topic-pv2-power').value.trim() || null;
-            const topicPV1Volt = card.querySelector('.driver-mqtt-inv-topic-pv1-voltage').value.trim() || null;
-            const topicPV2Volt = card.querySelector('.driver-mqtt-inv-topic-pv2-voltage').value.trim() || null;
-            const topicPV1Curr = card.querySelector('.driver-mqtt-inv-topic-pv1-current').value.trim() || null;
-            const topicPV2Curr = card.querySelector('.driver-mqtt-inv-topic-pv2-current').value.trim() || null;
-            const topicGridVolt = card.querySelector('.driver-mqtt-inv-topic-grid-voltage').value.trim() || null;
-            const topicGridCurr = card.querySelector('.driver-mqtt-inv-topic-grid-current').value.trim() || null;
-            const topicGridPow = card.querySelector('.driver-mqtt-inv-topic-grid-power').value.trim() || null;
-            const topicFreq = card.querySelector('.driver-mqtt-inv-topic-frequency').value.trim() || null;
-            const topicTemp = card.querySelector('.driver-mqtt-inv-topic-temperature').value.trim() || null;
-            const topicEnergyToday = card.querySelector('.driver-mqtt-inv-topic-energy-today').value.trim() || null;
-            const topicEnergyTotal = card.querySelector('.driver-mqtt-inv-topic-energy-total').value.trim() || null;
-            const topicBatCap = card.querySelector('.driver-mqtt-inv-topic-battery-capacity').value.trim() || null;
-            const topicBatPow = card.querySelector('.driver-mqtt-inv-topic-battery-power').value.trim() || null;
+            const getStr = (cls) => {
+                const el = card.querySelector(cls);
+                if (!el) return null;
+                const v = el.value.trim();
+                return v === "" ? null : v;
+            };
+            const name = getStr('.driver-mqtt-inv-name');
+            const broker = getStr('.driver-mqtt-inv-broker');
+            const portEl = card.querySelector('.driver-mqtt-inv-port');
+            const port = portEl ? (parseInt(portEl.value) || 1883) : 1883;
+            const user = getStr('.driver-mqtt-inv-user');
+            const pass = getStr('.driver-mqtt-inv-pass');
+            const topicPV1Power = getStr('.driver-mqtt-inv-topic-pv1-power');
+            const topicPV2Power = getStr('.driver-mqtt-inv-topic-pv2-power');
+            const topicPV1Volt = getStr('.driver-mqtt-inv-topic-pv1-voltage');
+            const topicPV2Volt = getStr('.driver-mqtt-inv-topic-pv2-voltage');
+            const topicPV1Curr = getStr('.driver-mqtt-inv-topic-pv1-current');
+            const topicPV2Curr = getStr('.driver-mqtt-inv-topic-pv2-current');
+            const topicGridVolt = getStr('.driver-mqtt-inv-topic-grid-voltage');
+            const topicGridCurr = getStr('.driver-mqtt-inv-topic-grid-current');
+            const topicGridPow = getStr('.driver-mqtt-inv-topic-grid-power');
+            const topicFreq = getStr('.driver-mqtt-inv-topic-frequency');
+            const topicTemp = getStr('.driver-mqtt-inv-topic-temperature');
+            const topicEnergyToday = getStr('.driver-mqtt-inv-topic-energy-today');
+            const topicEnergyTotal = getStr('.driver-mqtt-inv-topic-energy-total');
+            const topicBatCap = getStr('.driver-mqtt-inv-topic-battery-capacity');
+            const topicBatPow = getStr('.driver-mqtt-inv-topic-battery-power');
 
             if (name) {
                 if (!mqttInverterConfig) {
@@ -4762,5 +4820,68 @@ async function applyTuning() {
         statusText.innerText = `Failed to apply: ${e.message}`;
         statusText.style.color = "var(--danger)";
     }
+}
+
+async function exportConfigOnlyJSON() {
+    try {
+        const r = await fetch('/api/config');
+        if (!r.ok) return alert("Failed to fetch configuration.");
+        const cfg = await r.json();
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(cfg, null, 2));
+        const dlAnchor = document.createElement('a');
+        const nowStr = new Date().toISOString().replace(/[:.]/g, '-');
+        dlAnchor.setAttribute("href", dataStr);
+        dlAnchor.setAttribute("download", `powerscraper_config_${nowStr}.json`);
+        document.body.appendChild(dlAnchor);
+        dlAnchor.click();
+        dlAnchor.remove();
+    } catch (e) {
+        alert("Error exporting config: " + e.message);
+    }
+}
+
+async function restoreBackupFromFile() {
+    const input = document.getElementById('restore-file-input');
+    if (!input || !input.files || input.files.length === 0) {
+        return alert("Please select a valid backup .json file first.");
+    }
+    const file = input.files[0];
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            const data = JSON.parse(e.target.result);
+            if (data.config && data.telemetry_history !== undefined) {
+                const resp = await fetch('/api/backup/import', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                if (resp.ok) {
+                    const result = await resp.json();
+                    alert(`Backup restored successfully! (${result.imported_telemetry_records || 0} telemetry history records imported)`);
+                    location.reload();
+                } else {
+                    const errText = await resp.text();
+                    alert("Backup restore failed: " + errText);
+                }
+            } else {
+                const resp = await fetch('/api/config', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(data)
+                });
+                if (resp.ok) {
+                    alert("Configuration restored and reloaded successfully!");
+                    location.reload();
+                } else {
+                    const errText = await resp.text();
+                    alert("Config restore failed: " + errText);
+                }
+            }
+        } catch (err) {
+            alert("Failed to parse backup JSON file: " + err.message);
+        }
+    };
+    reader.readAsText(file);
 }
 "###;

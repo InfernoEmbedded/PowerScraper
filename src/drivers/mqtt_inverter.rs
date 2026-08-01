@@ -99,8 +99,18 @@ pub async fn run_mqtt_inverter_driver(
         );
     }
 
+    // Seed status.inverters so the inverter appears in web UI immediately
+    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+        let inv = status.inverters.entry(inverter_name.clone()).or_default();
+        inv.run_mode = 2; // Normal running state
+    }
+
     let mut pv1_power = 0.0;
     let mut pv2_power = 0.0;
+    let mut pv1_voltage = 0.0;
+    let mut pv1_current = 0.0;
+    let mut pv2_voltage = 0.0;
+    let mut pv2_current = 0.0;
     let mut battery_capacity = 0;
     let mut battery_power = 0.0;
 
@@ -129,34 +139,39 @@ pub async fn run_mqtt_inverter_driver(
                                 let parsed_val: Option<f64> = payload.parse::<f64>().ok();
 
                                 if let Some(val) = parsed_val {
-                                    let mut state_updated = false;
-
                                     if metric_name == "PV1 Power" {
                                         pv1_power = val;
-                                        state_updated = true;
                                     } else if metric_name == "PV2 Power" {
                                         pv2_power = val;
-                                        state_updated = true;
+                                    } else if metric_name == "PV1 Voltage" {
+                                        pv1_voltage = val;
+                                    } else if metric_name == "PV1 Current" {
+                                        pv1_current = val;
+                                    } else if metric_name == "PV2 Voltage" {
+                                        pv2_voltage = val;
+                                    } else if metric_name == "PV2 Current" {
+                                        pv2_current = val;
                                     } else if metric_name == "Battery Capacity" {
                                         battery_capacity = val.round() as u32;
-                                        state_updated = true;
                                     } else if metric_name == "Battery Power" {
                                         battery_power = val;
-                                        state_updated = true;
                                     }
 
-                                    if state_updated {
-                                        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                                            let inv = status.inverters.entry(inverter_name.clone()).or_default();
-                                            inv.pv_power = (pv1_power + pv2_power).round() as u32;
-                                            inv.battery_capacity = battery_capacity as u8;
-                                            inv.battery_power = battery_power.round() as i32;
-                                            inv.run_mode = 2; // Normal running state
-                                            inv.last_updated = Some(std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap()
-                                                .as_secs());
-                                        }
+                                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                        let inv = status.inverters.entry(inverter_name.clone()).or_default();
+                                        let total_pv = if (pv1_power + pv2_power) > 0.0 {
+                                            pv1_power + pv2_power
+                                        } else {
+                                            (pv1_voltage * pv1_current) + (pv2_voltage * pv2_current)
+                                        };
+                                        inv.pv_power = total_pv.round() as u32;
+                                        inv.battery_capacity = battery_capacity as u8;
+                                        inv.battery_power = battery_power.round() as i32;
+                                        inv.run_mode = 2; // Normal running state
+                                        inv.last_updated = Some(std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_secs());
                                     }
                                 }
 

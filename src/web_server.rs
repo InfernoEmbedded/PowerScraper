@@ -85,8 +85,52 @@ struct SimQuery {
     range: Option<String>,
 }
 
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct BackupTelemetryRecord {
+    pub timestamp: i64,
+    pub topic: String,
+    pub value: f64,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Debug)]
+pub struct BackupDump {
+    pub version: String,
+    pub exported_at: String,
+    pub config: Config,
+    pub telemetry_history: Vec<BackupTelemetryRecord>,
+}
+
+fn export_backup_dump(db_path: &str) -> Result<BackupDump, (axum::http::StatusCode, String)> {
+    let cfg = Config::load_from_db(db_path)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load config: {}", e)))?;
+
+    let _ = crate::database::init_history_db(db_path);
+
+    let history_rows = crate::database::get_all_telemetry_since(db_path, 0)
+        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to query telemetry history: {}", e)))?;
+
+    let telemetry_history = history_rows
+        .into_iter()
+        .map(|(ts, topic, val)| BackupTelemetryRecord {
+            timestamp: ts,
+            topic,
+            value: val,
+        })
+        .collect();
+
+    Ok(BackupDump {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        config: cfg,
+        telemetry_history,
+    })
+}
+
 pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
     let db_path_clone = db_path.clone();
+    let db_path_backup_export = db_path.clone();
+    let db_path_backup_dl = db_path.clone();
+    let db_path_backup_import = db_path.clone();
     let db_path_sim = db_path.clone();
     let db_path_train = db_path.clone();
     let db_path_apply = db_path.clone();
@@ -166,16 +210,96 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
         )
         .route(
             "/api/config",
-            post(move |Json(new_cfg): Json<Config>| {
-                let path = db_path.clone();
+            post({
                 let reload_channel = state.clone();
-                async move {
-                    if let Err(e) = new_cfg.save_to_db(&path) {
-                        return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+                move |Json(new_cfg): Json<Config>| {
+                    let path = db_path.clone();
+                    let reload_channel = reload_channel.clone();
+                    async move {
+                        if let Err(e) = new_cfg.save_to_db(&path) {
+                            return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+                        }
+                        // Signal live reload to daemon tasks
+                        let _ = reload_channel.send(()).await;
+                        Ok(Json(serde_json::json!({ "status": "success" })))
                     }
-                    // Signal live reload to daemon tasks
-                    let _ = reload_channel.send(()).await;
-                    Ok(Json(serde_json::json!({ "status": "success" })))
+                }
+            }),
+        )
+        .route(
+            "/api/backup/export",
+            get({
+                let db_path = db_path_backup_export.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move {
+                        export_backup_dump(&path).map(Json)
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/backup/download",
+            get({
+                let db_path = db_path_backup_dl.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move {
+                        match export_backup_dump(&path) {
+                            Ok(dump) => {
+                                let now_str = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+                                let filename = format!("powerscraper_backup_{}.json", now_str);
+                                let body_str = match serde_json::to_string_pretty(&dump) {
+                                    Ok(s) => s,
+                                    Err(e) => return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+                                };
+                                let headers = [
+                                    (header::CONTENT_TYPE, "application/json".to_string()),
+                                    (
+                                        header::CONTENT_DISPOSITION,
+                                        format!("attachment; filename=\"{}\"", filename),
+                                    ),
+                                ];
+                                Ok((headers, body_str))
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                }
+            }),
+        )
+        .route(
+            "/api/backup/import",
+            post({
+                let db_path = db_path_backup_import.clone();
+                let reload_channel = state.clone();
+                move |Json(dump): Json<BackupDump>| {
+                    let path = db_path.clone();
+                    let reload_channel = reload_channel.clone();
+                    async move {
+                        if let Err(e) = dump.config.save_to_db(&path) {
+                            return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save config: {}", e)));
+                        }
+
+                        let count = dump.telemetry_history.len();
+                        if count > 0 {
+                            let records: Vec<(i64, String, f64)> = dump
+                                .telemetry_history
+                                .into_iter()
+                                .map(|r| (r.timestamp, r.topic, r.value))
+                                .collect();
+                            if let Err(e) = crate::database::insert_telemetry_history_batch(&path, &records) {
+                                return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to import telemetry history: {}", e)));
+                            }
+                        }
+
+                        let _ = reload_channel.send(()).await;
+
+                        Ok(Json(serde_json::json!({
+                            "status": "success",
+                            "imported_telemetry_records": count
+                        })))
+                    }
                 }
             }),
         )
@@ -857,6 +981,43 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+
+        // 6. Test GET /api/backup/export
+        let response = app.clone()
+            .oneshot(Request::builder().uri("/api/backup/export").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // 7. Test GET /api/backup/download
+        let response = app.clone()
+            .oneshot(Request::builder().uri("/api/backup/download").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers().contains_key("content-disposition"));
+
+        // 8. Test POST /api/backup/import
+        let dump_json = serde_json::json!({
+            "version": "1.0.84",
+            "exported_at": "2026-08-01T00:00:00Z",
+            "config": crate::config::Config::default_empty(),
+            "telemetry_history": [
+                { "timestamp": 1000, "topic": "test/topic", "value": 42.0 }
+            ]
+        });
+        let response = app.clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/backup/import")
+                    .header("content-type", "application/json")
+                    .body(Body::from(dump_json.to_string()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
 
         let _ = std::fs::remove_file(temp_db);
     }
