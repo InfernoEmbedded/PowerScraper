@@ -163,33 +163,62 @@ pub fn build_discovery_payload(
 
         // Deduce device class, unit, and state class
         let m_lower = metric_name.to_lowercase();
-        let is_aggregate = device_name == "aggregate"
-            && (m_lower == "total solar production"
-                || m_lower == "total grid power used for charging"
-                || m_lower == "total consumption"
-                || m_lower == "total charging"
-                || m_lower == "total discharging");
 
-        if is_aggregate {
-            val_payload["unit_of_measurement"] = json!("W");
-            val_payload["device_class"] = json!("power");
+        // 1. Power Factor (dimensionless ratio, no unit)
+        if m_lower.contains("power factor")
+            || m_lower.contains("power_factor")
+            || m_lower == "pf"
+            || m_lower.ends_with(" pf")
+        {
+            val_payload["device_class"] = json!("power_factor");
             val_payload["state_class"] = json!("measurement");
-        } else if m_lower.contains("voltage") || m_lower.contains("v_phase") {
+
+        // 2. Phase Angle (degrees)
+        } else if m_lower.contains("phase angle")
+            || m_lower.contains("phase_angle")
+            || m_lower.contains("angle")
+        {
+            val_payload["unit_of_measurement"] = json!("°");
+            val_payload["state_class"] = json!("measurement");
+
+        // 3. THD (Total Harmonic Distortion - %)
+        } else if m_lower.contains("thd") {
+            val_payload["unit_of_measurement"] = json!("%");
+            val_payload["state_class"] = json!("measurement");
+
+        // 4. Voltage / Volts (V)
+        } else if m_lower.contains("voltage")
+            || m_lower.contains("volts")
+            || m_lower.contains("volt")
+            || m_lower.contains("v_phase")
+        {
             val_payload["unit_of_measurement"] = json!("V");
             val_payload["device_class"] = json!("voltage");
             val_payload["state_class"] = json!("measurement");
-        } else if m_lower.contains("current") || m_lower.contains("a_phase") {
+
+        // 5. Current / Amps (A)
+        } else if m_lower.contains("current")
+            || m_lower.contains("amps")
+            || m_lower.contains("amp")
+            || m_lower.contains("a_phase")
+        {
             val_payload["unit_of_measurement"] = json!("A");
             val_payload["device_class"] = json!("current");
             val_payload["state_class"] = json!("measurement");
-        } else if m_lower.contains("frequency") {
+
+        // 6. Frequency (Hz)
+        } else if m_lower.contains("frequency") || m_lower.contains("freq") {
             val_payload["unit_of_measurement"] = json!("Hz");
             val_payload["device_class"] = json!("frequency");
             val_payload["state_class"] = json!("measurement");
+
+        // 7. Temperature (°C)
         } else if m_lower.contains("temp") {
             val_payload["unit_of_measurement"] = json!("°C");
             val_payload["device_class"] = json!("temperature");
             val_payload["state_class"] = json!("measurement");
+
+        // 8. Battery / SOC / SOH (%)
         } else if m_lower.contains("capacity")
             || m_lower.contains("soc")
             || m_lower.contains("soh")
@@ -198,26 +227,35 @@ pub fn build_discovery_payload(
             val_payload["unit_of_measurement"] = json!("%");
             val_payload["device_class"] = json!("battery");
             val_payload["state_class"] = json!("measurement");
+
+        // 9. Reactive Energy (kvarh)
         } else if m_lower.contains("kvarh") {
             val_payload["unit_of_measurement"] = json!("kvarh");
             val_payload["state_class"] = json!("total_increasing");
-        } else if m_lower.contains("kvar") {
+
+        // 10. Apparent Energy (kVAh)
+        } else if m_lower.contains("kvah") {
+            val_payload["unit_of_measurement"] = json!("kVAh");
+            val_payload["state_class"] = json!("total_increasing");
+
+        // 11. Reactive Power (var / kVAR)
+        } else if m_lower.contains("kvar") || m_lower.contains("volt amps reactive") || m_lower.contains("reactive") {
             val_payload["unit_of_measurement"] = json!("var");
             val_payload["device_class"] = json!("reactive_power");
             val_payload["state_class"] = json!("measurement");
-        } else if m_lower.contains("va") {
+
+        // 12. Apparent Power (VA)
+        } else if m_lower.contains("volt amps") || m_lower.contains("apparent") || m_lower.contains("va") {
             val_payload["unit_of_measurement"] = json!("VA");
             val_payload["device_class"] = json!("apparent_power");
             val_payload["state_class"] = json!("measurement");
-        } else if m_lower.contains("energy")
-            || m_lower.contains("today")
-            || m_lower.contains("total")
-            || m_lower.ends_with("h")
-        {
-            val_payload["unit_of_measurement"] = json!("kWh");
-            val_payload["device_class"] = json!("energy");
-            val_payload["state_class"] = json!("total_increasing");
+
+        // 13. Active Power (W) - MUST PRECEDE CUMULATIVE ENERGY!
         } else if m_lower.contains("power")
+            || m_lower.contains("production")
+            || m_lower.contains("consumption")
+            || m_lower.contains("charging")
+            || m_lower.contains("discharging")
             || m_lower.contains("budget")
             || m_lower.contains("usage")
             || m_lower.contains("demand")
@@ -226,6 +264,17 @@ pub fn build_discovery_payload(
             val_payload["unit_of_measurement"] = json!("W");
             val_payload["device_class"] = json!("power");
             val_payload["state_class"] = json!("measurement");
+
+        // 14. Cumulative Energy (kWh)
+        } else if m_lower.contains("energy")
+            || m_lower.contains("kwh")
+            || m_lower.contains("today")
+            || m_lower.contains("yield")
+            || m_lower.ends_with("h")
+        {
+            val_payload["unit_of_measurement"] = json!("kWh");
+            val_payload["device_class"] = json!("energy");
+            val_payload["state_class"] = json!("total_increasing");
         }
 
         ("sensor", config_topic, val_payload)
@@ -317,6 +366,30 @@ mod tests {
             build_discovery_payload(&mqtt_config, "inverter1", "EPS VA", false).unwrap();
         assert_eq!(payload["unit_of_measurement"], "VA");
         assert_eq!(payload["device_class"], "apparent_power");
+
+        // MainsMeter Total Active Power (Must be W, not kWh)
+        let (_, _, payload) =
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Total active power", false).unwrap();
+        assert_eq!(payload["unit_of_measurement"], "W");
+        assert_eq!(payload["device_class"], "power");
+        assert_eq!(payload["state_class"], "measurement");
+
+        // MainsMeter Volts (Must be V)
+        let (_, _, payload) =
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 line to neutral volts", false).unwrap();
+        assert_eq!(payload["unit_of_measurement"], "V");
+        assert_eq!(payload["device_class"], "voltage");
+
+        // MainsMeter Power Factor (Must be power_factor, no kWh/W unit)
+        let (_, _, payload) =
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 power factor", false).unwrap();
+        assert_eq!(payload["device_class"], "power_factor");
+        assert!(payload.get("unit_of_measurement").is_none());
+
+        // MainsMeter Phase Angle (Must be °)
+        let (_, _, payload) =
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 phase angle", false).unwrap();
+        assert_eq!(payload["unit_of_measurement"], "°");
 
         // Aggregate metric (Total Solar Production)
         let (_, topic, payload) =
