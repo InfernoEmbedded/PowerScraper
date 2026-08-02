@@ -250,7 +250,19 @@ pub fn build_discovery_payload(
             val_payload["device_class"] = json!("apparent_power");
             val_payload["state_class"] = json!("measurement");
 
-        // 13. Active Power (W) - MUST PRECEDE CUMULATIVE ENERGY!
+        // 13. Tariff / Electricity Price / Cost (c/kWh)
+        } else if m_lower.contains("price")
+            || m_lower.contains("tariff")
+            || m_lower.contains("rate")
+            || m_lower.contains("cost")
+            || m_lower.contains("feedin")
+            || m_lower.contains("general")
+        {
+            val_payload["unit_of_measurement"] = json!("c/kWh");
+            val_payload["device_class"] = json!("monetary");
+            val_payload["state_class"] = json!("measurement");
+
+        // 14. Active Power (W) - MUST PRECEDE CUMULATIVE ENERGY!
         } else if m_lower.contains("power")
             || m_lower.contains("production")
             || m_lower.contains("consumption")

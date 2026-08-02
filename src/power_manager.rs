@@ -1942,12 +1942,34 @@ pub async fn run_power_manager_task(
         "Total Consumption",
         "Total Charging",
         "Total Discharging",
+        "Power Budget",
+        "Power Budget with Charging",
     ];
     for metric in &aggregate_metrics {
         crate::mqtt_helper::publish_home_assistant_discovery(
             &mqtt_client,
             &mqtt_config,
             "aggregate",
+            metric,
+            false,
+        )
+        .await;
+    }
+
+    // Publish tariff and Amber Home Assistant discovery configs
+    let tariff_discovery = [
+        ("tariff", "import_price"),
+        ("tariff", "export_price"),
+        ("amber", "import_price"),
+        ("amber", "export_price"),
+        ("amber", "general_price"),
+        ("amber", "feedin_price"),
+    ];
+    for (device, metric) in &tariff_discovery {
+        crate::mqtt_helper::publish_home_assistant_discovery(
+            &mqtt_client,
+            &mqtt_config,
+            device,
             metric,
             false,
         )
@@ -2045,6 +2067,18 @@ pub async fn run_power_manager_task(
                     };
                     latest_telemetry.insert("tariff/import_price".to_string(), rates.import_rate);
                     latest_telemetry.insert("tariff/export_price".to_string(), rates.export_rate);
+                    latest_telemetry.insert("amber/import_price".to_string(), rates.import_rate);
+                    latest_telemetry.insert("amber/export_price".to_string(), rates.export_rate);
+                    latest_telemetry.insert("amber/general_price".to_string(), rates.import_rate);
+                    latest_telemetry.insert("amber/feedin_price".to_string(), rates.export_rate);
+
+                    // Publish price metrics to MQTT
+                    let _ = mqtt_client.publish(format!("{}/tariff/import_price", base_topic), QoS::AtLeastOnce, false, rates.import_rate.to_string()).await;
+                    let _ = mqtt_client.publish(format!("{}/tariff/export_price", base_topic), QoS::AtLeastOnce, false, rates.export_rate.to_string()).await;
+                    let _ = mqtt_client.publish(format!("{}/amber/import_price", base_topic), QoS::AtLeastOnce, false, rates.import_rate.to_string()).await;
+                    let _ = mqtt_client.publish(format!("{}/amber/export_price", base_topic), QoS::AtLeastOnce, false, rates.export_rate.to_string()).await;
+                    let _ = mqtt_client.publish(format!("{}/amber/general_price", base_topic), QoS::AtLeastOnce, false, rates.import_rate.to_string()).await;
+                    let _ = mqtt_client.publish(format!("{}/amber/feedin_price", base_topic), QoS::AtLeastOnce, false, rates.export_rate.to_string()).await;
 
                     let now_ts = Utc::now().timestamp();
                     let new_recs: Vec<HistoryRecord> = latest_telemetry
