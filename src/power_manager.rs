@@ -1605,13 +1605,12 @@ impl PowerManager {
 
         // Power Budget with Charging Calculations
         let power_budget_with_charging = crate::power_budget::calculate_power_budget_with_charging(
-            &self.db_path,
-            self.config.timezone.as_deref(),
+            total_solar_production,
+            total_charging,
             total_consumption,
-            &self.config.inverter,
-            &self.inverters,
         );
         aggregates.insert("Power Budget with charging".to_string(), power_budget_with_charging);
+        aggregates.insert("Power Budget with Charging".to_string(), power_budget_with_charging);
 
         aggregates
     }
