@@ -199,63 +199,98 @@ pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn s
 }
 
 
+/// Helper to get or create a topic_id in the telemetry_topics dictionary table.
+pub fn get_or_create_topic_id(conn: &rusqlite::Connection, topic: &str) -> Result<i64, rusqlite::Error> {
+    if let Ok(id) = conn.query_row("SELECT id FROM telemetry_topics WHERE topic = ?1", params![topic], |r| r.get(0)) {
+        return Ok(id);
+    }
+    let (device, field) = if let Some(idx) = topic.find('/') {
+        (&topic[..idx], &topic[idx + 1..])
+    } else {
+        ("", topic)
+    };
+    conn.execute(
+        "INSERT OR IGNORE INTO telemetry_topics (topic, device, field) VALUES (?1, ?2, ?3)",
+        params![topic, device, field],
+    )?;
+    conn.query_row("SELECT id FROM telemetry_topics WHERE topic = ?1", params![topic], |r| r.get(0))
+}
+
 /// Initializes database tables and indices for telemetry history and solar forecasts.
 pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
-    let conn = open_db_conn(db_path)?;
+    let mut conn = open_db_conn(db_path)?;
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS telemetry_history (
-            timestamp INTEGER NOT NULL,
-            topic TEXT NOT NULL,
+        "CREATE TABLE IF NOT EXISTS telemetry_topics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL UNIQUE,
             device TEXT NOT NULL DEFAULT '',
-            field TEXT NOT NULL DEFAULT '',
-            value REAL NOT NULL,
-            PRIMARY KEY (timestamp, topic)
+            field TEXT NOT NULL DEFAULT ''
         )",
         [],
     )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_topics_field ON telemetry_topics (field)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_telemetry_topics_device ON telemetry_topics (device)",
+        [],
+    )?;
 
-    // Migration: add device and field columns if table existed without them
-    let has_device: bool = conn
+    // Check if telemetry_history is in old schema (has 'topic' column instead of 'topic_id')
+    let is_old_schema: bool = conn
         .prepare("PRAGMA table_info(telemetry_history)")?
         .query_map([], |row| row.get::<_, String>(1))?
         .filter_map(Result::ok)
-        .any(|col| col == "device");
+        .any(|col| col == "topic");
 
-    if !has_device {
-        let _ = conn.execute("ALTER TABLE telemetry_history ADD COLUMN device TEXT NOT NULL DEFAULT ''", []);
-        let _ = conn.execute("ALTER TABLE telemetry_history ADD COLUMN field TEXT NOT NULL DEFAULT ''", []);
-        loop {
-            let updated = conn.execute(
-                "UPDATE telemetry_history SET 
-                    device = CASE WHEN instr(topic, '/') > 0 THEN substr(topic, 1, instr(topic, '/') - 1) ELSE '' END,
-                    field = CASE WHEN instr(topic, '/') > 0 THEN substr(topic, instr(topic, '/') + 1) ELSE topic END
-                WHERE rowid IN (
-                    SELECT rowid FROM telemetry_history WHERE device = '' AND field = '' LIMIT 50000
-                )",
-                [],
-            ).unwrap_or(0);
-            if updated == 0 {
-                break;
-            }
-        }
+    if is_old_schema {
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO telemetry_topics (topic, device, field)
+             SELECT DISTINCT topic,
+                    CASE WHEN instr(topic, '/') > 0 THEN substr(topic, 1, instr(topic, '/') - 1) ELSE '' END,
+                    CASE WHEN instr(topic, '/') > 0 THEN substr(topic, instr(topic, '/') + 1) ELSE topic END
+             FROM telemetry_history",
+            [],
+        )?;
+        tx.execute(
+            "CREATE TABLE telemetry_history_new (
+                timestamp INTEGER NOT NULL,
+                topic_id INTEGER NOT NULL,
+                value REAL NOT NULL,
+                PRIMARY KEY (topic_id, timestamp)
+            ) WITHOUT ROWID",
+            [],
+        )?;
+        tx.execute(
+            "INSERT OR REPLACE INTO telemetry_history_new (timestamp, topic_id, value)
+             SELECT h.timestamp, t.id, h.value
+             FROM telemetry_history h
+             JOIN telemetry_topics t ON h.topic = t.topic",
+            [],
+        )?;
+        tx.execute("DROP TABLE telemetry_history", [])?;
+        tx.execute("ALTER TABLE telemetry_history_new RENAME TO telemetry_history", [])?;
+        tx.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_history_ts ON telemetry_history (timestamp)", [])?;
+        tx.commit()?;
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
+    } else {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS telemetry_history (
+                timestamp INTEGER NOT NULL,
+                topic_id INTEGER NOT NULL,
+                value REAL NOT NULL,
+                PRIMARY KEY (topic_id, timestamp)
+            ) WITHOUT ROWID",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telemetry_history_ts ON telemetry_history (timestamp)",
+            [],
+        )?;
     }
 
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_timestamp ON telemetry_history (timestamp)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_topic_timestamp ON telemetry_history (topic, timestamp)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_field_timestamp ON telemetry_history (field, timestamp)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_telemetry_history_device_field_timestamp ON telemetry_history (device, field, timestamp)",
-        [],
-    )?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS solar_forecast (
             timestamp INTEGER PRIMARY KEY,
@@ -286,22 +321,24 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
         }
     };
     {
-        let mut stmt = match tx.prepare(
-            "INSERT OR REPLACE INTO telemetry_history (timestamp, topic, device, field, value) VALUES (?1, ?2, ?3, ?4, ?5)"
-        ) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("Failed to prepare telemetry flush statement: {}", e);
-                return;
-            }
-        };
         for rec in buffer.iter() {
-            let (device, field) = if let Some(idx) = rec.topic.find('/') {
-                (&rec.topic[..idx], &rec.topic[idx + 1..])
-            } else {
-                ("", rec.topic.as_str())
+            let topic_id = match get_or_create_topic_id(&tx, &rec.topic) {
+                Ok(id) => id,
+                Err(e) => {
+                    eprintln!("Failed to resolve topic id for {}: {}", rec.topic, e);
+                    continue;
+                }
             };
-            if let Err(e) = stmt.execute(params![rec.timestamp, rec.topic, device, field, rec.value]) {
+            let mut stmt = match tx.prepare_cached(
+                "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
+            ) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("Failed to prepare telemetry flush statement: {}", e);
+                    return;
+                }
+            };
+            if let Err(e) = stmt.execute(params![rec.timestamp, topic_id, rec.value]) {
                 eprintln!("Failed to insert telemetry record: {}", e);
             }
         }
@@ -329,7 +366,9 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
 pub fn get_price_history(db_path: &str, topic: &str, since_timestamp: i64) -> Result<Vec<f64>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT value FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2"
+        "SELECT h.value FROM telemetry_history h
+         JOIN telemetry_topics t ON h.topic_id = t.id
+         WHERE t.topic = ?1 AND h.timestamp >= ?2 ORDER BY h.timestamp ASC"
     )?;
     let rows = stmt.query_map(params![topic, since_timestamp], |row| {
         row.get(0)
@@ -347,7 +386,11 @@ pub fn get_price_history(db_path: &str, topic: &str, since_timestamp: i64) -> Re
 pub fn check_telemetry_exists(db_path: &str, topic: &str, since_timestamp: i64) -> bool {
     if let Ok(conn) = open_db_conn(db_path) {
         conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2)",
+            "SELECT EXISTS(
+                SELECT 1 FROM telemetry_history h
+                JOIN telemetry_topics t ON h.topic_id = t.id
+                WHERE t.topic = ?1 AND h.timestamp >= ?2
+             )",
             params![topic, since_timestamp],
             |row| row.get(0)
         ).unwrap_or(false)
@@ -360,7 +403,9 @@ pub fn check_telemetry_exists(db_path: &str, topic: &str, since_timestamp: i64) 
 pub fn get_avg_telemetry_value(db_path: &str, topic: &str, since_timestamp: i64) -> Option<f64> {
     if let Ok(conn) = open_db_conn(db_path) {
         conn.query_row(
-            "SELECT AVG(value) FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2",
+            "SELECT AVG(h.value) FROM telemetry_history h
+             JOIN telemetry_topics t ON h.topic_id = t.id
+             WHERE t.topic = ?1 AND h.timestamp >= ?2",
             params![topic, since_timestamp],
             |row| row.get(0)
         ).ok().flatten()
@@ -373,7 +418,9 @@ pub fn get_avg_telemetry_value(db_path: &str, topic: &str, since_timestamp: i64)
 pub fn get_telemetry_history(db_path: &str, topic: &str, since_timestamp: i64) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT timestamp, value FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2 ORDER BY timestamp ASC"
+        "SELECT h.timestamp, h.value FROM telemetry_history h
+         JOIN telemetry_topics t ON h.topic_id = t.id
+         WHERE t.topic = ?1 AND h.timestamp >= ?2 ORDER BY h.timestamp ASC"
     )?;
     let rows = stmt.query_map(params![topic, since_timestamp], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
@@ -391,7 +438,9 @@ pub fn get_telemetry_history(db_path: &str, topic: &str, since_timestamp: i64) -
 pub fn get_all_telemetry_since(db_path: &str, since_timestamp: i64) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ?1 ORDER BY timestamp ASC"
+        "SELECT h.timestamp, t.topic, h.value FROM telemetry_history h
+         JOIN telemetry_topics t ON h.topic_id = t.id
+         WHERE h.timestamp >= ?1 ORDER BY h.timestamp ASC"
     )?;
     let rows = stmt.query_map(params![since_timestamp], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
@@ -409,7 +458,9 @@ pub fn get_all_telemetry_since(db_path: &str, since_timestamp: i64) -> Result<Ve
 pub fn get_all_telemetry_in_range(db_path: &str, start_ts: i64, end_ts: i64) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC"
+        "SELECT h.timestamp, t.topic, h.value FROM telemetry_history h
+         JOIN telemetry_topics t ON h.topic_id = t.id
+         WHERE h.timestamp >= ?1 AND h.timestamp <= ?2 ORDER BY h.timestamp ASC"
     )?;
     let rows = stmt.query_map(params![start_ts, end_ts], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
@@ -500,62 +551,91 @@ pub fn get_telemetry_in_range_filtered(
     topics: Option<&[String]>,
 ) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
+
+    // 1. Resolve matching topic_id -> topic string mappings from dictionary table
+    let mut topic_map: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
     if let Some(topic_list) = topics {
         if !topic_list.is_empty() {
             let placeholders = vec!["?"; topic_list.len()].join(",");
-            let sql = format!(
-                "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ? AND timestamp <= ? AND topic IN ({}) ORDER BY timestamp ASC",
-                placeholders
-            );
+            let sql = format!("SELECT id, topic FROM telemetry_topics WHERE topic IN ({})", placeholders);
             let mut stmt = conn.prepare(&sql)?;
             let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-            params_vec.push(Box::new(start_ts));
-            params_vec.push(Box::new(end_ts));
             for t in topic_list {
                 params_vec.push(Box::new(t.clone()));
             }
             let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
             let rows = stmt.query_map(params_refs.as_slice(), |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })?;
-            let mut records = Vec::new();
             for r in rows {
-                if let Ok(val) = r {
-                    records.push(val);
+                if let Ok((id, top)) = r {
+                    topic_map.insert(id, top);
                 }
             }
-            return Ok(records);
         }
     }
 
-    let default_fields = [
-        "PV1 Power", "PV2 Power", "PV Power", "Solar Power",
-        "Battery Capacity", "Battery SOC", "SOC", "Battery Power",
-        "Total active power", "Grid Power", "Grid Power (P1)", "Grid Power (P2)", "Grid Power (P3)", "Measured Power",
-        "Usage"
-    ];
-    let placeholders = vec!["?"; default_fields.len()].join(",");
-    let sql = format!(
-        "SELECT timestamp, topic, value FROM telemetry_history WHERE timestamp >= ? AND timestamp <= ? AND field IN ({}) ORDER BY timestamp ASC",
-        placeholders
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    params_vec.push(Box::new(start_ts));
-    params_vec.push(Box::new(end_ts));
-    for f in default_fields {
-        params_vec.push(Box::new(f));
-    }
-    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
-    let rows = stmt.query_map(params_refs.as_slice(), |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
-    })?;
-    let mut records = Vec::new();
-    for r in rows {
-        if let Ok(val) = r {
-            records.push(val);
+    if topic_map.is_empty() && (topics.is_none() || topics.map_or(false, |t| t.is_empty())) {
+        let default_fields = [
+            "PV1 Power", "PV2 Power", "PV Power", "Solar Power",
+            "Battery Capacity", "Battery SOC", "SOC", "Battery Power",
+            "Total active power", "Grid Power", "Grid Power (P1)", "Grid Power (P2)", "Grid Power (P3)", "Measured Power",
+            "Usage"
+        ];
+        let placeholders = vec!["?"; default_fields.len()].join(",");
+        let sql = format!("SELECT id, topic FROM telemetry_topics WHERE field IN ({})", placeholders);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        for f in default_fields {
+            params_vec.push(Box::new(f));
+        }
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for r in rows {
+            if let Ok((id, top)) = r {
+                topic_map.insert(id, top);
+            }
         }
     }
+
+    if topic_map.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // 2. Query telemetry_history directly using topic_id IN (...) AND timestamp range
+    // SQLite uses the WITHOUT ROWID PRIMARY KEY (topic_id, timestamp) index for instant range seeks
+    let topic_ids: Vec<i64> = topic_map.keys().copied().collect();
+    let placeholders = vec!["?"; topic_ids.len()].join(",");
+    let sql = format!(
+        "SELECT timestamp, topic_id, value FROM telemetry_history WHERE topic_id IN ({}) AND timestamp >= ? AND timestamp <= ? ORDER BY timestamp ASC",
+        placeholders
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    for id in &topic_ids {
+        params_vec.push(Box::new(*id));
+    }
+    params_vec.push(Box::new(start_ts));
+    params_vec.push(Box::new(end_ts));
+
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(params_refs.as_slice(), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, f64>(2)?))
+    })?;
+
+    let mut records = Vec::new();
+    for r in rows {
+        if let Ok((ts, tid, val)) = r {
+            if let Some(top_str) = topic_map.get(&tid) {
+                records.push((ts, top_str.clone(), val));
+            }
+        }
+    }
+
+    records.sort_by_key(|(ts, _, _)| *ts);
     Ok(records)
 }
 
@@ -594,7 +674,9 @@ pub fn get_decimated_telemetry_in_range(
 pub fn get_monthly_peak_draw(db_path: &str, topic: &str, since_timestamp: i64) -> f64 {
     if let Ok(conn) = open_db_conn(db_path) {
         conn.query_row(
-            "SELECT MAX(value) FROM telemetry_history WHERE topic = ?1 AND timestamp >= ?2",
+            "SELECT MAX(h.value) FROM telemetry_history h
+             JOIN telemetry_topics t ON h.topic_id = t.id
+             WHERE t.topic = ?1 AND h.timestamp >= ?2",
             params![topic, since_timestamp],
             |row| row.get::<_, f64>(0)
         ).unwrap_or(0.0)
@@ -645,10 +727,11 @@ pub fn get_telemetry_history_multiple_topics(
 ) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
-        "SELECT timestamp, topic, value 
-         FROM telemetry_history 
-         WHERE (topic = ?1 OR topic = ?2) AND timestamp >= ?3 
-         ORDER BY timestamp ASC"
+        "SELECT h.timestamp, t.topic, h.value 
+         FROM telemetry_history h
+         JOIN telemetry_topics t ON h.topic_id = t.id
+         WHERE (t.topic = ?1 OR t.topic = ?2) AND h.timestamp >= ?3 
+         ORDER BY h.timestamp ASC"
     )?;
     let rows = stmt.query_map(params![topic1, topic2, since_timestamp], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
@@ -670,11 +753,12 @@ pub fn insert_telemetry_history_batch(
     let mut conn = open_db_conn(db_path)?;
     let tx = conn.transaction()?;
     {
-        let mut stmt = tx.prepare(
-            "INSERT OR REPLACE INTO telemetry_history (timestamp, topic, value) VALUES (?1, ?2, ?3)"
-        )?;
         for (ts, topic, val) in records {
-            stmt.execute(params![*ts, topic, *val])?;
+            let topic_id = get_or_create_topic_id(&tx, topic)?;
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
+            )?;
+            stmt.execute(params![*ts, topic_id, *val])?;
         }
     }
     tx.commit()?;
