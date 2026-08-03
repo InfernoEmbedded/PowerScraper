@@ -529,6 +529,95 @@ impl Config {
         crate::database::save_config_to_db(db_path, self)
     }
 
+    pub fn get_configured_battery_inverters(&self) -> Vec<String> {
+        let mut list = Vec::new();
+        if let Some(ref bc) = self.battery_control {
+            for (k, v) in &bc.inverter {
+                if v.has_battery() && !list.contains(k) {
+                    list.push(k.clone());
+                }
+            }
+        }
+        if list.is_empty() {
+            if let Some(ref g3) = self.solax_g3_modbus {
+                for k in &g3.inverters {
+                    if !list.contains(k) {
+                        list.push(k.clone());
+                    }
+                }
+            }
+            if let Some(ref g4) = self.solax_g4_modbus {
+                for k in &g4.inverters {
+                    if !list.contains(k) {
+                        list.push(k.clone());
+                    }
+                }
+            }
+            if let Some(ref mb) = self.solax_modbus {
+                for k in &mb.inverters {
+                    if !list.contains(k) {
+                        list.push(k.clone());
+                    }
+                }
+            }
+            if let Some(ref wifi) = self.solax_wifi {
+                for k in &wifi.inverters {
+                    if !list.contains(k) {
+                        list.push(k.clone());
+                    }
+                }
+            }
+        }
+        list
+    }
+
+    pub fn get_configured_inverters(&self) -> Vec<String> {
+        let mut list = Vec::new();
+        if let Some(ref bc) = self.battery_control {
+            for k in bc.inverter.keys() {
+                if !list.contains(k) {
+                    list.push(k.clone());
+                }
+            }
+        }
+        if let Some(ref g3) = self.solax_g3_modbus {
+            for k in &g3.inverters {
+                if !list.contains(k) {
+                    list.push(k.clone());
+                }
+            }
+        }
+        if let Some(ref g4) = self.solax_g4_modbus {
+            for k in &g4.inverters {
+                if !list.contains(k) {
+                    list.push(k.clone());
+                }
+            }
+        }
+        if let Some(ref mb) = self.solax_modbus {
+            for k in &mb.inverters {
+                if !list.contains(k) {
+                    list.push(k.clone());
+                }
+            }
+        }
+        if let Some(ref wifi) = self.solax_wifi {
+            for k in &wifi.inverters {
+                if !list.contains(k) {
+                    list.push(k.clone());
+                }
+            }
+        }
+        if let Some(ref mqtt) = self.mqtt_inverter {
+            for k in &mqtt.inverters {
+                if !list.contains(k) {
+                    list.push(k.clone());
+                }
+            }
+        }
+        list
+    }
+
     pub fn default_empty() -> Self {
         Config {
             history: None,

@@ -74,6 +74,68 @@ pub fn get_system_status() -> &'static Mutex<SystemStatus> {
     SYSTEM_STATUS.get_or_init(|| Mutex::new(SystemStatus::default()))
 }
 
+pub async fn get_health_status(db_path: &str) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    let config = Config::load_from_db(db_path).unwrap_or_else(|_| Config::default_empty());
+    let mut target_inverters = config.get_configured_battery_inverters();
+
+    let status = get_system_status().lock().unwrap().clone();
+    if target_inverters.is_empty() {
+        target_inverters = status.inverters.keys().cloned().collect();
+    }
+    target_inverters.sort();
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let mut inverters_info = Vec::new();
+    let mut all_healthy = true;
+    let mut healthy_count = 0;
+
+    for inv_name in &target_inverters {
+        let inv_status = status.inverters.get(inv_name);
+        let last_updated = inv_status.and_then(|s| s.last_updated);
+        let seconds_ago = last_updated.map(|ts| now.saturating_sub(ts));
+
+        let is_healthy = match seconds_ago {
+            Some(sec) => sec <= 60,
+            None => false,
+        };
+
+        if is_healthy {
+            healthy_count += 1;
+        } else {
+            all_healthy = false;
+        }
+
+        inverters_info.push(serde_json::json!({
+            "name": inv_name,
+            "healthy": is_healthy,
+            "last_updated": last_updated,
+            "last_updated_seconds_ago": seconds_ago,
+        }));
+    }
+
+    let status_str = if all_healthy { "healthy" } else { "unhealthy" };
+    let http_status = if all_healthy {
+        axum::http::StatusCode::OK
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        http_status,
+        Json(serde_json::json!({
+            "status": status_str,
+            "timestamp": now,
+            "inverters_count": target_inverters.len(),
+            "healthy_count": healthy_count,
+            "inverters": inverters_info,
+        })),
+    )
+}
+
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "type")]
 pub enum SimProgressUpdate {
@@ -527,6 +589,26 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
             get(|| async {
                 let lock = get_system_status().lock().unwrap();
                 Json(lock.clone())
+            }),
+        )
+        .route(
+            "/api/health",
+            get({
+                let db_path = db_path_debug.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move { get_health_status(&path).await }
+                }
+            }),
+        )
+        .route(
+            "/health",
+            get({
+                let db_path = db_path_debug.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move { get_health_status(&path).await }
+                }
             }),
         )
         .route(
@@ -1499,11 +1581,39 @@ mod tests {
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
-        let response = app.clone()
-            .oneshot(Request::builder().uri("/debug").body(Body::empty()).unwrap())
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
+        // 11. Test GET /api/health and /health
+        {
+            get_system_status().lock().unwrap().inverters.clear();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            get_system_status().lock().unwrap().inverters.insert("solax-x1".to_string(), InverterStatus {
+                last_updated: Some(now - 5),
+                ..Default::default()
+            });
+
+            let response = app.clone()
+                .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            let response = app.clone()
+                .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+
+            // Test stale inverter (>60s ago)
+            get_system_status().lock().unwrap().inverters.insert("solax-x1".to_string(), InverterStatus {
+                last_updated: Some(now - 120),
+                ..Default::default()
+            });
+
+            let response = app.clone()
+                .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        }
 
         let _ = std::fs::remove_file(temp_db);
     }
