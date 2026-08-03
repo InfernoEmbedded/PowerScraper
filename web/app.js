@@ -3779,6 +3779,7 @@ function renderHistoryCharts(records, startTs, endTs) {
                 pointHoverRadius: 4,
                 tension: 0.3,
                 fill: 'origin',
+                spanGaps: true,
                 stack: 'solar_stack'
             });
         });
@@ -3802,7 +3803,8 @@ function renderHistoryCharts(records, startTs, endTs) {
             pointRadius: 0,
             pointHoverRadius: 4,
             tension: 0.3,
-            fill: true
+            fill: true,
+            spanGaps: true
         });
     }
 
@@ -3815,16 +3817,20 @@ function renderHistoryCharts(records, startTs, endTs) {
             const invName = getInverterFromTopicOrName(topic, typeof currentConfig !== 'undefined' ? currentConfig : null);
             const capKwh = getInverterCapacityKwh(invName, typeof currentConfig !== 'undefined' ? currentConfig : null);
 
+            let lastVal = null;
             const data = sortedTimestamps.map(ts => {
                 const b = bucketMap.get(ts);
                 const list = b.batterySocMap.get(topic) || [];
-                if (list.length === 0) return null;
+                if (list.length === 0) return lastVal;
                 const avgSoc = list.reduce((acc, v) => acc + v, 0) / list.length;
+                let val;
                 if (capKwh !== null && capKwh > 0) {
-                    return parseFloat((capKwh * (avgSoc / 100.0)).toFixed(2));
+                    val = parseFloat((capKwh * (avgSoc / 100.0)).toFixed(2));
                 } else {
-                    return parseFloat((avgSoc / 10.0).toFixed(2)); // fallback if capacity unknown
+                    val = parseFloat((avgSoc / 10.0).toFixed(2)); // fallback if capacity unknown
                 }
+                lastVal = val;
+                return val;
             });
             let displayLabel = topic.replace('/Battery Capacity', '').replace('/Battery SOC', '').replace('/SOC', '').replace(' Capacity', '');
             if (capKwh !== null && capKwh > 0) {
@@ -3840,6 +3846,7 @@ function renderHistoryCharts(records, startTs, endTs) {
                 pointHoverRadius: 4,
                 tension: 0.3,
                 fill: 'origin',
+                spanGaps: true,
                 stack: 'battery_soc_stack'
             });
         });
