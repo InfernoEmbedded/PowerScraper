@@ -2323,7 +2323,7 @@ async function saveConfiguration() {
             body: JSON.stringify(cfg)
         });
         if (resp.ok) {
-            alert("Configuration updated and live reloaded successfully!");
+            showApplySavedFeedback();
             currentConfig = cfg;
             loadConfig();
         } else {
@@ -2333,6 +2333,30 @@ async function saveConfiguration() {
     } catch (e) {
         alert(`Network error saving configuration: ${e}`);
     }
+}
+
+let applySavedTimeout = null;
+
+function showApplySavedFeedback() {
+    const applyBtn = document.getElementById('btn-apply-changes') || document.querySelector('.btn-apply');
+    if (!applyBtn) return;
+
+    if (applySavedTimeout) {
+        clearTimeout(applySavedTimeout);
+        applySavedTimeout = null;
+    }
+
+    applyBtn.innerText = 'Saved';
+    applyBtn.classList.add('saved');
+    applyBtn.classList.remove('fading');
+
+    applySavedTimeout = setTimeout(() => {
+        applyBtn.classList.add('fading');
+        setTimeout(() => {
+            applyBtn.innerText = 'Apply Changes';
+            applyBtn.classList.remove('saved', 'fading');
+        }, 300);
+    }, 2500);
 }
 
 function triggerImportConfig() {

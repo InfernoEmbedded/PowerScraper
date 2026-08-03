@@ -78,7 +78,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             <div style="display: flex; gap: 10px;">
                 <button class="btn-import" onclick="triggerImportConfig()">Import Config</button>
                 <input type="file" id="import-config-file" accept=".toml" style="display: none;" onchange="handleImportConfig(event)">
-                <button class="btn-apply" onclick="saveConfiguration()" style="display: none;">Apply Changes</button>
+                <button class="btn-apply" id="btn-apply-changes" onclick="saveConfiguration()" style="display: none;">Apply Changes</button>
             </div>
         </header>
 
@@ -1155,7 +1155,16 @@ h1 {
     font-weight: 600;
     cursor: pointer;
     box-shadow: 0 4px 15px var(--primary-glow);
-    transition: all 0.3s ease;
+    transition: background 0.4s ease, box-shadow 0.4s ease, transform 0.3s ease, opacity 0.3s ease;
+}
+
+.btn-apply.saved {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+}
+
+.btn-apply.fading {
+    opacity: 0.4;
 }
 
 .btn-apply:hover {
@@ -3973,7 +3982,7 @@ async function saveConfiguration() {
             body: JSON.stringify(cfg)
         });
         if (resp.ok) {
-            alert("Configuration updated and live reloaded successfully!");
+            showApplySavedFeedback();
             currentConfig = cfg;
             loadConfig();
         } else {
@@ -3983,6 +3992,30 @@ async function saveConfiguration() {
     } catch (e) {
         alert(`Network error saving configuration: ${e}`);
     }
+}
+
+let applySavedTimeout = null;
+
+function showApplySavedFeedback() {
+    const applyBtn = document.getElementById('btn-apply-changes') || document.querySelector('.btn-apply');
+    if (!applyBtn) return;
+
+    if (applySavedTimeout) {
+        clearTimeout(applySavedTimeout);
+        applySavedTimeout = null;
+    }
+
+    applyBtn.innerText = 'Saved';
+    applyBtn.classList.add('saved');
+    applyBtn.classList.remove('fading');
+
+    applySavedTimeout = setTimeout(() => {
+        applyBtn.classList.add('fading');
+        setTimeout(() => {
+            applyBtn.innerText = 'Apply Changes';
+            applyBtn.classList.remove('saved', 'fading');
+        }, 300);
+    }, 2500);
 }
 
 function triggerImportConfig() {

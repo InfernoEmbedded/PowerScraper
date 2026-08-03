@@ -117,7 +117,16 @@ h1 {
     font-weight: 600;
     cursor: pointer;
     box-shadow: 0 4px 15px var(--primary-glow);
-    transition: all 0.3s ease;
+    transition: background 0.4s ease, box-shadow 0.4s ease, transform 0.3s ease, opacity 0.3s ease;
+}
+
+.btn-apply.saved {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    box-shadow: 0 4px 15px rgba(16, 185, 129, 0.4);
+}
+
+.btn-apply.fading {
+    opacity: 0.4;
 }
 
 .btn-apply:hover {
