@@ -3491,3 +3491,576 @@ async function saveHistorySettingsAndClose() {
         await applyConfig();
     }
 }
+
+function setHistoryRange(rangeKey, btnEl) {
+    document.querySelectorAll('.history-range-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    
+    const customBox = document.getElementById('history-custom-range-box');
+    if (customBox) customBox.style.display = 'none';
+    currentHistoryRange = rangeKey;
+    fetchAndRenderHistoryCharts();
+}
+
+function toggleCustomHistoryRange(btnEl) {
+    document.querySelectorAll('.history-range-btn').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    
+    const customBox = document.getElementById('history-custom-range-box');
+    if (customBox) customBox.style.display = customBox.style.display === 'none' ? 'flex' : 'none';
+}
+
+function applyCustomHistoryRange() {
+    const startVal = document.getElementById('history-start-picker').value;
+    const endVal = document.getElementById('history-end-picker').value;
+    if (!startVal || !endVal) {
+        return alert("Please select both start and end timestamps.");
+    }
+    customHistoryStart = Math.floor(new Date(startVal).getTime() / 1000);
+    customHistoryEnd = Math.floor(new Date(endVal).getTime() / 1000);
+    currentHistoryRange = 'custom';
+    fetchAndRenderHistoryCharts();
+}
+
+async function fetchAndRenderHistoryCharts() {
+    let now = Math.floor(Date.now() / 1000);
+    let startTs = now - 86400;
+    let endTs = now;
+
+    if (currentHistoryRange === '1h') startTs = now - 3600;
+    else if (currentHistoryRange === '6h') startTs = now - 21600;
+    else if (currentHistoryRange === '12h') startTs = now - 43200;
+    else if (currentHistoryRange === '24h') startTs = now - 86400;
+    else if (currentHistoryRange === '7d') startTs = now - 7 * 86400;
+    else if (currentHistoryRange === '30d') startTs = now - 30 * 86400;
+    else if (currentHistoryRange === 'custom' && customHistoryStart && customHistoryEnd) {
+        startTs = customHistoryStart;
+        endTs = customHistoryEnd;
+    }
+
+    const startDateStr = new Date(startTs * 1000).toLocaleString();
+    const endDateStr = new Date(endTs * 1000).toLocaleString();
+    const infoEl = document.getElementById('history-timeline-info');
+    if (infoEl) infoEl.textContent = `${startDateStr} — ${endDateStr}`;
+
+    const chartIds = ['chart-history-solar', 'chart-history-battery-soc', 'chart-history-battery-power', 'chart-history-grid-power', 'chart-history-house-usage'];
+    chartIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            const card = el.closest('.glass-card');
+            if (card) card.classList.add('graph-loading-pulse');
+            else el.classList.add('graph-loading-pulse');
+        }
+    });
+
+    try {
+        const t0 = performance.now();
+        const maxPixels = Math.max(window.innerWidth || 1200, 800);
+        const chartTopics = getChartTopicsToFetch(typeof currentConfig !== 'undefined' ? currentConfig : null);
+        const topicsParam = chartTopics.map(t => encodeURIComponent(t)).join(',');
+        const resp = await fetch(`/api/history?start=${startTs}&end=${endTs}&max_pixels=${maxPixels}&topics=${topicsParam}`);
+        const t1 = performance.now();
+        if (!resp.ok) {
+            chartIds.forEach(id => {
+                const el = document.getElementById(id);
+                if (el) {
+                    const card = el.closest('.glass-card');
+                    if (card) card.classList.remove('graph-loading-pulse');
+                    el.classList.remove('graph-loading-pulse');
+                }
+            });
+            return;
+        }
+        const records = await resp.json();
+        const t2 = performance.now();
+        renderHistoryCharts(records, startTs, endTs);
+        const t3 = performance.now();
+
+        const serverTiming = resp.headers.get('Server-Timing') || 'N/A';
+        console.log(`[Profile Graph Loading] Network Fetch: ${(t1 - t0).toFixed(1)}ms, JSON Parse: ${(t2 - t1).toFixed(1)}ms, Chart Render: ${(t3 - t2).toFixed(1)}ms, Total Frontend: ${(t3 - t0).toFixed(1)}ms, Decimated Points: ${records.length}, Server-Timing: [${serverTiming}]`);
+    } catch (e) {
+        console.error("Failed to fetch history telemetry:", e);
+        chartIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                const card = el.closest('.glass-card');
+                if (card) card.classList.remove('graph-loading-pulse');
+                el.classList.remove('graph-loading-pulse');
+            }
+        });
+    }
+}
+
+function renderHistoryCharts(records, startTs, endTs) {
+    const rangeSecs = endTs - startTs;
+    let bucketSize = 60; // 1 min default
+    if (rangeSecs > 7 * 86400) bucketSize = 1800; // 30 min
+    else if (rangeSecs > 24 * 3600) bucketSize = 300; // 5 min
+
+    // Extract unique topics for Solar, Battery Capacity, and Battery Power
+    const solarTopicsSet = new Set();
+    const batterySocTopicsSet = new Set();
+    const batteryPowerTopicsSet = new Set();
+
+    for (const r of records) {
+        const tLower = r.topic.toLowerCase();
+        if ((tLower.includes('pv') || tLower.includes('solar')) && tLower.includes('power') && !tLower.includes('request')) {
+            if (!isTopicDisabledByNoPv(r.topic, typeof currentConfig !== 'undefined' ? currentConfig : null)) {
+                solarTopicsSet.add(r.topic);
+            }
+        } else if (tLower.includes('battery capacity') || tLower.includes('battery soc') || tLower.endsWith('soc')) {
+            batterySocTopicsSet.add(r.topic);
+        } else if (tLower.includes('battery power') && !tLower.includes('request')) {
+            batteryPowerTopicsSet.add(r.topic);
+        }
+    }
+    const solarTopics = Array.from(solarTopicsSet).sort();
+    const batterySocTopics = Array.from(batterySocTopicsSet).sort();
+    const batteryPowerTopics = Array.from(batteryPowerTopicsSet).sort();
+
+    const bucketMap = new Map();
+    for (let ts = Math.floor(startTs / bucketSize) * bucketSize; ts <= endTs; ts += bucketSize) {
+        bucketMap.set(ts, {
+            solarMap: new Map(),
+            batterySocMap: new Map(),
+            batteryPowerMap: new Map(),
+            gridPowerList: [],
+            houseUsageList: []
+        });
+    }
+
+    for (const r of records) {
+        const bTs = Math.floor(r.timestamp / bucketSize) * bucketSize;
+        let entry = bucketMap.get(bTs);
+        if (!entry) {
+            entry = {
+                solarMap: new Map(),
+                batterySocMap: new Map(),
+                batteryPowerMap: new Map(),
+                gridPowerList: [],
+                houseUsageList: []
+            };
+            bucketMap.set(bTs, entry);
+        }
+
+        const tLower = r.topic.toLowerCase();
+        if ((tLower.includes('pv') || tLower.includes('solar')) && tLower.includes('power') && !tLower.includes('request')) {
+            if (!isTopicDisabledByNoPv(r.topic, typeof currentConfig !== 'undefined' ? currentConfig : null)) {
+                const currentList = entry.solarMap.get(r.topic) || [];
+                currentList.push(r.value);
+                entry.solarMap.set(r.topic, currentList);
+            }
+        } else if (tLower.includes('battery capacity') || tLower.includes('battery soc') || tLower.endsWith('soc')) {
+            const currentList = entry.batterySocMap.get(r.topic) || [];
+            currentList.push(r.value);
+            entry.batterySocMap.set(r.topic, currentList);
+        } else if (tLower.includes('battery power') && !tLower.includes('request')) {
+            const currentList = entry.batteryPowerMap.get(r.topic) || [];
+            currentList.push(r.value);
+            entry.batteryPowerMap.set(r.topic, currentList);
+        } else if (r.topic === 'MainsMeter/Total active power' || tLower.includes('total active power') || tLower.includes('grid power') || tLower.includes('measured power')) {
+            entry.gridPowerList.push(r.value);
+        } else if (r.topic === 'aggregate/Usage' || r.topic === 'sensors/aggregate/Usage' || tLower.endsWith('/usage')) {
+            entry.houseUsageList.push(r.value);
+        }
+    }
+
+    const sortedTimestamps = Array.from(bucketMap.keys()).sort((a, b) => a - b);
+    const labels = sortedTimestamps.map(ts => {
+        const d = new Date(ts * 1000);
+        return rangeSecs > 24 * 3600
+            ? `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
+            : `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    });
+
+    const gridPowerData = [];
+    const houseUsageData = [];
+
+    for (const ts of sortedTimestamps) {
+        const b = bucketMap.get(ts);
+
+        let solarKw = 0;
+        for (const list of b.solarMap.values()) {
+            if (list.length > 0) {
+                solarKw += (list.reduce((acc, v) => acc + v, 0) / list.length) / 1000.0;
+            }
+        }
+
+        let batteryKw = 0;
+        for (const list of b.batteryPowerMap.values()) {
+            if (list.length > 0) {
+                batteryKw += (list.reduce((acc, v) => acc + v, 0) / list.length) / 1000.0;
+            }
+        }
+
+        let gridKw = 0;
+        if (b.gridPowerList.length > 0) {
+            gridKw = (b.gridPowerList.reduce((acc, v) => acc + v, 0) / b.gridPowerList.length) / 1000.0;
+        }
+
+        let usageKw = 0;
+        if (b.houseUsageList.length > 0) {
+            usageKw = (b.houseUsageList.reduce((acc, v) => acc + v, 0) / b.houseUsageList.length) / 1000.0;
+        } else {
+            // Fallback calculation: Household Usage = Solar + Battery Discharging + Grid Import
+            usageKw = Math.max(0, solarKw + batteryKw + gridKw);
+        }
+
+        gridPowerData.push(parseFloat(gridKw.toFixed(2)));
+        houseUsageData.push(parseFloat(usageKw.toFixed(2)));
+    }
+
+    const textColor = '#8e95bf';
+    const gridColor = 'rgba(255, 255, 255, 0.05)';
+
+    // Build Solar Datasets (stacked per PV topic)
+    const hslHues = [45, 25, 65, 15, 80, 5, 55, 35];
+    const solarDatasets = [];
+    if (solarTopics.length > 0) {
+        solarTopics.forEach((topic, idx) => {
+            const hue = hslHues[idx % hslHues.length];
+            const data = sortedTimestamps.map(ts => {
+                const b = bucketMap.get(ts);
+                const list = b.solarMap.get(topic) || [];
+                return list.length > 0 ? parseFloat((list.reduce((acc, v) => acc + v, 0) / list.length / 1000.0).toFixed(2)) : 0;
+            });
+            let displayLabel = topic.replace('/Power', '').replace(' Power', '');
+            solarDatasets.push({
+                label: displayLabel,
+                data: data,
+                borderColor: `hsl(${hue}, 100%, 50%)`,
+                backgroundColor: `hsla(${hue}, 100%, 50%, 0.35)`,
+                borderWidth: 1.5,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                tension: 0.3,
+                fill: 'origin',
+                stack: 'solar_stack'
+            });
+        });
+    } else {
+        const data = sortedTimestamps.map(ts => {
+            const b = bucketMap.get(ts);
+            let totalSum = 0;
+            for (const list of b.solarMap.values()) {
+                if (list.length > 0) {
+                    totalSum += list.reduce((acc, v) => acc + v, 0) / list.length;
+                }
+            }
+            return parseFloat((totalSum / 1000.0).toFixed(2));
+        });
+        solarDatasets.push({
+            label: 'Solar Generation (kW)',
+            data: data,
+            borderColor: 'hsl(45, 100%, 50%)',
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            fill: true
+        });
+    }
+
+    // Build Battery Capacity Datasets (stacked per battery topic in kWh)
+    const batterySocDatasets = [];
+    const socHues = [145, 175, 120, 195, 100];
+    if (batterySocTopics.length > 0) {
+        batterySocTopics.forEach((topic, idx) => {
+            const hue = socHues[idx % socHues.length];
+            const invName = getInverterFromTopicOrName(topic, typeof currentConfig !== 'undefined' ? currentConfig : null);
+            const capKwh = getInverterCapacityKwh(invName, typeof currentConfig !== 'undefined' ? currentConfig : null);
+
+            const data = sortedTimestamps.map(ts => {
+                const b = bucketMap.get(ts);
+                const list = b.batterySocMap.get(topic) || [];
+                if (list.length === 0) return null;
+                const avgSoc = list.reduce((acc, v) => acc + v, 0) / list.length;
+                if (capKwh !== null && capKwh > 0) {
+                    return parseFloat((capKwh * (avgSoc / 100.0)).toFixed(2));
+                } else {
+                    return parseFloat((avgSoc / 10.0).toFixed(2)); // fallback if capacity unknown
+                }
+            });
+            let displayLabel = topic.replace('/Battery Capacity', '').replace('/Battery SOC', '').replace('/SOC', '').replace(' Capacity', '');
+            if (capKwh !== null && capKwh > 0) {
+                displayLabel += ` (${capKwh.toFixed(1)} kWh max)`;
+            }
+            batterySocDatasets.push({
+                label: displayLabel,
+                data: data,
+                borderColor: `hsl(${hue}, 100%, 45%)`,
+                backgroundColor: `hsla(${hue}, 100%, 45%, 0.3)`,
+                borderWidth: 1.5,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                tension: 0.3,
+                fill: 'origin',
+                stack: 'battery_soc_stack'
+            });
+        });
+    } else {
+        const data = sortedTimestamps.map(ts => {
+            const b = bucketMap.get(ts);
+            let totalKwh = 0;
+            let hasAny = false;
+            for (const [topic, list] of b.batterySocMap.entries()) {
+                if (list.length > 0) {
+                    const avgSoc = list.reduce((acc, v) => acc + v, 0) / list.length;
+                    const invName = getInverterFromTopicOrName(topic, typeof currentConfig !== 'undefined' ? currentConfig : null);
+                    const capKwh = getInverterCapacityKwh(invName, typeof currentConfig !== 'undefined' ? currentConfig : null) || 10.0;
+                    totalKwh += capKwh * (avgSoc / 100.0);
+                    hasAny = true;
+                }
+            }
+            return hasAny ? parseFloat(totalKwh.toFixed(2)) : null;
+        });
+        batterySocDatasets.push({
+            label: 'Battery Capacity (kWh)',
+            data: data,
+            borderColor: 'hsl(145, 100%, 45%)',
+            backgroundColor: 'rgba(16, 185, 129, 0.05)',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            fill: true
+        });
+    }
+
+    // Build Battery Power Datasets (stacked per battery topic)
+    const batteryPowerDatasets = [];
+    const powerHues = [280, 310, 250, 330, 230];
+    if (batteryPowerTopics.length > 0) {
+        batteryPowerTopics.forEach((topic, idx) => {
+            const hue = powerHues[idx % powerHues.length];
+            const data = sortedTimestamps.map(ts => {
+                const b = bucketMap.get(ts);
+                const list = b.batteryPowerMap.get(topic) || [];
+                return list.length > 0 ? parseFloat((list.reduce((acc, v) => acc + v, 0) / list.length / 1000.0).toFixed(2)) : 0;
+            });
+            let displayLabel = topic.replace('/Battery Power', '').replace(' Power', '');
+            batteryPowerDatasets.push({
+                label: displayLabel,
+                data: data,
+                borderColor: `hsl(${hue}, 80%, 65%)`,
+                backgroundColor: `hsla(${hue}, 80%, 65%, 0.35)`,
+                borderWidth: 1.5,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+                tension: 0.3,
+                fill: 'origin',
+                stack: 'battery_power_stack'
+            });
+        });
+    } else {
+        const data = sortedTimestamps.map(ts => {
+            const b = bucketMap.get(ts);
+            let totalSum = 0;
+            for (const list of b.batteryPowerMap.values()) {
+                if (list.length > 0) {
+                    totalSum += list.reduce((acc, v) => acc + v, 0) / list.length;
+                }
+            }
+            return parseFloat((totalSum / 1000.0).toFixed(2));
+        });
+        batteryPowerDatasets.push({
+            label: 'Battery Power (kW)',
+            data: data,
+            borderColor: 'hsl(280, 80%, 65%)',
+            backgroundColor: 'transparent',
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            fill: false
+        });
+    }
+
+    // Helper to create stacked or non-stacked chart config
+    const stackedCharts = [
+        { id: 'chart-history-solar', key: 'solar', datasets: solarDatasets, unit: 'kW', stacked: true },
+        { id: 'chart-history-battery-soc', key: 'batterySoc', datasets: batterySocDatasets, unit: 'kWh', stacked: true },
+        { id: 'chart-history-battery-power', key: 'batteryPower', datasets: batteryPowerDatasets, unit: 'kW', stacked: true }
+    ];
+
+    for (const cfg of stackedCharts) {
+        const canvas = document.getElementById(cfg.id);
+        if (!canvas) continue;
+        const ctx = canvas.getContext('2d');
+        if (historyChartInstances[cfg.key]) historyChartInstances[cfg.key].destroy();
+
+        historyChartInstances[cfg.key] = new Chart(ctx, {
+            type: 'line',
+            data: { labels: labels, datasets: cfg.datasets },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: {
+                        display: cfg.datasets.length > 1,
+                        position: 'top',
+                        labels: { color: textColor, font: { family: 'Outfit', size: 11 } }
+                    },
+                    tooltip: {
+                        backgroundColor: 'rgba(22, 26, 49, 0.95)',
+                        titleColor: '#fff',
+                        titleFont: { family: 'Outfit', size: 13, weight: '600' },
+                        bodyColor: '#f0f2fd',
+                        bodyFont: { family: 'Outfit', size: 12 },
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 1,
+                        padding: 10,
+                        cornerRadius: 8,
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) label += ': ';
+                                if (context.parsed.y !== null) {
+                                    label += cfg.unit === '%' ? context.parsed.y.toFixed(1) + '%' : context.parsed.y.toFixed(2) + ' kW';
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        stacked: true,
+                        grid: { color: gridColor, borderColor: gridColor },
+                        ticks: { color: textColor, font: { family: 'Outfit', size: 10 }, maxTicksLimit: 24 }
+                    },
+                    y: {
+                        stacked: true,
+                        grid: { color: gridColor, borderColor: gridColor },
+                        ticks: { color: textColor, font: { family: 'Outfit', size: 11 } }
+                    }
+                }
+            }
+        });
+    }
+
+    // Render Remaining Line Metric Charts (Grid Power & House Usage)
+    const lineConfigs = [
+        { id: 'chart-history-grid-power', key: 'gridPower', label: 'Grid Power (kW)', color: 'hsl(200, 100%, 50%)', data: gridPowerData, unit: 'kW' },
+        { id: 'chart-history-house-usage', key: 'houseUsage', label: 'Household Usage (kW)', color: 'hsl(350, 100%, 60%)', data: houseUsageData, unit: 'kW' }
+    ];
+
+    for (const cfg of lineConfigs) {
+        const canvas = document.getElementById(cfg.id);
+        if (!canvas) continue;
+        const ctx = canvas.getContext('2d');
+        if (historyChartInstances[cfg.key]) historyChartInstances[cfg.key].destroy();
+
+        const isGridPower = cfg.key === 'gridPower';
+        const isHouseUsage = cfg.key === 'houseUsage';
+        const datasetObj = {
+            label: cfg.label,
+            data: cfg.data,
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.3,
+            fill: isGridPower ? 'origin' : (isHouseUsage ? 'origin' : false)
+        };
+
+        if (isGridPower) {
+            datasetObj.segment = {
+                borderColor: ctx => {
+                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
+                    return val < 0 ? 'hsl(145, 100%, 45%)' : 'hsl(350, 100%, 60%)';
+                },
+                backgroundColor: ctx => {
+                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
+                    return val < 0 ? 'hsla(145, 100%, 45%, 0.25)' : 'hsla(350, 100%, 60%, 0.25)';
+                }
+            };
+        } else if (isHouseUsage) {
+            const validData = cfg.data.filter(v => v !== null && !isNaN(v));
+            const maxVal = validData.length > 0 ? Math.max(...validData, 3.0) : 6.0;
+            const getUsageHue = val => {
+                const ratio = Math.min(Math.max(val / Math.min(maxVal, 8.0), 0), 1);
+                return 145 - ratio * 155; // 145 (Green) -> 0/350 (Red)
+            };
+            datasetObj.segment = {
+                borderColor: ctx => {
+                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
+                    const hue = getUsageHue(val);
+                    return `hsl(${hue}, 100%, 48%)`;
+                },
+                backgroundColor: ctx => {
+                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
+                    const hue = getUsageHue(val);
+                    return `hsla(${hue}, 100%, 48%, 0.2)`;
+                }
+            };
+        } else {
+            datasetObj.borderColor = cfg.color;
+            datasetObj.backgroundColor = 'transparent';
+        }
+
+        historyChartInstances[cfg.key] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [datasetObj]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: 'rgba(22, 26, 49, 0.95)',
+                        titleColor: '#fff',
+                        titleFont: { family: 'Outfit', size: 13, weight: '600' },
+                        bodyColor: '#f0f2fd',
+                        bodyFont: { family: 'Outfit', size: 12 },
+                        borderColor: 'rgba(255, 255, 255, 0.1)',
+                        borderWidth: 1,
+                        padding: 10,
+                        cornerRadius: 8,
+                        callbacks: {
+                            label: function(context) {
+                                let label = context.dataset.label || '';
+                                if (label) label += ': ';
+                                if (context.parsed.y !== null) {
+                                    const val = context.parsed.y;
+                                    if (isGridPower) {
+                                        const typeStr = val < 0 ? ' (Feed-in)' : val > 0 ? ' (Usage)' : '';
+                                        label += val.toFixed(2) + ' kW' + typeStr;
+                                    } else {
+                                        label += val.toFixed(2) + ' kW';
+                                    }
+                                }
+                                return label;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { color: gridColor, borderColor: gridColor },
+                        ticks: { color: textColor, font: { family: 'Outfit', size: 10 }, maxTicksLimit: 24 }
+                    },
+                    y: {
+                        grid: { color: gridColor, borderColor: gridColor },
+                        ticks: { color: textColor, font: { family: 'Outfit', size: 11 } }
+                    }
+                }
+            }
+        });
+    }
+
+    // Remove loading pulse after render
+    ['chart-history-solar', 'chart-history-battery-soc', 'chart-history-battery-power', 'chart-history-grid-power', 'chart-history-house-usage'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            const card = el.closest('.glass-card');
+            if (card) card.classList.remove('graph-loading-pulse');
+            el.classList.remove('graph-loading-pulse');
+        }
+    });
+}

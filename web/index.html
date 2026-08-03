@@ -30,6 +30,10 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line></svg>
                 Battery Control
             </button>
+            <button class="nav-btn" onclick="switchTab('tab-history', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                Telemetry History
+            </button>
             <button class="nav-btn" onclick="switchTab('tab-periods', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
                 TOU Periods
@@ -871,6 +875,132 @@
                     </p>
                 </div>
             </div>
+        </div>
+
+        <!-- HISTORY TAB -->
+        <div id="tab-history" class="tab-content">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h3 style="margin: 0; color: #fff; font-size: 1.25rem;">History Overview</h3>
+                <button class="sub-btn" onclick="openHistorySettingsModal()" title="Telemetry History Logging Settings" style="display: inline-flex; align-items: center; gap: 8px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    Logging Settings
+                </button>
+            </div>
+
+            <!-- Settings Modal -->
+            <div id="history-settings-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
+                <div class="glass-card" style="width: 100%; max-width: 500px; padding: 25px; margin: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3 style="margin: 0; color: var(--accent);">Telemetry Logging Settings</h3>
+                        <button style="background: none; border: none; color: #aaa; font-size: 1.5rem; cursor: pointer;" onclick="closeHistorySettingsModal()">&times;</button>
+                    </div>
+                    <div class="checkbox-group" style="margin-bottom: 20px;">
+                        <input type="checkbox" id="history-enabled" onchange="toggleFormSection('history-section', this.checked)">
+                        <label for="history-enabled">Enable Telemetry History Logging</label>
+                    </div>
+                    <div id="history-section">
+                        <div class="form-group" style="margin-bottom: 15px;">
+                            <label for="history-flush-interval">Flush Interval (minutes)</label>
+                            <input type="number" id="history-flush-interval" min="1" max="1440" placeholder="30">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 20px;">
+                            <label for="history-retention-days">Data Retention (days)</label>
+                            <input type="number" id="history-retention-days" min="1" max="3650" placeholder="365">
+                        </div>
+                    </div>
+                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
+                        <button class="sub-btn" onclick="closeHistorySettingsModal()">Cancel</button>
+                        <button class="btn-apply" onclick="saveHistorySettingsAndClose()">Save Settings</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Horizontal Timeline Selection Bar -->
+            <div class="glass-card" style="padding: 15px 20px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <span style="font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-right: 5px;">Time Range:</span>
+                        <button class="history-range-btn" onclick="setHistoryRange('1h', this)">1h</button>
+                        <button class="history-range-btn" onclick="setHistoryRange('6h', this)">6h</button>
+                        <button class="history-range-btn" onclick="setHistoryRange('12h', this)">12h</button>
+                        <button class="history-range-btn active" onclick="setHistoryRange('24h', this)">24h</button>
+                        <button class="history-range-btn" onclick="setHistoryRange('7d', this)">7d</button>
+                        <button class="history-range-btn" onclick="setHistoryRange('30d', this)">30d</button>
+                        <button class="history-range-btn" onclick="toggleCustomHistoryRange(this)">Custom</button>
+                    </div>
+                    <div id="history-timeline-info" style="font-size: 0.85rem; color: rgba(255,255,255,0.7); font-family: monospace;">
+                        Loading range...
+                    </div>
+                </div>
+                <div id="history-custom-range-box" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; gap: 15px; align-items: flex-end;">
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.8rem;">Start Time</label>
+                        <input type="datetime-local" id="history-start-picker" style="padding: 6px 10px; border-radius: 4px; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1);">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label style="font-size: 0.8rem;">End Time</label>
+                        <input type="datetime-local" id="history-end-picker" style="padding: 6px 10px; border-radius: 4px; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1);">
+                    </div>
+                    <button class="btn-apply" onclick="applyCustomHistoryRange()" style="padding: 8px 16px;">Apply Range</button>
+                </div>
+                <!-- Visual Timeline Indicator Bar -->
+                <div style="margin-top: 15px; height: 6px; width: 100%; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; position: relative;">
+                    <div id="history-timeline-bar" style="height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #10b981, #06b6d4, #8b5cf6, #ec4899); border-radius: 3px;"></div>
+                </div>
+            </div>
+
+            <!-- 5 Stacked History Metric Graphs -->
+            <!-- 1. Solar Generation -->
+            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
+                <h4 style="margin: 0 0 15px 0; color: hsl(45, 100%, 50%); display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                    Solar Generation (kW)
+                </h4>
+                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-solar"></canvas></div>
+            </div>
+
+            <!-- 2. Battery Capacity -->
+            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
+                <h4 style="margin: 0 0 15px 0; color: hsl(145, 100%, 45%); display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line></svg>
+                    Battery Capacity (kWh)
+                </h4>
+                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-battery-soc"></canvas></div>
+            </div>
+
+            <!-- 3. Battery Power -->
+            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
+                <h4 style="margin: 0 0 15px 0; color: hsl(280, 80%, 65%); display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+                    Battery Power (kW)
+                </h4>
+                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-battery-power"></canvas></div>
+            </div>
+
+            <!-- 4. Grid Power -->
+            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
+                <h4 style="margin: 0 0 15px 0; color: hsl(200, 100%, 50%); display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+                    Grid Power (kW)
+                </h4>
+                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-grid-power"></canvas></div>
+            </div>
+
+            <!-- 5. Household Usage -->
+            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
+                <h4 style="margin: 0 0 15px 0; color: hsl(350, 100%, 60%); display: flex; align-items: center; gap: 8px;">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
+                    Household Usage (kW)
+                </h4>
+                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-house-usage"></canvas></div>
+            </div>
+        
+            <div class="glass-card" style="margin-top: 20px;">
+                <div class="card-title">Export Historical Telemetry</div>
+                <p class="text-muted" style="margin-bottom: 15px;">Download all stored telemetry records as a wide CSV dataset file.</p>
+                <a href="/api/telemetry/export.csv" download class="btn-apply" style="display: inline-block; text-decoration: none;">Download CSV Dataset</a>
+            </div>
+
         </div>
 
 </main>

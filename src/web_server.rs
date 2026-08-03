@@ -37,6 +37,7 @@ pub struct SystemStatus {
     pub meter_power: f64,
     pub meter_last_updated: Option<u64>,
     pub mqtt_connected: bool,
+    pub mqtt_enabled: bool,
     pub import_price: Option<f64>,
     pub export_price: Option<f64>,
     pub price_thresholds: Option<PriceThresholds>,
@@ -55,6 +56,7 @@ impl Default for SystemStatus {
             meter_power: 0.0,
             meter_last_updated: None,
             mqtt_connected: false,
+            mqtt_enabled: false,
             import_price: None,
             export_price: None,
             price_thresholds: None,
@@ -206,6 +208,8 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
     let db_path_train = db_path.clone();
     let db_path_apply = db_path.clone();
     let db_path_infer = db_path.clone();
+    let db_path_debug = db_path.clone();
+    let db_path_debug2 = db_path.clone();
     let reload_tx_apply = reload_tx.clone();
     let state = Arc::new(reload_tx);
 
@@ -442,7 +446,30 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                             .unwrap_or(1200);
 
                         let topics_opt: Option<Vec<String>> = params.get("topics")
-                            .map(|s| s.split(',').map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect());
+                            .map(|s| {
+                                let mut result = String::with_capacity(s.len());
+                                let bytes = s.as_bytes();
+                                let mut i = 0;
+                                while i < bytes.len() {
+                                    if bytes[i] == b'%' && i + 2 < bytes.len() {
+                                        if let Ok(val) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                                            result.push(val as char);
+                                            i += 3;
+                                            continue;
+                                        }
+                                    }
+                                    if bytes[i] == b'+' {
+                                        result.push(' ');
+                                    } else {
+                                        result.push(bytes[i] as char);
+                                    }
+                                    i += 1;
+                                }
+                                result.split(',')
+                                    .map(|t| t.trim().to_string())
+                                    .filter(|t| !t.is_empty())
+                                    .collect()
+                            });
 
                         let req_start = std::time::Instant::now();
                         // Flush any buffered in-memory telemetry records to SQLite DB before querying
@@ -497,6 +524,232 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
             get(|| async {
                 let lock = get_system_status().lock().unwrap();
                 Json(lock.clone())
+            }),
+        )
+        .route(
+            "/api/debug",
+            get({
+                let db_path = db_path_debug.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move {
+                        let config = Config::load_from_db(&path).unwrap_or_else(|_| Config::default_empty());
+                        let status = get_system_status().lock().unwrap().clone();
+
+                        let mut data_sources = Vec::new();
+                        if let Some(ref wifi) = config.solax_wifi {
+                            for host in &wifi.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": host,
+                                    "type": "solax_wifi",
+                                    "status": status.inverters.get(host),
+                                }));
+                            }
+                        }
+                        if let Some(ref mb) = config.solax_modbus {
+                            for inv in &mb.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": inv,
+                                    "type": "solax_modbus",
+                                    "status": status.inverters.get(inv),
+                                }));
+                            }
+                        }
+                        if let Some(ref g4) = config.solax_g4_modbus {
+                            for inv in &g4.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": inv,
+                                    "type": "solax_g4_modbus",
+                                    "status": status.inverters.get(inv),
+                                }));
+                            }
+                        }
+                        if let Some(ref g3) = config.solax_g3_modbus {
+                            for inv in &g3.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": inv,
+                                    "type": "solax_g3_modbus",
+                                    "status": status.inverters.get(inv),
+                                }));
+                            }
+                        }
+                        if let Some(ref sdm) = config.sdm630_modbus_v2 {
+                            for port in &sdm.ports {
+                                data_sources.push(serde_json::json!({
+                                    "name": port,
+                                    "type": "sdm630_modbus_v2",
+                                    "meter_power": status.meter_power,
+                                    "meter_last_updated": status.meter_last_updated,
+                                }));
+                            }
+                        }
+                        if let Some(ref dtsu) = config.dtsu666 {
+                            for port in &dtsu.ports {
+                                data_sources.push(serde_json::json!({
+                                    "name": port,
+                                    "type": "dtsu666",
+                                    "meter_power": status.meter_power,
+                                    "meter_last_updated": status.meter_last_updated,
+                                }));
+                            }
+                        }
+                        if let Some(ref meter) = config.mqtt_power_meter {
+                            for name in &meter.meters {
+                                data_sources.push(serde_json::json!({
+                                    "name": name,
+                                    "type": "mqtt_power_meter",
+                                    "meter_power": status.meter_power,
+                                    "meter_last_updated": status.meter_last_updated,
+                                }));
+                            }
+                        }
+                        if let Some(ref inv) = config.mqtt_inverter {
+                            for name in &inv.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": name,
+                                    "type": "mqtt_inverter",
+                                    "status": status.inverters.get(name),
+                                }));
+                            }
+                        }
+
+                        let debug_payload = serde_json::json!({
+                            "timestamp": chrono::Utc::now().to_rfc3339(),
+                            "timestamp_epoch": chrono::Utc::now().timestamp(),
+                            "config": config,
+                            "system_status": status,
+                            "data_sources": data_sources,
+                            "power_manager_internal_state": {
+                                "active_mode": status.active_mode,
+                                "grid_target": status.grid_target,
+                                "inverters": status.inverters,
+                                "meter_power": status.meter_power,
+                                "meter_last_updated": status.meter_last_updated,
+                                "import_price": status.import_price,
+                                "export_price": status.export_price,
+                                "price_thresholds": status.price_thresholds,
+                                "usage": status.usage,
+                                "power_budget": status.power_budget,
+                                "power_budget_with_charging": status.power_budget_with_charging,
+                            }
+                        });
+
+                        Json(debug_payload)
+                    }
+                }
+            }),
+        )
+        .route(
+            "/debug",
+            get({
+                let db_path = db_path_debug2.clone();
+                move || {
+                    let path = db_path.clone();
+                    async move {
+                        let config = Config::load_from_db(&path).unwrap_or_else(|_| Config::default_empty());
+                        let status = get_system_status().lock().unwrap().clone();
+
+                        let mut data_sources = Vec::new();
+                        if let Some(ref wifi) = config.solax_wifi {
+                            for host in &wifi.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": host,
+                                    "type": "solax_wifi",
+                                    "status": status.inverters.get(host),
+                                }));
+                            }
+                        }
+                        if let Some(ref mb) = config.solax_modbus {
+                            for inv in &mb.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": inv,
+                                    "type": "solax_modbus",
+                                    "status": status.inverters.get(inv),
+                                }));
+                            }
+                        }
+                        if let Some(ref g4) = config.solax_g4_modbus {
+                            for inv in &g4.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": inv,
+                                    "type": "solax_g4_modbus",
+                                    "status": status.inverters.get(inv),
+                                }));
+                            }
+                        }
+                        if let Some(ref g3) = config.solax_g3_modbus {
+                            for inv in &g3.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": inv,
+                                    "type": "solax_g3_modbus",
+                                    "status": status.inverters.get(inv),
+                                }));
+                            }
+                        }
+                        if let Some(ref sdm) = config.sdm630_modbus_v2 {
+                            for port in &sdm.ports {
+                                data_sources.push(serde_json::json!({
+                                    "name": port,
+                                    "type": "sdm630_modbus_v2",
+                                    "meter_power": status.meter_power,
+                                    "meter_last_updated": status.meter_last_updated,
+                                }));
+                            }
+                        }
+                        if let Some(ref dtsu) = config.dtsu666 {
+                            for port in &dtsu.ports {
+                                data_sources.push(serde_json::json!({
+                                    "name": port,
+                                    "type": "dtsu666",
+                                    "meter_power": status.meter_power,
+                                    "meter_last_updated": status.meter_last_updated,
+                                }));
+                            }
+                        }
+                        if let Some(ref meter) = config.mqtt_power_meter {
+                            for name in &meter.meters {
+                                data_sources.push(serde_json::json!({
+                                    "name": name,
+                                    "type": "mqtt_power_meter",
+                                    "meter_power": status.meter_power,
+                                    "meter_last_updated": status.meter_last_updated,
+                                }));
+                            }
+                        }
+                        if let Some(ref inv) = config.mqtt_inverter {
+                            for name in &inv.inverters {
+                                data_sources.push(serde_json::json!({
+                                    "name": name,
+                                    "type": "mqtt_inverter",
+                                    "status": status.inverters.get(name),
+                                }));
+                            }
+                        }
+
+                        let debug_payload = serde_json::json!({
+                            "timestamp": chrono::Utc::now().to_rfc3339(),
+                            "timestamp_epoch": chrono::Utc::now().timestamp(),
+                            "config": config,
+                            "system_status": status,
+                            "data_sources": data_sources,
+                            "power_manager_internal_state": {
+                                "active_mode": status.active_mode,
+                                "grid_target": status.grid_target,
+                                "inverters": status.inverters,
+                                "meter_power": status.meter_power,
+                                "meter_last_updated": status.meter_last_updated,
+                                "import_price": status.import_price,
+                                "export_price": status.export_price,
+                                "price_thresholds": status.price_thresholds,
+                                "usage": status.usage,
+                                "power_budget": status.power_budget,
+                                "power_budget_with_charging": status.power_budget_with_charging,
+                            }
+                        });
+
+                        Json(debug_payload)
+                    }
+                }
             }),
         )
         .route(
@@ -1235,6 +1488,19 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers().get("content-type").unwrap(), "text/csv; charset=utf-8");
         assert!(response.headers().contains_key("content-disposition"));
+
+        // 10. Test GET /api/debug and /debug
+        let response = app.clone()
+            .oneshot(Request::builder().uri("/api/debug").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let response = app.clone()
+            .oneshot(Request::builder().uri("/debug").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
 
         let _ = std::fs::remove_file(temp_db);
     }
