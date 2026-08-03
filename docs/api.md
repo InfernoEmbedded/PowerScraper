@@ -98,6 +98,73 @@ Returns current system status overview formatted for the dashboard:
 - `grid_target`: Configured grid target power in Watts (e.g. `-50.0`)
 - `meter_power`: Mains meter reading in Watts
 - `meter_last_updated`: Unix timestamp of last meter telemetry update
+
+---
+
+### 2. `GET /health` & `GET /api/health`
+Health monitoring endpoints designed for integration with Nagios, NEMS, or other network monitoring tools:
+- Checks all configured battery inverters in the system.
+- Ensures each configured battery inverter is online and has updated telemetry within the last **60 seconds**.
+
+#### Response Behavior & HTTP Status Codes:
+- **`200 OK` (`"status": "healthy"`)**: All configured battery inverters are online and updated within 60s.
+- **`503 Service Unavailable` (`"status": "unhealthy"`)**: Any configured battery inverter is offline or stale (>60s since telemetry update).
+
+#### Request Example:
+```bash
+curl -i http://power.lan:3000/health
+```
+
+#### Healthy Response Example (`HTTP 200 OK`):
+```json
+{
+  "status": "healthy",
+  "timestamp": 1785747975,
+  "inverters_count": 5,
+  "healthy_count": 5,
+  "inverters": [
+    { "name": "solax-x1", "healthy": true, "last_updated": 1785747974, "last_updated_seconds_ago": 1 },
+    { "name": "solax-x2", "healthy": true, "last_updated": 1785747974, "last_updated_seconds_ago": 1 },
+    { "name": "solax-x3", "healthy": true, "last_updated": 1785747974, "last_updated_seconds_ago": 1 },
+    { "name": "solax1",   "healthy": true, "last_updated": 1785747974, "last_updated_seconds_ago": 1 },
+    { "name": "solax2",   "healthy": true, "last_updated": 1785747974, "last_updated_seconds_ago": 1 }
+  ]
+}
+```
+
+#### Unhealthy Response Example (`HTTP 503 Service Unavailable`):
+```json
+{
+  "status": "unhealthy",
+  "timestamp": 1785748200,
+  "inverters_count": 3,
+  "healthy_count": 2,
+  "inverters": [
+    { "name": "solax-x1", "healthy": true,  "last_updated": 1785748195, "last_updated_seconds_ago": 5 },
+    { "name": "solax-x2", "healthy": false, "last_updated": 1785748050, "last_updated_seconds_ago": 150 },
+    { "name": "solax-x3", "healthy": true,  "last_updated": 1785748198, "last_updated_seconds_ago": 2 }
+  ]
+}
+```
+
+#### Nagios / NEMS Service Configuration:
+```nagios
+define service {
+                service_description                   PowerScraper Health
+                check_command                         check_http!-p 3000 -u /health
+                host_name                             power
+                check_period                          24x7
+                notification_period                   24x7
+                contact_groups                        +admins
+                max_check_attempts                    3
+                check_interval                        1
+                retry_interval                        1
+                notification_interval                 30
+                notification_options                  w,u,c,r,f,s
+                active_checks_enabled                 1
+                notifications_enabled                 1
+}
+```
 - `import_price` & `export_price`: Active electricity tariff rates
 - `inverters`: Map of configured inverters with SOC, PV power, battery power, and commanded `requested_power`
 

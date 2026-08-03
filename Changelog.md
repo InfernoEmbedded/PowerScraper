@@ -4,6 +4,19 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.119] - 2026-08-03
+
+### Added
+* **Nagios / NEMS Compatible Health API Endpoints (`/health` & `/api/health`)**:
+  - Added REST endpoints that check telemetry freshness across all configured battery inverters.
+  - Returns `HTTP 200 OK` (`"status": "healthy"`) when all battery inverters are online and updated within the last 60 seconds.
+  - Returns `HTTP 503 Service Unavailable` (`"status": "unhealthy"`) when any configured battery inverter is offline or stale (>60s since telemetry update), triggering standard Nagios `check_http` CRITICAL alerts.
+  - Returns detailed JSON payload containing status, epoch timestamp, total battery inverter count, healthy inverter count, and per-inverter update metrics.
+* **Nagios & NEMS Linux Integration**:
+  - Configured and verified active service check `PowerScraper Health` on NEMS Linux server (`root@monitor.lan`).
+
+---
+
 ## [1.0.106] - 2026-08-01
 
 ### Added
