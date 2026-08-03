@@ -47,6 +47,7 @@ To explore the details of each subsystem, check the corresponding guides:
 3. **[Inverter Drivers](file:///home/deece/src/PowerScraper/docs/inverters.md)**: Explains SolaX Modbus registers, WiFi HTTP endpoints, and hardware integration.
 4. **[Power Meter Drivers](file:///home/deece/src/PowerScraper/docs/meters.md)**: Documents supported hardware meters (SDM630, DTSU666) and the MQTT meter bridge.
 5. **[Power Manager Battery Control](file:///home/deece/src/PowerScraper/docs/power_manager.md)**: Outlines the battery control algorithms, period states, and safety bounds.
+6. **[REST API & Debug Endpoints](file:///home/deece/src/PowerScraper/docs/api.md)**: Documents REST API endpoints, backup import/export, CSV telemetry streaming, and `/api/debug` diagnostic payloads.
 
 ---
 
