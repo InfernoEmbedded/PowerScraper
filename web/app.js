@@ -843,6 +843,8 @@ async function loadConfig(configData = null) {
 
         // Load MQTT
         const mqtt = config.MQTT || {};
+        const mqttEnabled = mqtt.enabled !== false;
+        document.getElementById('mqtt-enable').checked = mqttEnabled;
         document.getElementById('mqtt-broker').value = mqtt.broker || '';
         document.getElementById('mqtt-port').value = mqtt.port || '';
         document.getElementById('mqtt-username').value = mqtt.username || '';
@@ -850,6 +852,7 @@ async function loadConfig(configData = null) {
         document.getElementById('mqtt-base').value = mqtt["base-topic"] || '';
         document.getElementById('mqtt-ha-discovery').checked = mqtt["home-assistant-discovery"] !== false;
         document.getElementById('mqtt-ha-prefix').value = mqtt["home-assistant-prefix"] || '';
+        toggleFormSection('mqtt-section', mqttEnabled);
 
         // Load History
         const history = config.History || {};
@@ -1879,6 +1882,7 @@ async function saveConfiguration() {
             "retention-days": parseInt(document.getElementById('history-retention-days').value) || 365
         },
         MQTT: {
+            enabled: document.getElementById('mqtt-enable').checked,
             broker: document.getElementById('mqtt-broker').value,
             port: parseInt(document.getElementById('mqtt-port').value) || 1883,
             "base-topic": document.getElementById('mqtt-base').value || "sensors",
@@ -3575,6 +3579,22 @@ async function fetchAndRenderHistoryCharts() {
         const t2 = performance.now();
         renderHistoryCharts(records, startTs, endTs);
         const t3 = performance.now();
+
+        // Ensure minimum duration (250ms) so smooth pulse transition is visually perceptible
+        const elapsed = t3 - t0;
+        const minPulseMs = 250;
+        if (elapsed < minPulseMs) {
+            await new Promise(r => setTimeout(r, minPulseMs - elapsed));
+        }
+
+        chartIds.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) {
+                const card = el.closest('.glass-card');
+                if (card) card.classList.remove('graph-loading-pulse');
+                el.classList.remove('graph-loading-pulse');
+            }
+        });
 
         const serverTiming = resp.headers.get('Server-Timing') || 'N/A';
         console.log(`[Profile Graph Loading] Network Fetch: ${(t1 - t0).toFixed(1)}ms, JSON Parse: ${(t2 - t1).toFixed(1)}ms, Chart Render: ${(t3 - t2).toFixed(1)}ms, Total Frontend: ${(t3 - t0).toFixed(1)}ms, Decimated Points: ${records.length}, Server-Timing: [${serverTiming}]`);

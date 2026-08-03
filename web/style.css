@@ -492,13 +492,14 @@ input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
 }
 
 @keyframes pulseGraph {
-    0% { opacity: 0.35; filter: blur(1px); }
-    50% { opacity: 0.85; filter: blur(0px); }
-    100% { opacity: 0.35; filter: blur(1px); }
+    0% { opacity: 0.35; filter: blur(1.5px); }
+    50% { opacity: 0.8; filter: blur(0.2px); }
+    100% { opacity: 0.35; filter: blur(1.5px); }
 }
 
 .graph-loading-pulse {
-    animation: pulseGraph 1.2s ease-in-out infinite;
+    animation: pulseGraph 0.8s ease-in-out infinite;
+    transition: opacity 0.25s ease, filter 0.25s ease;
     pointer-events: none;
 }
 
