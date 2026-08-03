@@ -87,6 +87,13 @@ pub struct InverterState {
     pub pv2_power: f64,
     pub measured_power: f64,
     pub discharge_power: f64,
+    pub has_telemetry: bool,
+}
+
+impl InverterState {
+    pub fn has_telemetry(&self) -> bool {
+        self.has_telemetry || self.battery_capacity > 0 || self.pv1_power != 0.0 || self.pv2_power != 0.0 || self.battery_power != 0.0 || self.measured_power != 0.0
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -561,6 +568,11 @@ impl PowerManager {
     fn check_low_capacity(&mut self, batteries: &[crate::battery_group::Battery], period: &BatteryControlPeriod) -> bool {
         let mut any_low = false;
         for b in batteries {
+            let inv_state = self.inverters.get(&b.name);
+            let has_telemetry = inv_state.map(|s| s.has_telemetry()).unwrap_or(false);
+            if !has_telemetry {
+                continue;
+            }
             let was_low = self.low_capacity_state.get(&b.name).copied().unwrap_or(false);
             let hyst = period.min_charge_hysteresis
                 .or(self.config.min_charge_hysteresis)
@@ -1906,6 +1918,18 @@ pub async fn run_power_manager_queue_task(
 
     println!("Power Manager queue processor running...");
 
+    let history_config = crate::config::Config::load_from_db(&db_path).ok().and_then(|c| c.history);
+    let history_enabled = history_config.as_ref().map(|h| h.enabled).unwrap_or(true);
+    let flush_interval_mins = history_config.as_ref().map(|h| h.flush_interval_mins).unwrap_or(30);
+    let retention_days = history_config.as_ref().and_then(|h| h.retention_days);
+
+    if history_enabled {
+        if let Err(e) = init_history_db(&db_path) {
+            eprintln!("Failed to initialize telemetry history table: {}", e);
+        }
+    }
+
+    let mut last_flush = std::time::Instant::now();
     let mut last_threshold_calc = std::time::Instant::now();
     let mut history_ticker = tokio::time::interval(Duration::from_secs(60));
 
@@ -1913,9 +1937,17 @@ pub async fn run_power_manager_queue_task(
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 println!("Power Manager queue processor shutting down...");
+                if history_enabled {
+                    crate::database::flush_pending_history_to_db(&db_path, retention_days);
+                }
                 break;
             }
             _ = history_ticker.tick() => {
+                if history_enabled && last_flush.elapsed() >= Duration::from_secs(flush_interval_mins as u64 * 60) {
+                    crate::database::flush_pending_history_to_db(&db_path, retention_days);
+                    last_flush = std::time::Instant::now();
+                }
+
                 if last_threshold_calc.elapsed() >= Duration::from_secs(24 * 3600) {
                     if let Ok(thresholds) = calculate_price_thresholds(&db_path) {
                         if let Ok(mut status) = crate::web_server::get_system_status().lock() {
@@ -2011,6 +2043,7 @@ pub async fn run_power_manager_queue_task(
                         }
 
                         if updated {
+                            state.has_telemetry = true;
                             pm_lock.inverters.insert(batch.device_name.clone(), state);
                             state_changed = true;
                         }
@@ -2481,6 +2514,7 @@ pub async fn run_power_manager_task(
                                             }
 
                                             if updated {
+                                                state.has_telemetry = true;
                                                 pm_lock.inverters.insert(device_name.to_string(), state);
                                                 state_changed = true;
 
@@ -3155,6 +3189,7 @@ mod tests {
         };
 
         let mut pm = PowerManager::new(config, "powerscraper".to_string());
+        pm.inverters.insert("bat1".to_string(), InverterState { battery_capacity: 21, has_telemetry: true, ..Default::default() });
         
         let period = BatteryControlPeriod {
             start: "00:00:00".to_string(),

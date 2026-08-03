@@ -202,6 +202,18 @@ impl BatteryGroup {
         for (name, mut p) in allocations {
             if let Some(inv_cfg) = inverter_configs.get(&name) {
                 let mut state = inverters_state.get(&name).cloned().unwrap_or_default();
+                
+                // If telemetry has never been received for this inverter since startup, default to 0 W (0 charge)
+                if !state.has_telemetry() {
+                    commanded_powers.insert(name.clone(), 0);
+                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                        let web_inv = status.inverters.entry(name.clone()).or_default();
+                        web_inv.requested_power = Some(0);
+                    }
+                    final_commands.insert(name.clone(), 0);
+                    continue;
+                }
+
                 let soc = state.battery_capacity;
                 
                 // Apply individual clamps & constraints

@@ -535,6 +535,11 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
 
                         let req_start = std::time::Instant::now();
                         let res = tokio::task::spawn_blocking(move || {
+                            let retention_days = crate::config::Config::load_from_db(&path)
+                                .ok()
+                                .and_then(|c| c.history)
+                                .and_then(|h| h.retention_days);
+                            crate::database::flush_pending_history_to_db(&path, retention_days);
                             crate::database::get_decimated_telemetry_in_range_profiled(&path, start_ts, end_ts, max_pixels, topics_opt.as_deref())
                         }).await;
 
