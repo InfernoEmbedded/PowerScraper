@@ -25,10 +25,6 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                 Dashboard
             </button>
-            <button class="nav-btn" onclick="switchTab('tab-mqtt', this)">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-                MQTT Settings
-            </button>
             <button class="nav-btn" onclick="switchTab('tab-hardware', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
                 Hardware Drivers
@@ -36,10 +32,6 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             <button class="nav-btn" onclick="switchTab('tab-battery', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line></svg>
                 Battery Control
-            </button>
-            <button class="nav-btn" onclick="switchTab('tab-history', this)">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                History
             </button>
             <button class="nav-btn" onclick="switchTab('tab-periods', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
@@ -130,7 +122,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     <div class="card-title">Export Price</div>
                     <div class="stat-val" id="stat-export-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
                 </div>
-                <div class="glass-card">
+                <div class="glass-card" id="card-mqtt-status" style="display: none;">
                     <div class="card-title">MQTT Status</div>
                     <div class="stat-val" id="stat-mqtt-status" style="color: var(--danger); text-shadow: 0 0 10px rgba(239, 68, 68, 0.2);">Disconnected</div>
                 </div>
@@ -190,52 +182,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             </div>
         </div>
 
-        <!-- MQTT SETTINGS TAB -->
-        <div id="tab-mqtt" class="tab-content">
-            <div class="glass-card">
-                <div class="card-title">MQTT Broker Credentials</div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="mqtt-broker">Broker Hostname / IP</label>
-                        <input type="text" id="mqtt-broker" placeholder="mqtt.example.com">
-                    </div>
-                    <div class="form-group">
-                        <label for="mqtt-port">Broker Port</label>
-                        <input type="number" id="mqtt-port" placeholder="1883">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="mqtt-username">Username</label>
-                        <input type="text" id="mqtt-username" placeholder="Optional">
-                    </div>
-                    <div class="form-group">
-                        <label for="mqtt-password">Password</label>
-                        <input type="password" id="mqtt-password" placeholder="Optional">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="mqtt-base">Base Topic Path</label>
-                        <input type="text" id="mqtt-base" placeholder="sensors">
-                    </div>
-                </div>
-                <div class="checkbox-group">
-                    <input type="checkbox" id="mqtt-ha-discovery">
-                    <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery</label>
-                </div>
-                <div class="form-row" style="margin-top: 15px;">
-                    <div class="form-group" id="mqtt-ha-prefix-group">
-                        <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix</label>
-                        <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
-                    </div>
-                </div>
-                <div style="margin-top: 25px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-                    <button class="sub-btn" id="btn-mqtt-test" onclick="testMqttConnection()">Test MQTT Connection</button>
-                    <span id="mqtt-test-result" style="font-weight: 500; font-size: 0.9rem; transition: all 0.3s ease;"></span>
-                </div>
-            </div>
-        </div>
+
 
         <!-- HARDWARE DRIVERS TAB -->
         <div id="tab-hardware" class="tab-content">
@@ -307,127 +254,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                         <div id="inverters-constraints-list">
                             <!-- Dynamic inverter constraint cards -->
                         </div>
-                </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- HISTORY TAB -->
-        <div id="tab-history" class="tab-content">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                <h3 style="margin: 0; color: #fff; font-size: 1.25rem;">History Overview</h3>
-                <button class="sub-btn" onclick="openHistorySettingsModal()" title="Telemetry History Logging Settings" style="display: inline-flex; align-items: center; gap: 8px;">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    Logging Settings
-                </button>
-            </div>
-
-            <!-- Settings Modal -->
-            <div id="history-settings-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.75); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); z-index: 1000; align-items: center; justify-content: center;">
-                <div class="glass-card" style="width: 100%; max-width: 500px; padding: 25px; margin: 20px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                        <h3 style="margin: 0; color: var(--accent);">Telemetry Logging Settings</h3>
-                        <button style="background: none; border: none; color: #aaa; font-size: 1.5rem; cursor: pointer;" onclick="closeHistorySettingsModal()">&times;</button>
-                    </div>
-                    <div class="checkbox-group" style="margin-bottom: 20px;">
-                        <input type="checkbox" id="history-enabled" onchange="toggleFormSection('history-section', this.checked)">
-                        <label for="history-enabled">Enable Telemetry History Logging</label>
-                    </div>
-                    <div id="history-section">
-                        <div class="form-group" style="margin-bottom: 15px;">
-                            <label for="history-flush-interval">Flush Interval (minutes)</label>
-                            <input type="number" id="history-flush-interval" min="1" max="1440" placeholder="30">
-                        </div>
-                        <div class="form-group" style="margin-bottom: 20px;">
-                            <label for="history-retention-days">Data Retention (days)</label>
-                            <input type="number" id="history-retention-days" min="1" max="3650" placeholder="365">
-                        </div>
-                    </div>
-                    <div style="display: flex; justify-content: flex-end; gap: 10px;">
-                        <button class="sub-btn" onclick="closeHistorySettingsModal()">Cancel</button>
-                        <button class="btn-apply" onclick="saveHistorySettingsAndClose()">Save Settings</button>
                     </div>
                 </div>
-            </div>
-
-            <!-- Horizontal Timeline Selection Bar -->
-            <div class="glass-card" style="padding: 15px 20px; margin-bottom: 20px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
-                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                        <span style="font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent); margin-right: 5px;">Time Range:</span>
-                        <button class="history-range-btn" onclick="setHistoryRange('1h', this)">1h</button>
-                        <button class="history-range-btn" onclick="setHistoryRange('6h', this)">6h</button>
-                        <button class="history-range-btn" onclick="setHistoryRange('12h', this)">12h</button>
-                        <button class="history-range-btn active" onclick="setHistoryRange('24h', this)">24h</button>
-                        <button class="history-range-btn" onclick="setHistoryRange('7d', this)">7d</button>
-                        <button class="history-range-btn" onclick="setHistoryRange('30d', this)">30d</button>
-                        <button class="history-range-btn" onclick="toggleCustomHistoryRange(this)">Custom</button>
-                    </div>
-                    <div id="history-timeline-info" style="font-size: 0.85rem; color: rgba(255,255,255,0.7); font-family: monospace;">
-                        Loading range...
-                    </div>
-                </div>
-                <div id="history-custom-range-box" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid rgba(255,255,255,0.1); flex-wrap: wrap; gap: 15px; align-items: flex-end;">
-                    <div class="form-group" style="margin: 0;">
-                        <label style="font-size: 0.8rem;">Start Time</label>
-                        <input type="datetime-local" id="history-start-picker" style="padding: 6px 10px; border-radius: 4px; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1);">
-                    </div>
-                    <div class="form-group" style="margin: 0;">
-                        <label style="font-size: 0.8rem;">End Time</label>
-                        <input type="datetime-local" id="history-end-picker" style="padding: 6px 10px; border-radius: 4px; background: rgba(255,255,255,0.05); color: #fff; border: 1px solid rgba(255,255,255,0.1);">
-                    </div>
-                    <button class="btn-apply" onclick="applyCustomHistoryRange()" style="padding: 8px 16px;">Apply Range</button>
-                </div>
-                <!-- Visual Timeline Indicator Bar -->
-                <div style="margin-top: 15px; height: 6px; width: 100%; background: rgba(255,255,255,0.1); border-radius: 3px; overflow: hidden; position: relative;">
-                    <div id="history-timeline-bar" style="height: 100%; width: 100%; background: linear-gradient(90deg, #f59e0b, #10b981, #06b6d4, #8b5cf6, #ec4899); border-radius: 3px;"></div>
-                </div>
-            </div>
-
-            <!-- 5 Stacked History Metric Graphs -->
-            <!-- 1. Solar Generation -->
-            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
-                <h4 style="margin: 0 0 15px 0; color: hsl(45, 100%, 50%); display: flex; align-items: center; gap: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
-                    Solar Generation (kW)
-                </h4>
-                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-solar"></canvas></div>
-            </div>
-
-            <!-- 2. Battery Capacity -->
-            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
-                <h4 style="margin: 0 0 15px 0; color: hsl(145, 100%, 45%); display: flex; align-items: center; gap: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="16" height="10" rx="2" ry="2"></rect><line x1="22" y1="11" x2="22" y2="13"></line></svg>
-                    Battery Capacity (kWh)
-                </h4>
-                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-battery-soc"></canvas></div>
-            </div>
-
-            <!-- 3. Battery Power -->
-            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
-                <h4 style="margin: 0 0 15px 0; color: hsl(280, 80%, 65%); display: flex; align-items: center; gap: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-                    Battery Power (kW)
-                </h4>
-                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-battery-power"></canvas></div>
-            </div>
-
-            <!-- 4. Grid Power -->
-            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
-                <h4 style="margin: 0 0 15px 0; color: hsl(200, 100%, 50%); display: flex; align-items: center; gap: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
-                    Grid Power (kW)
-                </h4>
-                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-grid-power"></canvas></div>
-            </div>
-
-            <!-- 5. Household Usage -->
-            <div class="glass-card" style="margin-bottom: 20px; padding: 20px;">
-                <h4 style="margin: 0 0 15px 0; color: hsl(350, 100%, 60%); display: flex; align-items: center; gap: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>
-                    Household Usage (kW)
-                </h4>
-                <div style="position: relative; height: 200px; width: 100%;"><canvas id="chart-history-house-usage"></canvas></div>
             </div>
         </div>
 
@@ -446,6 +274,59 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
 
         <!-- FORWARDERS TAB -->
         <div id="tab-forwarders" class="tab-content">
+            <!-- MQTT Broker Forwarder -->
+            <div class="glass-card">
+                <div class="card-title">
+                    MQTT Broker Forwarder
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="mqtt-enable" onchange="toggleFormSection('mqtt-section', this.checked)">
+                        <label for="mqtt-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="mqtt-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-broker">Broker Hostname / IP</label>
+                            <input type="text" id="mqtt-broker" placeholder="mqtt.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-port">Broker Port</label>
+                            <input type="number" id="mqtt-port" placeholder="1883">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-username">Username</label>
+                            <input type="text" id="mqtt-username" placeholder="Optional">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-password">Password</label>
+                            <input type="password" id="mqtt-password" placeholder="Optional">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-base">Base Topic Path</label>
+                            <input type="text" id="mqtt-base" placeholder="sensors">
+                        </div>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="mqtt-ha-discovery">
+                        <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery</label>
+                    </div>
+                    <div class="form-row" style="margin-top: 15px;">
+                        <div class="form-group" id="mqtt-ha-prefix-group">
+                            <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix</label>
+                            <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
+                        </div>
+                    </div>
+                    <div style="margin-top: 25px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                        <button class="sub-btn" id="btn-mqtt-test" onclick="testMqttConnection()">Test MQTT Connection</button>
+                        <span id="mqtt-test-result" style="font-weight: 500; font-size: 0.9rem; transition: all 0.3s ease;"></span>
+                    </div>
+                </div>
+            </div>
+
             <!-- EmonCMS -->
             <div class="glass-card">
                 <div class="card-title">
@@ -922,49 +803,32 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             </div>
         </div>
 
-        <!-- BACKUP TAB -->
+        <!-- BACKUP & RESTORE TAB -->
         <div id="tab-backup" class="tab-content">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 style="font-size: 1.5rem; font-weight: 600;">System Backup & Restore</h2>
-            </div>
-
-            <!-- EXPORT CARD -->
-            <div class="glass-card" style="margin-bottom: 25px; padding: 25px;">
-                <h3 style="margin-bottom: 10px; color: var(--primary); display: flex; align-items: center; gap: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                    Export System Backup
-                </h3>
+            <div class="glass-card" style="margin-bottom: 20px;">
+                <div class="card-title">System Backup & Export</div>
                 <p class="text-muted" style="margin-bottom: 20px;">
-                    Download a full system backup containing your configuration (key-value database, drivers, tariffs, and location) alongside recorded telemetry history.
+                    Export system configuration and full telemetry history database records.
                 </p>
                 <div style="display: flex; gap: 15px; flex-wrap: wrap;">
-                    <a href="/api/backup/download" download class="btn-apply" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                        Download Full Backup (XZ Compressed)
-                    </a>
-                    <a href="/api/telemetry/export.csv" download class="sub-btn" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none;">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
-                        Export Telemetry (CSV)
+                    <a href="/api/backup/download" download class="btn-apply" style="display: inline-block; text-decoration: none;">
+                        Download Full System Backup (.json)
                     </a>
                     <button class="sub-btn" onclick="exportConfigOnlyJSON()">
-                        Export Config Only (JSON)
+                        Export Config Only (.json)
                     </button>
                 </div>
             </div>
 
-            <!-- IMPORT CARD -->
-            <div class="glass-card" style="padding: 25px;">
-                <h3 style="margin-bottom: 10px; color: var(--accent); display: flex; align-items: center; gap: 8px;">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
-                    Restore System Backup
-                </h3>
+            <div class="glass-card">
+                <div class="card-title">Restore System Backup</div>
                 <p class="text-muted" style="margin-bottom: 20px;">
-                    Restore configuration and telemetry history from a previously exported backup file (.json.xz or .json).
+                    Restore configuration and telemetry history from a previously exported PowerScraper backup JSON file.
                 </p>
                 <div style="display: flex; flex-direction: column; gap: 15px; max-width: 600px;">
                     <div class="form-group">
-                        <label>Select Backup File (.json.xz or .json)</label>
-                        <input type="file" id="restore-file-input" accept=".json,.xz,.json.xz" style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; color: #fff;">
+                        <label>Select Backup File (.json)</label>
+                        <input type="file" id="restore-file-input" accept=".json" style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; color: #fff;">
                     </div>
                     <button class="btn-apply" onclick="restoreBackupFromFile()" style="align-self: flex-start;">
                         Restore System Backup
@@ -1011,7 +875,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 </div>
             </div>
         </div>
-    </main>
+
+</main>
 
     <!-- Add Driver Modal -->
     <div id="add-driver-modal" class="modal" style="display: none;">
@@ -1668,7 +1533,7 @@ function switchTab(tabId, el) {
     // Show/hide 'Apply Changes' button based on tabId
     const applyBtn = document.querySelector('.btn-apply');
     if (applyBtn) {
-        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation' || tabId === 'tab-about' || tabId === 'tab-tuning') {
+        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation' || tabId === 'tab-about' || tabId === 'tab-tuning' || tabId === 'tab-backup') {
             applyBtn.style.display = 'none';
         } else {
             applyBtn.style.display = 'inline-block';
@@ -1702,6 +1567,11 @@ async function fetchStatus() {
         lastStatusData = status;
 
         // Style and update Current Grid Power
+        const mqttCard = document.getElementById('card-mqtt-status');
+        if (mqttCard) {
+            const mqttOn = status.mqtt_enabled || (currentConfig && currentConfig.MQTT && currentConfig.MQTT.enabled !== false);
+            mqttCard.style.display = mqttOn ? 'block' : 'none';
+        }
         const mainsEl = document.getElementById('stat-mains');
         const mainsPower = status.meter_power || 0.0;
         const absMainsPower = Math.abs(mainsPower);
@@ -3326,23 +3196,20 @@ function getInverterCapacityKwh(invName, config) {
 
 function getDefinedInverters(config) {
     const list = new Set();
-    if (config["Solax-BatteryControl"] && config["Solax-BatteryControl"].inverter) {
-        Object.keys(config["Solax-BatteryControl"].inverter).forEach(k => list.add(k));
+    const cfg = config || (typeof currentConfig !== 'undefined' ? currentConfig : {});
+    if (cfg) {
+        const batCtrl = cfg["Solax-BatteryControl"] || cfg["solax-battery-control"] || cfg.battery_control;
+        if (batCtrl && batCtrl.inverter) {
+            Object.keys(batCtrl.inverter).forEach(k => list.add(k));
+        }
+        ['MQTTInverter', 'mqtt-inverter', 'Solax-Modbus', 'solax-modbus', 'Solax-G3-Modbus', 'solax-g3-modbus', 'Solax-G4-Modbus', 'solax-g4-modbus', 'Solax-Wifi', 'solax-wifi'].forEach(secKey => {
+            if (cfg[secKey] && cfg[secKey].inverters && Array.isArray(cfg[secKey].inverters)) {
+                cfg[secKey].inverters.forEach(k => list.add(k));
+            }
+        });
     }
-    if (config.MQTTInverter && config.MQTTInverter.inverters) {
-        config.MQTTInverter.inverters.forEach(k => list.add(k));
-    }
-    if (config["Solax-Modbus"] && config["Solax-Modbus"].inverters) {
-        config["Solax-Modbus"].inverters.forEach(k => list.add(k));
-    }
-    if (config["Solax-G3-Modbus"] && config["Solax-G3-Modbus"].inverters) {
-        config["Solax-G3-Modbus"].inverters.forEach(k => list.add(k));
-    }
-    if (config["Solax-G4-Modbus"] && config["Solax-G4-Modbus"].inverters) {
-        config["Solax-G4-Modbus"].inverters.forEach(k => list.add(k));
-    }
-    if (config["Solax-Wifi"] && config["Solax-Wifi"].inverters) {
-        config["Solax-Wifi"].inverters.forEach(k => list.add(k));
+    if (typeof currentStatus !== 'undefined' && currentStatus && currentStatus.inverters) {
+        Object.keys(currentStatus.inverters).forEach(k => list.add(k));
     }
     return Array.from(list).sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
 }
@@ -3902,6 +3769,16 @@ async function saveConfiguration() {
         };
     } else {
         cfg.influx = null;
+    }
+
+    // Telemetry History
+    const histEnabledEl = document.getElementById('history-enabled');
+    if (histEnabledEl) {
+        cfg.History = {
+            enabled: histEnabledEl.checked,
+            "flush-interval-mins": parseInt(document.getElementById('history-flush-interval').value) || 30,
+            "retention-days": parseInt(document.getElementById('history-retention-days').value) || 365
+        };
     }
 
     // Location
@@ -5132,578 +5009,5 @@ async function saveHistorySettingsAndClose() {
     if (typeof applyConfig === 'function') {
         await applyConfig();
     }
-}
-
-function setHistoryRange(rangeKey, btnEl) {
-    document.querySelectorAll('.history-range-btn').forEach(b => b.classList.remove('active'));
-    if (btnEl) btnEl.classList.add('active');
-    
-    const customBox = document.getElementById('history-custom-range-box');
-    if (customBox) customBox.style.display = 'none';
-    currentHistoryRange = rangeKey;
-    fetchAndRenderHistoryCharts();
-}
-
-function toggleCustomHistoryRange(btnEl) {
-    document.querySelectorAll('.history-range-btn').forEach(b => b.classList.remove('active'));
-    if (btnEl) btnEl.classList.add('active');
-    
-    const customBox = document.getElementById('history-custom-range-box');
-    if (customBox) customBox.style.display = customBox.style.display === 'none' ? 'flex' : 'none';
-}
-
-function applyCustomHistoryRange() {
-    const startVal = document.getElementById('history-start-picker').value;
-    const endVal = document.getElementById('history-end-picker').value;
-    if (!startVal || !endVal) {
-        return alert("Please select both start and end timestamps.");
-    }
-    customHistoryStart = Math.floor(new Date(startVal).getTime() / 1000);
-    customHistoryEnd = Math.floor(new Date(endVal).getTime() / 1000);
-    currentHistoryRange = 'custom';
-    fetchAndRenderHistoryCharts();
-}
-
-async function fetchAndRenderHistoryCharts() {
-    let now = Math.floor(Date.now() / 1000);
-    let startTs = now - 86400;
-    let endTs = now;
-
-    if (currentHistoryRange === '1h') startTs = now - 3600;
-    else if (currentHistoryRange === '6h') startTs = now - 21600;
-    else if (currentHistoryRange === '12h') startTs = now - 43200;
-    else if (currentHistoryRange === '24h') startTs = now - 86400;
-    else if (currentHistoryRange === '7d') startTs = now - 7 * 86400;
-    else if (currentHistoryRange === '30d') startTs = now - 30 * 86400;
-    else if (currentHistoryRange === 'custom' && customHistoryStart && customHistoryEnd) {
-        startTs = customHistoryStart;
-        endTs = customHistoryEnd;
-    }
-
-    const startDateStr = new Date(startTs * 1000).toLocaleString();
-    const endDateStr = new Date(endTs * 1000).toLocaleString();
-    const infoEl = document.getElementById('history-timeline-info');
-    if (infoEl) infoEl.textContent = `${startDateStr} — ${endDateStr}`;
-
-    const chartIds = ['chart-history-solar', 'chart-history-battery-soc', 'chart-history-battery-power', 'chart-history-grid-power', 'chart-history-house-usage'];
-    chartIds.forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            const card = el.closest('.glass-card');
-            if (card) card.classList.add('graph-loading-pulse');
-            else el.classList.add('graph-loading-pulse');
-        }
-    });
-
-    try {
-        const t0 = performance.now();
-        const maxPixels = Math.max(window.innerWidth || 1200, 800);
-        const chartTopics = getChartTopicsToFetch(typeof currentConfig !== 'undefined' ? currentConfig : null);
-        const topicsParam = encodeURIComponent(chartTopics.join(','));
-        const resp = await fetch(`/api/history?start=${startTs}&end=${endTs}&max_pixels=${maxPixels}&topics=${topicsParam}`);
-        const t1 = performance.now();
-        if (!resp.ok) {
-            chartIds.forEach(id => {
-                const el = document.getElementById(id);
-                if (el) {
-                    const card = el.closest('.glass-card');
-                    if (card) card.classList.remove('graph-loading-pulse');
-                    el.classList.remove('graph-loading-pulse');
-                }
-            });
-            return;
-        }
-        const records = await resp.json();
-        const t2 = performance.now();
-        renderHistoryCharts(records, startTs, endTs);
-        const t3 = performance.now();
-
-        const serverTiming = resp.headers.get('Server-Timing') || 'N/A';
-        console.log(`[Profile Graph Loading] Network Fetch: ${(t1 - t0).toFixed(1)}ms, JSON Parse: ${(t2 - t1).toFixed(1)}ms, Chart Render: ${(t3 - t2).toFixed(1)}ms, Total Frontend: ${(t3 - t0).toFixed(1)}ms, Decimated Points: ${records.length}, Server-Timing: [${serverTiming}]`);
-    } catch (e) {
-        console.error("Failed to fetch history telemetry:", e);
-        chartIds.forEach(id => {
-            const el = document.getElementById(id);
-            if (el) {
-                const card = el.closest('.glass-card');
-                if (card) card.classList.remove('graph-loading-pulse');
-                el.classList.remove('graph-loading-pulse');
-            }
-        });
-    }
-}
-
-function renderHistoryCharts(records, startTs, endTs) {
-    const rangeSecs = endTs - startTs;
-    let bucketSize = 60; // 1 min default
-    if (rangeSecs > 7 * 86400) bucketSize = 1800; // 30 min
-    else if (rangeSecs > 24 * 3600) bucketSize = 300; // 5 min
-
-    // Extract unique topics for Solar, Battery Capacity, and Battery Power
-    const solarTopicsSet = new Set();
-    const batterySocTopicsSet = new Set();
-    const batteryPowerTopicsSet = new Set();
-
-    for (const r of records) {
-        const tLower = r.topic.toLowerCase();
-        if ((tLower.includes('pv') || tLower.includes('solar')) && tLower.includes('power') && !tLower.includes('request')) {
-            if (!isTopicDisabledByNoPv(r.topic, typeof currentConfig !== 'undefined' ? currentConfig : null)) {
-                solarTopicsSet.add(r.topic);
-            }
-        } else if (tLower.includes('battery capacity') || tLower.includes('battery soc') || tLower.endsWith('soc')) {
-            batterySocTopicsSet.add(r.topic);
-        } else if (tLower.includes('battery power') && !tLower.includes('request')) {
-            batteryPowerTopicsSet.add(r.topic);
-        }
-    }
-    const solarTopics = Array.from(solarTopicsSet).sort();
-    const batterySocTopics = Array.from(batterySocTopicsSet).sort();
-    const batteryPowerTopics = Array.from(batteryPowerTopicsSet).sort();
-
-    const bucketMap = new Map();
-    for (let ts = Math.floor(startTs / bucketSize) * bucketSize; ts <= endTs; ts += bucketSize) {
-        bucketMap.set(ts, {
-            solarMap: new Map(),
-            batterySocMap: new Map(),
-            batteryPowerMap: new Map(),
-            gridPowerList: [],
-            houseUsageList: []
-        });
-    }
-
-    for (const r of records) {
-        const bTs = Math.floor(r.timestamp / bucketSize) * bucketSize;
-        let entry = bucketMap.get(bTs);
-        if (!entry) {
-            entry = {
-                solarMap: new Map(),
-                batterySocMap: new Map(),
-                batteryPowerMap: new Map(),
-                gridPowerList: [],
-                houseUsageList: []
-            };
-            bucketMap.set(bTs, entry);
-        }
-
-        const tLower = r.topic.toLowerCase();
-        if ((tLower.includes('pv') || tLower.includes('solar')) && tLower.includes('power') && !tLower.includes('request')) {
-            if (!isTopicDisabledByNoPv(r.topic, typeof currentConfig !== 'undefined' ? currentConfig : null)) {
-                const currentList = entry.solarMap.get(r.topic) || [];
-                currentList.push(r.value);
-                entry.solarMap.set(r.topic, currentList);
-            }
-        } else if (tLower.includes('battery capacity') || tLower.includes('battery soc') || tLower.endsWith('soc')) {
-            const currentList = entry.batterySocMap.get(r.topic) || [];
-            currentList.push(r.value);
-            entry.batterySocMap.set(r.topic, currentList);
-        } else if (tLower.includes('battery power') && !tLower.includes('request')) {
-            const currentList = entry.batteryPowerMap.get(r.topic) || [];
-            currentList.push(r.value);
-            entry.batteryPowerMap.set(r.topic, currentList);
-        } else if (r.topic === 'MainsMeter/Total active power' || tLower.includes('total active power') || tLower.includes('grid power') || tLower.includes('measured power')) {
-            entry.gridPowerList.push(r.value);
-        } else if (r.topic === 'aggregate/Usage' || r.topic === 'sensors/aggregate/Usage' || tLower.endsWith('/usage')) {
-            entry.houseUsageList.push(r.value);
-        }
-    }
-
-    const sortedTimestamps = Array.from(bucketMap.keys()).sort((a, b) => a - b);
-    const labels = sortedTimestamps.map(ts => {
-        const d = new Date(ts * 1000);
-        return rangeSecs > 24 * 3600
-            ? `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
-            : `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    });
-
-    const gridPowerData = [];
-    const houseUsageData = [];
-
-    for (const ts of sortedTimestamps) {
-        const b = bucketMap.get(ts);
-
-        let solarKw = 0;
-        for (const list of b.solarMap.values()) {
-            if (list.length > 0) {
-                solarKw += (list.reduce((acc, v) => acc + v, 0) / list.length) / 1000.0;
-            }
-        }
-
-        let batteryKw = 0;
-        for (const list of b.batteryPowerMap.values()) {
-            if (list.length > 0) {
-                batteryKw += (list.reduce((acc, v) => acc + v, 0) / list.length) / 1000.0;
-            }
-        }
-
-        let gridKw = 0;
-        if (b.gridPowerList.length > 0) {
-            gridKw = (b.gridPowerList.reduce((acc, v) => acc + v, 0) / b.gridPowerList.length) / 1000.0;
-        }
-
-        let usageKw = 0;
-        if (b.houseUsageList.length > 0) {
-            usageKw = (b.houseUsageList.reduce((acc, v) => acc + v, 0) / b.houseUsageList.length) / 1000.0;
-        } else {
-            // Fallback calculation: Household Usage = Solar + Battery Discharging + Grid Import
-            usageKw = Math.max(0, solarKw + batteryKw + gridKw);
-        }
-
-        gridPowerData.push(parseFloat(gridKw.toFixed(2)));
-        houseUsageData.push(parseFloat(usageKw.toFixed(2)));
-    }
-
-    const textColor = '#8e95bf';
-    const gridColor = 'rgba(255, 255, 255, 0.05)';
-
-    // Build Solar Datasets (stacked per PV topic)
-    const hslHues = [45, 25, 65, 15, 80, 5, 55, 35];
-    const solarDatasets = [];
-    if (solarTopics.length > 0) {
-        solarTopics.forEach((topic, idx) => {
-            const hue = hslHues[idx % hslHues.length];
-            const data = sortedTimestamps.map(ts => {
-                const b = bucketMap.get(ts);
-                const list = b.solarMap.get(topic) || [];
-                return list.length > 0 ? parseFloat((list.reduce((acc, v) => acc + v, 0) / list.length / 1000.0).toFixed(2)) : 0;
-            });
-            let displayLabel = topic.replace('/Power', '').replace(' Power', '');
-            solarDatasets.push({
-                label: displayLabel,
-                data: data,
-                borderColor: `hsl(${hue}, 100%, 50%)`,
-                backgroundColor: `hsla(${hue}, 100%, 50%, 0.35)`,
-                borderWidth: 1.5,
-                pointRadius: 0,
-                pointHoverRadius: 4,
-                tension: 0.3,
-                fill: 'origin',
-                stack: 'solar_stack'
-            });
-        });
-    } else {
-        const data = sortedTimestamps.map(ts => {
-            const b = bucketMap.get(ts);
-            let totalSum = 0;
-            for (const list of b.solarMap.values()) {
-                if (list.length > 0) {
-                    totalSum += list.reduce((acc, v) => acc + v, 0) / list.length;
-                }
-            }
-            return parseFloat((totalSum / 1000.0).toFixed(2));
-        });
-        solarDatasets.push({
-            label: 'Solar Generation (kW)',
-            data: data,
-            borderColor: 'hsl(45, 100%, 50%)',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 4,
-            tension: 0.3,
-            fill: true
-        });
-    }
-
-    // Build Battery Capacity Datasets (stacked per battery topic in kWh)
-    const batterySocDatasets = [];
-    const socHues = [145, 175, 120, 195, 100];
-    if (batterySocTopics.length > 0) {
-        batterySocTopics.forEach((topic, idx) => {
-            const hue = socHues[idx % socHues.length];
-            const invName = getInverterFromTopicOrName(topic, typeof currentConfig !== 'undefined' ? currentConfig : null);
-            const capKwh = getInverterCapacityKwh(invName, typeof currentConfig !== 'undefined' ? currentConfig : null);
-
-            const data = sortedTimestamps.map(ts => {
-                const b = bucketMap.get(ts);
-                const list = b.batterySocMap.get(topic) || [];
-                if (list.length === 0) return null;
-                const avgSoc = list.reduce((acc, v) => acc + v, 0) / list.length;
-                if (capKwh !== null && capKwh > 0) {
-                    return parseFloat((capKwh * (avgSoc / 100.0)).toFixed(2));
-                } else {
-                    return parseFloat((avgSoc / 10.0).toFixed(2)); // fallback if capacity unknown
-                }
-            });
-            let displayLabel = topic.replace('/Battery Capacity', '').replace('/Battery SOC', '').replace('/SOC', '').replace(' Capacity', '');
-            if (capKwh !== null && capKwh > 0) {
-                displayLabel += ` (${capKwh.toFixed(1)} kWh max)`;
-            }
-            batterySocDatasets.push({
-                label: displayLabel,
-                data: data,
-                borderColor: `hsl(${hue}, 100%, 45%)`,
-                backgroundColor: `hsla(${hue}, 100%, 45%, 0.3)`,
-                borderWidth: 1.5,
-                pointRadius: 0,
-                pointHoverRadius: 4,
-                tension: 0.3,
-                fill: 'origin',
-                stack: 'battery_soc_stack'
-            });
-        });
-    } else {
-        const data = sortedTimestamps.map(ts => {
-            const b = bucketMap.get(ts);
-            let totalKwh = 0;
-            let hasAny = false;
-            for (const [topic, list] of b.batterySocMap.entries()) {
-                if (list.length > 0) {
-                    const avgSoc = list.reduce((acc, v) => acc + v, 0) / list.length;
-                    const invName = getInverterFromTopicOrName(topic, typeof currentConfig !== 'undefined' ? currentConfig : null);
-                    const capKwh = getInverterCapacityKwh(invName, typeof currentConfig !== 'undefined' ? currentConfig : null) || 10.0;
-                    totalKwh += capKwh * (avgSoc / 100.0);
-                    hasAny = true;
-                }
-            }
-            return hasAny ? parseFloat(totalKwh.toFixed(2)) : null;
-        });
-        batterySocDatasets.push({
-            label: 'Battery Capacity (kWh)',
-            data: data,
-            borderColor: 'hsl(145, 100%, 45%)',
-            backgroundColor: 'rgba(16, 185, 129, 0.05)',
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 4,
-            tension: 0.3,
-            fill: true
-        });
-    }
-
-    // Build Battery Power Datasets (stacked per battery topic)
-    const batteryPowerDatasets = [];
-    const powerHues = [280, 310, 250, 330, 230];
-    if (batteryPowerTopics.length > 0) {
-        batteryPowerTopics.forEach((topic, idx) => {
-            const hue = powerHues[idx % powerHues.length];
-            const data = sortedTimestamps.map(ts => {
-                const b = bucketMap.get(ts);
-                const list = b.batteryPowerMap.get(topic) || [];
-                return list.length > 0 ? parseFloat((list.reduce((acc, v) => acc + v, 0) / list.length / 1000.0).toFixed(2)) : 0;
-            });
-            let displayLabel = topic.replace('/Battery Power', '').replace(' Power', '');
-            batteryPowerDatasets.push({
-                label: displayLabel,
-                data: data,
-                borderColor: `hsl(${hue}, 80%, 65%)`,
-                backgroundColor: `hsla(${hue}, 80%, 65%, 0.35)`,
-                borderWidth: 1.5,
-                pointRadius: 0,
-                pointHoverRadius: 4,
-                tension: 0.3,
-                fill: 'origin',
-                stack: 'battery_power_stack'
-            });
-        });
-    } else {
-        const data = sortedTimestamps.map(ts => {
-            const b = bucketMap.get(ts);
-            let totalSum = 0;
-            for (const list of b.batteryPowerMap.values()) {
-                if (list.length > 0) {
-                    totalSum += list.reduce((acc, v) => acc + v, 0) / list.length;
-                }
-            }
-            return parseFloat((totalSum / 1000.0).toFixed(2));
-        });
-        batteryPowerDatasets.push({
-            label: 'Battery Power (kW)',
-            data: data,
-            borderColor: 'hsl(280, 80%, 65%)',
-            backgroundColor: 'transparent',
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 4,
-            tension: 0.3,
-            fill: false
-        });
-    }
-
-    // Helper to create stacked or non-stacked chart config
-    const stackedCharts = [
-        { id: 'chart-history-solar', key: 'solar', datasets: solarDatasets, unit: 'kW', stacked: true },
-        { id: 'chart-history-battery-soc', key: 'batterySoc', datasets: batterySocDatasets, unit: 'kWh', stacked: true },
-        { id: 'chart-history-battery-power', key: 'batteryPower', datasets: batteryPowerDatasets, unit: 'kW', stacked: true }
-    ];
-
-    for (const cfg of stackedCharts) {
-        const canvas = document.getElementById(cfg.id);
-        if (!canvas) continue;
-        const ctx = canvas.getContext('2d');
-        if (historyChartInstances[cfg.key]) historyChartInstances[cfg.key].destroy();
-
-        historyChartInstances[cfg.key] = new Chart(ctx, {
-            type: 'line',
-            data: { labels: labels, datasets: cfg.datasets },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: {
-                        display: cfg.datasets.length > 1,
-                        position: 'top',
-                        labels: { color: textColor, font: { family: 'Outfit', size: 11 } }
-                    },
-                    tooltip: {
-                        backgroundColor: 'rgba(22, 26, 49, 0.95)',
-                        titleColor: '#fff',
-                        titleFont: { family: 'Outfit', size: 13, weight: '600' },
-                        bodyColor: '#f0f2fd',
-                        bodyFont: { family: 'Outfit', size: 12 },
-                        borderColor: 'rgba(255, 255, 255, 0.1)',
-                        borderWidth: 1,
-                        padding: 10,
-                        cornerRadius: 8,
-                        callbacks: {
-                            label: function(context) {
-                                let label = context.dataset.label || '';
-                                if (label) label += ': ';
-                                if (context.parsed.y !== null) {
-                                    label += cfg.unit === '%' ? context.parsed.y.toFixed(1) + '%' : context.parsed.y.toFixed(2) + ' kW';
-                                }
-                                return label;
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        stacked: true,
-                        grid: { color: gridColor, borderColor: gridColor },
-                        ticks: { color: textColor, font: { family: 'Outfit', size: 10 }, maxTicksLimit: 24 }
-                    },
-                    y: {
-                        stacked: true,
-                        grid: { color: gridColor, borderColor: gridColor },
-                        ticks: { color: textColor, font: { family: 'Outfit', size: 11 } }
-                    }
-                }
-            }
-        });
-    }
-
-    // Render Remaining Line Metric Charts (Grid Power & House Usage)
-    const lineConfigs = [
-        { id: 'chart-history-grid-power', key: 'gridPower', label: 'Grid Power (kW)', color: 'hsl(200, 100%, 50%)', data: gridPowerData, unit: 'kW' },
-        { id: 'chart-history-house-usage', key: 'houseUsage', label: 'Household Usage (kW)', color: 'hsl(350, 100%, 60%)', data: houseUsageData, unit: 'kW' }
-    ];
-
-    for (const cfg of lineConfigs) {
-        const canvas = document.getElementById(cfg.id);
-        if (!canvas) continue;
-        const ctx = canvas.getContext('2d');
-        if (historyChartInstances[cfg.key]) historyChartInstances[cfg.key].destroy();
-
-        const isGridPower = cfg.key === 'gridPower';
-        const isHouseUsage = cfg.key === 'houseUsage';
-        const datasetObj = {
-            label: cfg.label,
-            data: cfg.data,
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 4,
-            tension: 0.3,
-            fill: isGridPower ? 'origin' : (isHouseUsage ? 'origin' : false)
-        };
-
-        if (isGridPower) {
-            datasetObj.segment = {
-                borderColor: ctx => {
-                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
-                    return val < 0 ? 'hsl(145, 100%, 45%)' : 'hsl(350, 100%, 60%)';
-                },
-                backgroundColor: ctx => {
-                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
-                    return val < 0 ? 'hsla(145, 100%, 45%, 0.25)' : 'hsla(350, 100%, 60%, 0.25)';
-                }
-            };
-        } else if (isHouseUsage) {
-            const validData = cfg.data.filter(v => v !== null && !isNaN(v));
-            const maxVal = validData.length > 0 ? Math.max(...validData, 3.0) : 6.0;
-            const getUsageHue = val => {
-                const ratio = Math.min(Math.max(val / Math.min(maxVal, 8.0), 0), 1);
-                return 145 - ratio * 155; // 145 (Green) -> 0/350 (Red)
-            };
-            datasetObj.segment = {
-                borderColor: ctx => {
-                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
-                    const hue = getUsageHue(val);
-                    return `hsl(${hue}, 100%, 48%)`;
-                },
-                backgroundColor: ctx => {
-                    const val = (ctx.p0.parsed.y + ctx.p1.parsed.y) / 2;
-                    const hue = getUsageHue(val);
-                    return `hsla(${hue}, 100%, 48%, 0.2)`;
-                }
-            };
-        } else {
-            datasetObj.borderColor = cfg.color;
-            datasetObj.backgroundColor = 'transparent';
-        }
-
-        historyChartInstances[cfg.key] = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: labels,
-                datasets: [datasetObj]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                interaction: { mode: 'index', intersect: false },
-                plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                        backgroundColor: 'rgba(22, 26, 49, 0.95)',
-                        titleColor: '#fff',
-                        titleFont: { family: 'Outfit', size: 13, weight: '600' },
-                        bodyColor: '#f0f2fd',
-                        bodyFont: { family: 'Outfit', size: 12 },
-                        borderColor: 'rgba(255, 255, 255, 0.1)',
-                        borderWidth: 1,
-                        padding: 10,
-                        cornerRadius: 8,
-                        callbacks: {
-                            label: function(context) {
-                                let label = context.dataset.label || '';
-                                if (label) label += ': ';
-                                if (context.parsed.y !== null) {
-                                    const val = context.parsed.y;
-                                    if (isGridPower) {
-                                        const typeStr = val < 0 ? ' (Feed-in)' : val > 0 ? ' (Usage)' : '';
-                                        label += val.toFixed(2) + ' kW' + typeStr;
-                                    } else {
-                                        label += val.toFixed(2) + ' kW';
-                                    }
-                                }
-                                return label;
-                            }
-                        }
-                    }
-                },
-                scales: {
-                    x: {
-                        grid: { color: gridColor, borderColor: gridColor },
-                        ticks: { color: textColor, font: { family: 'Outfit', size: 10 }, maxTicksLimit: 24 }
-                    },
-                    y: {
-                        grid: { color: gridColor, borderColor: gridColor },
-                        ticks: { color: textColor, font: { family: 'Outfit', size: 11 } }
-                    }
-                }
-            }
-        });
-    }
-
-    // Remove loading pulse after render
-    ['chart-history-solar', 'chart-history-battery-soc', 'chart-history-battery-power', 'chart-history-grid-power', 'chart-history-house-usage'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) {
-            const card = el.closest('.glass-card');
-            if (card) card.classList.remove('graph-loading-pulse');
-            el.classList.remove('graph-loading-pulse');
-        }
-    });
 }
 "###;

@@ -22,10 +22,6 @@
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                 Dashboard
             </button>
-            <button class="nav-btn" onclick="switchTab('tab-mqtt', this)">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"></path></svg>
-                MQTT Settings
-            </button>
             <button class="nav-btn" onclick="switchTab('tab-hardware', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect><rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect><line x1="6" y1="6" x2="6.01" y2="6"></line><line x1="6" y1="18" x2="6.01" y2="18"></line></svg>
                 Hardware Drivers
@@ -57,6 +53,10 @@
             <button class="nav-btn" onclick="switchTab('tab-tuning', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.5 1z"></path></svg>
                 Model Tuning
+            </button>
+            <button class="nav-btn" onclick="switchTab('tab-backup', this)">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                Backup & Restore
             </button>
             <button class="nav-btn" onclick="switchTab('tab-about', this)">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
@@ -119,7 +119,7 @@
                     <div class="card-title">Export Price</div>
                     <div class="stat-val" id="stat-export-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
                 </div>
-                <div class="glass-card">
+                <div class="glass-card" id="card-mqtt-status" style="display: none;">
                     <div class="card-title">MQTT Status</div>
                     <div class="stat-val" id="stat-mqtt-status" style="color: var(--danger); text-shadow: 0 0 10px rgba(239, 68, 68, 0.2);">Disconnected</div>
                 </div>
@@ -179,52 +179,7 @@
             </div>
         </div>
 
-        <!-- MQTT SETTINGS TAB -->
-        <div id="tab-mqtt" class="tab-content">
-            <div class="glass-card">
-                <div class="card-title">MQTT Broker Credentials</div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="mqtt-broker">Broker Hostname / IP</label>
-                        <input type="text" id="mqtt-broker" placeholder="mqtt.example.com">
-                    </div>
-                    <div class="form-group">
-                        <label for="mqtt-port">Broker Port</label>
-                        <input type="number" id="mqtt-port" placeholder="1883">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="mqtt-username">Username</label>
-                        <input type="text" id="mqtt-username" placeholder="Optional">
-                    </div>
-                    <div class="form-group">
-                        <label for="mqtt-password">Password</label>
-                        <input type="password" id="mqtt-password" placeholder="Optional">
-                    </div>
-                </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="mqtt-base">Base Topic Path</label>
-                        <input type="text" id="mqtt-base" placeholder="sensors">
-                    </div>
-                </div>
-                <div class="checkbox-group">
-                    <input type="checkbox" id="mqtt-ha-discovery">
-                    <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery</label>
-                </div>
-                <div class="form-row" style="margin-top: 15px;">
-                    <div class="form-group" id="mqtt-ha-prefix-group">
-                        <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix</label>
-                        <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
-                    </div>
-                </div>
-                <div style="margin-top: 25px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
-                    <button class="sub-btn" id="btn-mqtt-test" onclick="testMqttConnection()">Test MQTT Connection</button>
-                    <span id="mqtt-test-result" style="font-weight: 500; font-size: 0.9rem; transition: all 0.3s ease;"></span>
-                </div>
-            </div>
-        </div>
+
 
         <!-- HARDWARE DRIVERS TAB -->
         <div id="tab-hardware" class="tab-content">
@@ -316,6 +271,59 @@
 
         <!-- FORWARDERS TAB -->
         <div id="tab-forwarders" class="tab-content">
+            <!-- MQTT Broker Forwarder -->
+            <div class="glass-card">
+                <div class="card-title">
+                    MQTT Broker Forwarder
+                    <div class="checkbox-group" style="margin: 0;">
+                        <input type="checkbox" id="mqtt-enable" onchange="toggleFormSection('mqtt-section', this.checked)">
+                        <label for="mqtt-enable">Enable</label>
+                    </div>
+                </div>
+                <div id="mqtt-section">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-broker">Broker Hostname / IP</label>
+                            <input type="text" id="mqtt-broker" placeholder="mqtt.example.com">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-port">Broker Port</label>
+                            <input type="number" id="mqtt-port" placeholder="1883">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-username">Username</label>
+                            <input type="text" id="mqtt-username" placeholder="Optional">
+                        </div>
+                        <div class="form-group">
+                            <label for="mqtt-password">Password</label>
+                            <input type="password" id="mqtt-password" placeholder="Optional">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="mqtt-base">Base Topic Path</label>
+                            <input type="text" id="mqtt-base" placeholder="sensors">
+                        </div>
+                    </div>
+                    <div class="checkbox-group">
+                        <input type="checkbox" id="mqtt-ha-discovery">
+                        <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery</label>
+                    </div>
+                    <div class="form-row" style="margin-top: 15px;">
+                        <div class="form-group" id="mqtt-ha-prefix-group">
+                            <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix</label>
+                            <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
+                        </div>
+                    </div>
+                    <div style="margin-top: 25px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                        <button class="sub-btn" id="btn-mqtt-test" onclick="testMqttConnection()">Test MQTT Connection</button>
+                        <span id="mqtt-test-result" style="font-weight: 500; font-size: 0.9rem; transition: all 0.3s ease;"></span>
+                    </div>
+                </div>
+            </div>
+
             <!-- EmonCMS -->
             <div class="glass-card">
                 <div class="card-title">
@@ -792,6 +800,40 @@
             </div>
         </div>
 
+        <!-- BACKUP & RESTORE TAB -->
+        <div id="tab-backup" class="tab-content">
+            <div class="glass-card" style="margin-bottom: 20px;">
+                <div class="card-title">System Backup & Export</div>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Export system configuration and full telemetry history database records.
+                </p>
+                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                    <a href="/api/backup/download" download class="btn-apply" style="display: inline-block; text-decoration: none;">
+                        Download Full System Backup (.json)
+                    </a>
+                    <button class="sub-btn" onclick="exportConfigOnlyJSON()">
+                        Export Config Only (.json)
+                    </button>
+                </div>
+            </div>
+
+            <div class="glass-card">
+                <div class="card-title">Restore System Backup</div>
+                <p class="text-muted" style="margin-bottom: 20px;">
+                    Restore configuration and telemetry history from a previously exported PowerScraper backup JSON file.
+                </p>
+                <div style="display: flex; flex-direction: column; gap: 15px; max-width: 600px;">
+                    <div class="form-group">
+                        <label>Select Backup File (.json)</label>
+                        <input type="file" id="restore-file-input" accept=".json" style="background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px; color: #fff;">
+                    </div>
+                    <button class="btn-apply" onclick="restoreBackupFromFile()" style="align-self: flex-start;">
+                        Restore System Backup
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- ABOUT TAB -->
         <div id="tab-about" class="tab-content">
             <div class="glass-card" style="max-width: 800px; margin: 0 auto; text-align: center; padding: 40px 20px;">
@@ -830,7 +872,8 @@
                 </div>
             </div>
         </div>
-    </main>
+
+</main>
 
     <!-- Add Driver Modal -->
     <div id="add-driver-modal" class="modal" style="display: none;">

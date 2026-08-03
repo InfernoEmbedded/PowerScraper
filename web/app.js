@@ -14,7 +14,7 @@ function switchTab(tabId, el) {
     // Show/hide 'Apply Changes' button based on tabId
     const applyBtn = document.querySelector('.btn-apply');
     if (applyBtn) {
-        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation' || tabId === 'tab-about' || tabId === 'tab-tuning') {
+        if (tabId === 'tab-dashboard' || tabId === 'tab-simulation' || tabId === 'tab-about' || tabId === 'tab-tuning' || tabId === 'tab-backup') {
             applyBtn.style.display = 'none';
         } else {
             applyBtn.style.display = 'inline-block';
@@ -24,6 +24,9 @@ function switchTab(tabId, el) {
     if (tabId === 'tab-simulation') {
         if (simChartInstance) simChartInstance.resize();
         if (simDetailChartInstance) simDetailChartInstance.resize();
+    }
+    if (tabId === 'tab-history') {
+        fetchAndRenderHistoryCharts();
     }
 }
 
@@ -45,6 +48,11 @@ async function fetchStatus() {
         lastStatusData = status;
 
         // Style and update Current Grid Power
+        const mqttCard = document.getElementById('card-mqtt-status');
+        if (mqttCard) {
+            const mqttOn = status.mqtt_enabled || (currentConfig && currentConfig.MQTT && currentConfig.MQTT.enabled !== false);
+            mqttCard.style.display = mqttOn ? 'block' : 'none';
+        }
         const mainsEl = document.getElementById('stat-mains');
         const mainsPower = status.meter_power || 0.0;
         const absMainsPower = Math.abs(mainsPower);
@@ -317,10 +325,12 @@ async function fetchStatus() {
             if (nameEl) {
                 const name = nameEl.value.trim();
                 const invStatus = status.inverters && status.inverters[name];
-                if (invStatus && invStatus.calculated_battery_capacity !== undefined && invStatus.calculated_battery_capacity !== null) {
-                    const calcEl = card.querySelector('.inv-calc-capacity');
-                    if (calcEl) {
+                const calcEl = card.querySelector('.inv-calc-capacity');
+                if (calcEl) {
+                    if (invStatus && invStatus.calculated_battery_capacity !== undefined && invStatus.calculated_battery_capacity !== null) {
                         calcEl.value = `${invStatus.calculated_battery_capacity.toFixed(2)} kWh`;
+                    } else {
+                        calcEl.value = "N/A";
                     }
                 }
             }
@@ -489,44 +499,46 @@ function renderDriverCard(type, data = {}) {
                 </div>
             </div>
         `;
-    } else if (type === 'Solax-XHybrid-Modbus') {
-        const name = data.inverter || 'solax-xhybrid';
+    } else if (type === 'Solax-G3-Modbus' || type === 'Solax-G4-Modbus') {
+        const title = type === 'Solax-G3-Modbus' ? 'SolaX Generation 3 Modbus TCP' : 'SolaX Generation 4 Modbus TCP';
+        const defaultPrefix = type === 'Solax-G3-Modbus' ? 'solax-g3' : 'solax-g4';
+        const name = data.inverter || defaultPrefix;
         const host = data.hostname || '';
-        const poll = data.poll_period !== undefined ? data.poll_period : 10;
+        const poll = data.poll_period !== undefined ? data.poll_period : 1;
         const timeout = data.timeout !== undefined ? data.timeout : 5;
         const pwd = data.password !== undefined ? data.password : '';
         const avg = data.power_budget_avg_samples !== undefined ? data.power_budget_avg_samples : 30;
         content = `
             <div class="card-title">
-                <span>SolaX XHybrid Modbus TCP</span>
+                <span>${title}</span>
                 <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
             </div>
             <div class="form-row">
                 <div class="form-group">
                     <label>Inverter Name (Identifier)</label>
-                    <input type="text" class="driver-hybrid-name" value="${name}" placeholder="e.g. solax-xhybrid">
+                    <input type="text" class="driver-g3g4-name" value="${name}" placeholder="e.g. ${defaultPrefix}">
                 </div>
                 <div class="form-group">
                     <label>Inverter Host / IP (with optional port)</label>
-                    <input type="text" class="driver-hybrid-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
+                    <input type="text" class="driver-g3g4-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
                 </div>
                 <div class="form-group">
                     <label>Poll Period (s)</label>
-                    <input type="number" class="driver-hybrid-poll" value="${poll}">
+                    <input type="number" class="driver-g3g4-poll" value="${poll}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
                     <label>Timeout (s)</label>
-                    <input type="number" step="0.1" class="driver-hybrid-timeout" value="${timeout}">
+                    <input type="number" step="0.1" class="driver-g3g4-timeout" value="${timeout}">
                 </div>
                 <div class="form-group">
                     <label>Installer Password</label>
-                    <input type="number" class="driver-hybrid-password" value="${pwd}" placeholder="Optional">
+                    <input type="number" class="driver-g3g4-password" value="${pwd}" placeholder="Optional">
                 </div>
                 <div class="form-group">
                     <label>Power Budget Avg Samples</label>
-                    <input type="number" class="driver-hybrid-avg" value="${avg}">
+                    <input type="number" class="driver-g3g4-avg" value="${avg}">
                 </div>
             </div>
         `;
@@ -839,6 +851,14 @@ async function loadConfig(configData = null) {
         document.getElementById('mqtt-ha-discovery').checked = mqtt["home-assistant-discovery"] !== false;
         document.getElementById('mqtt-ha-prefix').value = mqtt["home-assistant-prefix"] || '';
 
+        // Load History
+        const history = config.History || {};
+        const historyEnabled = history.enabled !== false;
+        document.getElementById('history-enabled').checked = historyEnabled;
+        document.getElementById('history-flush-interval').value = history["flush-interval-mins"] || history.flush_interval_mins || 30;
+        document.getElementById('history-retention-days').value = history["retention-days"] || history.retention_days || 365;
+        toggleFormSection('history-section', historyEnabled);
+
         // Clear dynamic drivers container
         const driversContainer = document.getElementById('drivers-list-container');
         driversContainer.innerHTML = '';
@@ -878,27 +898,30 @@ async function loadConfig(configData = null) {
             });
         }
 
-        // 3. Load Solax XHybrid Modbus
-        const hybrid = config["Solax-XHybrid-Modbus"];
-        if (hybrid && hybrid.inverters) {
-            const sortedHybrid = hybrid.inverters.map((name, idx) => {
-                return {
+        // 3. Load Solax G3 & G4 Modbus
+        const loadModbusDriverGroup = (type, key) => {
+            const drv = config[key];
+            if (drv && drv.inverters) {
+                const sorted = drv.inverters.map((name, idx) => ({
                     name: name,
-                    host: (hybrid.hostnames && hybrid.hostnames[idx]) ? hybrid.hostnames[idx] : ''
-                };
-            });
-            sortedHybrid.sort((a, b) => a.name.localeCompare(b.name));
-            sortedHybrid.forEach(item => {
-                renderDriverCard('Solax-XHybrid-Modbus', {
-                    inverter: item.name,
-                    hostname: item.host,
-                    poll_period: hybrid["poll-period"] || hybrid.poll_period || 10,
-                    timeout: hybrid.timeout || 5,
-                    password: hybrid["installer-password"] || hybrid.installer_password || '',
-                    power_budget_avg_samples: hybrid["power-budget-avg-samples"] || hybrid.power_budget_avg_samples || 30
+                    host: (drv.hostnames && drv.hostnames[idx]) ? drv.hostnames[idx] : ''
+                }));
+                sorted.sort((a, b) => a.name.localeCompare(b.name));
+                sorted.forEach(item => {
+                    renderDriverCard(type, {
+                        inverter: item.name,
+                        hostname: item.host,
+                        poll_period: drv["poll-period"] || drv.poll_period || 1,
+                        timeout: drv.timeout || 5,
+                        password: drv["installer-password"] || drv.installer_password || '',
+                        power_budget_avg_samples: drv["power-budget-avg-samples"] || drv.power_budget_avg_samples || 30
+                    });
                 });
-            });
-        }
+            }
+        };
+
+        loadModbusDriverGroup('Solax-G3-Modbus', 'Solax-G3-Modbus');
+        loadModbusDriverGroup('Solax-G4-Modbus', 'Solax-G4-Modbus');
 
         // 4. Load SDM630
         const sdm = config.SDM630Modbusv2;
@@ -1137,29 +1160,46 @@ async function loadConfig(configData = null) {
             arraysContainer.innerHTML = '';
             const definedInverters = getDefinedInverters(config);
             definedInverters.sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
-            if (definedInverters.length === 0) {
-                arraysContainer.innerHTML = '<div class="text-muted" style="padding: 20px; text-align: center;">No inverters configured. Please add an inverter under the Battery Control or Hardware Drivers tabs first.</div>';
-            } else {
-                const existingArrays = {};
-                if (loc && loc.arrays) {
-                    loc.arrays.forEach(arr => {
-                        existingArrays[arr.name] = arr;
-                    });
-                }
+            const renderedArrayNames = new Set();
+            const existingArrays = {};
+            if (loc && loc.arrays) {
+                loc.arrays.forEach(arr => {
+                    if (arr && arr.name) existingArrays[arr.name] = arr;
+                });
+            }
+            
+            definedInverters.forEach(inv => {
+                const pv1Name = `${inv} PV1`;
+                const pv2Name = `${inv} PV2`;
                 
-                definedInverters.forEach(inv => {
-                    const pv1Name = `${inv} PV1`;
-                    const pv2Name = `${inv} PV2`;
-                    
-                    if (shouldShowPvArray(config, inv, 'PV1')) {
-                        const pv1Data = existingArrays[pv1Name] || { name: pv1Name, "capacity-w": 3000.0, tilt: 20.0, azimuth: 0.0 };
-                        renderPvArrayCard(pv1Data);
-                    }
-                    if (shouldShowPvArray(config, inv, 'PV2')) {
-                        const pv2Data = existingArrays[pv2Name] || { name: pv2Name, "capacity-w": 3000.0, tilt: 20.0, azimuth: 0.0 };
-                        renderPvArrayCard(pv2Data);
+                if (shouldShowPvArray(config, inv, 'PV1')) {
+                    const pv1Data = existingArrays[pv1Name] || { name: pv1Name, "capacity-w": 3000.0, tilt: 20.0, azimuth: 0.0 };
+                    renderPvArrayCard(pv1Data);
+                    renderedArrayNames.add(pv1Name);
+                }
+                if (shouldShowPvArray(config, inv, 'PV2')) {
+                    const pv2Data = existingArrays[pv2Name] || { name: pv2Name, "capacity-w": 3000.0, tilt: 20.0, azimuth: 0.0 };
+                    renderPvArrayCard(pv2Data);
+                    renderedArrayNames.add(pv2Name);
+                }
+            });
+
+            // Also render any custom or pre-existing arrays from loc.arrays that were not matched
+            if (loc && loc.arrays) {
+                loc.arrays.forEach(arr => {
+                    if (arr && arr.name && !renderedArrayNames.has(arr.name)) {
+                        const invName = getInverterFromTopicOrName(arr.name, config);
+                        if (invName && isNoPvInverter(invName, config)) {
+                            return;
+                        }
+                        renderPvArrayCard(arr);
+                        renderedArrayNames.add(arr.name);
                     }
                 });
+            }
+
+            if (renderedArrayNames.size === 0) {
+                arraysContainer.innerHTML = '<div class="text-muted" style="padding: 20px; text-align: center;">No PV arrays configured or all inverters configured with "Battery only (No PV)".</div>';
             }
         }
 
@@ -1175,7 +1215,8 @@ function isConfigPopulated(config) {
     // Check if any hardware driver has configured items
     if (config["Solax-Wifi"] && config["Solax-Wifi"].inverters && config["Solax-Wifi"].inverters.length > 0) return true;
     if (config["Solax-Modbus"] && config["Solax-Modbus"].inverters && config["Solax-Modbus"].inverters.length > 0) return true;
-    if (config["Solax-XHybrid-Modbus"] && config["Solax-XHybrid-Modbus"].inverters && config["Solax-XHybrid-Modbus"].inverters.length > 0) return true;
+    if (config["Solax-G3-Modbus"] && config["Solax-G3-Modbus"].inverters && config["Solax-G3-Modbus"].inverters.length > 0) return true;
+    if (config["Solax-G4-Modbus"] && config["Solax-G4-Modbus"].inverters && config["Solax-G4-Modbus"].inverters.length > 0) return true;
     if (config.SDM630Modbusv2 && config.SDM630Modbusv2.ports && config.SDM630Modbusv2.ports.length > 0) return true;
     if (config.DTSU666 && config.DTSU666.ports && config.DTSU666.ports.length > 0) return true;
     if (config.MQTTPowerMeter && config.MQTTPowerMeter.meters && config.MQTTPowerMeter.meters.length > 0) return true;
@@ -1560,36 +1601,126 @@ function shouldShowPvArray(config, inverterName, pvString) {
     }
     
     // MQTTInverter drivers: check if PV string has no topic configured
-    if (config.MQTTInverter && config.MQTTInverter.inverters_config && config.MQTTInverter.inverters_config[inverterName]) {
-        const inv = config.MQTTInverter.inverters_config[inverterName];
-        if (pvString === 'PV1' && !inv.topic_pv1_power && !inv["topic-pv1-power"]) {
-            return false;
-        }
-        if (pvString === 'PV2' && !inv.topic_pv2_power && !inv["topic-pv2-power"]) {
-            return false;
+    if (config.MQTTInverter) {
+        const inv = config.MQTTInverter[inverterName] || (config.MQTTInverter.inverters_config && config.MQTTInverter.inverters_config[inverterName]);
+        if (inv) {
+            if (pvString === 'PV1' && !inv.topic_pv1_power && !inv["topic-pv1-power"]) {
+                return false;
+            }
+            if (pvString === 'PV2' && !inv.topic_pv2_power && !inv["topic-pv2-power"]) {
+                return false;
+            }
         }
     }
     return true;
 }
 
+function isNoPvInverter(inverterName, config) {
+    if (!config) return false;
+    const batCtrl = config["Solax-BatteryControl"];
+    if (batCtrl && batCtrl.inverter && inverterName) {
+        const inv = batCtrl.inverter[inverterName];
+        if (inv && (inv["no-pv"] || inv.no_pv)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function getInverterFromTopicOrName(str, config) {
+    if (!config || !str) return null;
+    const definedInverters = getDefinedInverters(config);
+    const lowerStr = str.toLowerCase();
+    for (const inv of definedInverters) {
+        const lowerInv = inv.toLowerCase();
+        if (lowerStr.includes(lowerInv)) {
+            const idx = lowerStr.indexOf(lowerInv);
+            const charBefore = idx > 0 ? lowerStr[idx - 1] : ' ';
+            const charAfter = idx + lowerInv.length < lowerStr.length ? lowerStr[idx + lowerInv.length] : ' ';
+            if (!/[a-z0-9]/.test(charBefore) && !/[a-z0-9]/.test(charAfter)) {
+                return inv;
+            }
+        }
+    }
+    return null;
+}
+
+function isTopicDisabledByNoPv(topic, config) {
+    const cfg = config || (typeof currentConfig !== 'undefined' ? currentConfig : null);
+    const invName = getInverterFromTopicOrName(topic, cfg);
+    if (invName) {
+        return isNoPvInverter(invName, cfg);
+    }
+    return false;
+}
+
+function getInverterCapacityKwh(invName, config) {
+    if (!invName) return null;
+    if (typeof currentStatus !== 'undefined' && currentStatus && currentStatus.inverters && currentStatus.inverters[invName]) {
+        const calcCap = currentStatus.inverters[invName].calculated_battery_capacity;
+        if (calcCap !== undefined && calcCap !== null && !isNaN(calcCap) && calcCap > 0) {
+            return calcCap;
+        }
+    }
+    const cfg = config || (typeof currentConfig !== 'undefined' ? currentConfig : null);
+    if (cfg && cfg["Solax-BatteryControl"] && cfg["Solax-BatteryControl"].inverter) {
+        const invCfg = cfg["Solax-BatteryControl"].inverter[invName];
+        if (invCfg) {
+            const cap = invCfg["battery-capacity"] !== undefined ? invCfg["battery-capacity"] : invCfg["battery_capacity"];
+            if (cap !== undefined && cap !== null && !isNaN(cap) && cap > 0) {
+                return parseFloat(cap);
+            }
+        }
+    }
+    return null;
+}
+
 function getDefinedInverters(config) {
     const list = new Set();
-    if (config["Solax-BatteryControl"] && config["Solax-BatteryControl"].inverter) {
-        Object.keys(config["Solax-BatteryControl"].inverter).forEach(k => list.add(k));
+    const cfg = config || (typeof currentConfig !== 'undefined' ? currentConfig : {});
+    if (cfg) {
+        const batCtrl = cfg["Solax-BatteryControl"] || cfg["solax-battery-control"] || cfg.battery_control;
+        if (batCtrl && batCtrl.inverter) {
+            Object.keys(batCtrl.inverter).forEach(k => list.add(k));
+        }
+        ['MQTTInverter', 'mqtt-inverter', 'Solax-Modbus', 'solax-modbus', 'Solax-G3-Modbus', 'solax-g3-modbus', 'Solax-G4-Modbus', 'solax-g4-modbus', 'Solax-Wifi', 'solax-wifi'].forEach(secKey => {
+            if (cfg[secKey] && cfg[secKey].inverters && Array.isArray(cfg[secKey].inverters)) {
+                cfg[secKey].inverters.forEach(k => list.add(k));
+            }
+        });
     }
-    if (config.MQTTInverter && config.MQTTInverter.inverters) {
-        config.MQTTInverter.inverters.forEach(k => list.add(k));
-    }
-    if (config["Solax-Modbus"] && config["Solax-Modbus"].inverters) {
-        config["Solax-Modbus"].inverters.forEach(k => list.add(k));
-    }
-    if (config["Solax-XHybrid-Modbus"] && config["Solax-XHybrid-Modbus"].inverters) {
-        config["Solax-XHybrid-Modbus"].inverters.forEach(k => list.add(k));
-    }
-    if (config["Solax-Wifi"] && config["Solax-Wifi"].inverters) {
-        config["Solax-Wifi"].inverters.forEach(k => list.add(k));
+    if (typeof currentStatus !== 'undefined' && currentStatus && currentStatus.inverters) {
+        Object.keys(currentStatus.inverters).forEach(k => list.add(k));
     }
     return Array.from(list).sort((a, b) => a.localeCompare(b, undefined, {numeric: true, sensitivity: 'base'}));
+}
+
+function getChartTopicsToFetch(config) {
+    const cfg = config || (typeof currentConfig !== 'undefined' ? currentConfig : null);
+    const topics = new Set();
+    const invList = getDefinedInverters(cfg || {});
+
+    invList.forEach(inv => {
+        topics.add(`${inv}/PV1 Power`);
+        topics.add(`${inv}/PV2 Power`);
+        topics.add(`${inv}/PV Power`);
+        topics.add(`${inv}/Solar Power`);
+        topics.add(`${inv}/Battery Capacity`);
+        topics.add(`${inv}/Battery SOC`);
+        topics.add(`${inv}/SOC`);
+        topics.add(`${inv}/Battery Power`);
+        topics.add(`${inv}/Grid Power`);
+        topics.add(`${inv}/Grid Power (P1)`);
+        topics.add(`${inv}/Grid Power (P2)`);
+        topics.add(`${inv}/Grid Power (P3)`);
+        topics.add(`${inv}/Measured Power`);
+    });
+
+    topics.add('MainsMeter/Total active power');
+    topics.add('aggregate/Usage');
+    topics.add('sensors/aggregate/Usage');
+
+    return Array.from(topics);
 }
 
 function copyPvArraySpecs(btn) {
@@ -1677,12 +1808,8 @@ function updateCalculatedCapacityFromCard(card) {
     const vmp = parseFloat(card.querySelector('.array-vmp').value) || 0.0;
     const imp = parseFloat(card.querySelector('.array-imp').value) || 0.0;
     const capInput = card.querySelector('.array-capacity');
-    if (capInput) {
-        if (qty > 0 && vmp > 0 && imp > 0) {
-            capInput.value = Math.round(qty * vmp * imp);
-        } else {
-            capInput.value = '';
-        }
+    if (capInput && qty > 0 && vmp > 0 && imp > 0) {
+        capInput.value = Math.round(qty * vmp * imp);
     }
 }
 
@@ -1746,6 +1873,11 @@ function parseCommaList(val) {
 // Saving config JSON
 async function saveConfiguration() {
     const cfg = {
+        History: {
+            enabled: document.getElementById('history-enabled').checked,
+            "flush-interval-mins": parseInt(document.getElementById('history-flush-interval').value) || 30,
+            "retention-days": parseInt(document.getElementById('history-retention-days').value) || 365
+        },
         MQTT: {
             broker: document.getElementById('mqtt-broker').value,
             port: parseInt(document.getElementById('mqtt-port').value) || 1883,
@@ -1759,7 +1891,8 @@ async function saveConfiguration() {
 
     let wifiConfig = null;
     let modbusConfig = null;
-    let hybridConfig = null;
+    let g3Config = null;
+    let g4Config = null;
     let sdmConfig = null;
     let dtsuConfig = null;
     let mqttMeterConfig = null;
@@ -1803,17 +1936,18 @@ async function saveConfiguration() {
                 modbusConfig.inverters.push(name);
                 modbusConfig.hostnames.push(host);
             }
-        } else if (type === 'Solax-XHybrid-Modbus') {
-            const name = card.querySelector('.driver-hybrid-name').value.trim();
-            const host = card.querySelector('.driver-hybrid-host').value.trim();
-            const poll = parseInt(card.querySelector('.driver-hybrid-poll').value) || 10;
-            const timeout = parseFloat(card.querySelector('.driver-hybrid-timeout').value) || 5;
-            const pwdVal = card.querySelector('.driver-hybrid-password').value.trim();
+        } else if (type === 'Solax-G3-Modbus' || type === 'Solax-G4-Modbus') {
+            const name = card.querySelector('.driver-g3g4-name').value.trim();
+            const host = card.querySelector('.driver-g3g4-host').value.trim();
+            const poll = parseInt(card.querySelector('.driver-g3g4-poll').value) || 1;
+            const timeout = parseFloat(card.querySelector('.driver-g3g4-timeout').value) || 5;
+            const pwdVal = card.querySelector('.driver-g3g4-password').value.trim();
             const pwd = pwdVal ? parseInt(pwdVal) : null;
-            const avg = parseInt(card.querySelector('.driver-hybrid-avg').value) || 30;
+            const avg = parseInt(card.querySelector('.driver-g3g4-avg').value) || 30;
             if (name && host) {
-                if (!hybridConfig) {
-                    hybridConfig = {
+                let targetCfg = type === 'Solax-G3-Modbus' ? g3Config : g4Config;
+                if (!targetCfg) {
+                    targetCfg = {
                         "poll-period": poll,
                         timeout: timeout,
                         "installer-password": pwd,
@@ -1821,9 +1955,11 @@ async function saveConfiguration() {
                         inverters: [],
                         hostnames: []
                     };
+                    if (type === 'Solax-G3-Modbus') g3Config = targetCfg;
+                    else g4Config = targetCfg;
                 }
-                hybridConfig.inverters.push(name);
-                hybridConfig.hostnames.push(host);
+                targetCfg.inverters.push(name);
+                targetCfg.hostnames.push(host);
             }
         } else if (type === 'SDM630Modbusv2') {
             const port = card.querySelector('.driver-sdm-port').value.trim();
@@ -1911,26 +2047,33 @@ async function saveConfiguration() {
                 }
             }
         } else if (type === 'MQTTInverter') {
-            const name = card.querySelector('.driver-mqtt-inv-name').value.trim();
-            const broker = card.querySelector('.driver-mqtt-inv-broker').value.trim() || null;
-            const port = parseInt(card.querySelector('.driver-mqtt-inv-port').value) || 1883;
-            const user = card.querySelector('.driver-mqtt-inv-user').value.trim() || null;
-            const pass = card.querySelector('.driver-mqtt-inv-pass').value.trim() || null;
-            const topicPV1Power = card.querySelector('.driver-mqtt-inv-topic-pv1-power').value.trim() || null;
-            const topicPV2Power = card.querySelector('.driver-mqtt-inv-topic-pv2-power').value.trim() || null;
-            const topicPV1Volt = card.querySelector('.driver-mqtt-inv-topic-pv1-voltage').value.trim() || null;
-            const topicPV2Volt = card.querySelector('.driver-mqtt-inv-topic-pv2-voltage').value.trim() || null;
-            const topicPV1Curr = card.querySelector('.driver-mqtt-inv-topic-pv1-current').value.trim() || null;
-            const topicPV2Curr = card.querySelector('.driver-mqtt-inv-topic-pv2-current').value.trim() || null;
-            const topicGridVolt = card.querySelector('.driver-mqtt-inv-topic-grid-voltage').value.trim() || null;
-            const topicGridCurr = card.querySelector('.driver-mqtt-inv-topic-grid-current').value.trim() || null;
-            const topicGridPow = card.querySelector('.driver-mqtt-inv-topic-grid-power').value.trim() || null;
-            const topicFreq = card.querySelector('.driver-mqtt-inv-topic-frequency').value.trim() || null;
-            const topicTemp = card.querySelector('.driver-mqtt-inv-topic-temperature').value.trim() || null;
-            const topicEnergyToday = card.querySelector('.driver-mqtt-inv-topic-energy-today').value.trim() || null;
-            const topicEnergyTotal = card.querySelector('.driver-mqtt-inv-topic-energy-total').value.trim() || null;
-            const topicBatCap = card.querySelector('.driver-mqtt-inv-topic-battery-capacity').value.trim() || null;
-            const topicBatPow = card.querySelector('.driver-mqtt-inv-topic-battery-power').value.trim() || null;
+            const getStr = (cls) => {
+                const el = card.querySelector(cls);
+                if (!el) return null;
+                const v = el.value.trim();
+                return v === "" ? null : v;
+            };
+            const name = getStr('.driver-mqtt-inv-name');
+            const broker = getStr('.driver-mqtt-inv-broker');
+            const portEl = card.querySelector('.driver-mqtt-inv-port');
+            const port = portEl ? (parseInt(portEl.value) || 1883) : 1883;
+            const user = getStr('.driver-mqtt-inv-user');
+            const pass = getStr('.driver-mqtt-inv-pass');
+            const topicPV1Power = getStr('.driver-mqtt-inv-topic-pv1-power');
+            const topicPV2Power = getStr('.driver-mqtt-inv-topic-pv2-power');
+            const topicPV1Volt = getStr('.driver-mqtt-inv-topic-pv1-voltage');
+            const topicPV2Volt = getStr('.driver-mqtt-inv-topic-pv2-voltage');
+            const topicPV1Curr = getStr('.driver-mqtt-inv-topic-pv1-current');
+            const topicPV2Curr = getStr('.driver-mqtt-inv-topic-pv2-current');
+            const topicGridVolt = getStr('.driver-mqtt-inv-topic-grid-voltage');
+            const topicGridCurr = getStr('.driver-mqtt-inv-topic-grid-current');
+            const topicGridPow = getStr('.driver-mqtt-inv-topic-grid-power');
+            const topicFreq = getStr('.driver-mqtt-inv-topic-frequency');
+            const topicTemp = getStr('.driver-mqtt-inv-topic-temperature');
+            const topicEnergyToday = getStr('.driver-mqtt-inv-topic-energy-today');
+            const topicEnergyTotal = getStr('.driver-mqtt-inv-topic-energy-total');
+            const topicBatCap = getStr('.driver-mqtt-inv-topic-battery-capacity');
+            const topicBatPow = getStr('.driver-mqtt-inv-topic-battery-power');
 
             if (name) {
                 if (!mqttInverterConfig) {
@@ -1966,7 +2109,8 @@ async function saveConfiguration() {
 
     cfg["Solax-Wifi"] = wifiConfig;
     cfg["Solax-Modbus"] = modbusConfig;
-    cfg["Solax-XHybrid-Modbus"] = hybridConfig;
+    cfg["Solax-G3-Modbus"] = g3Config;
+    cfg["Solax-G4-Modbus"] = g4Config;
     cfg.SDM630Modbusv2 = sdmConfig;
     cfg.DTSU666 = dtsuConfig;
     cfg.MQTTPowerMeter = mqttMeterConfig;
@@ -2108,6 +2252,16 @@ async function saveConfiguration() {
         cfg.influx = null;
     }
 
+    // Telemetry History
+    const histEnabledEl = document.getElementById('history-enabled');
+    if (histEnabledEl) {
+        cfg.History = {
+            enabled: histEnabledEl.checked,
+            "flush-interval-mins": parseInt(document.getElementById('history-flush-interval').value) || 30,
+            "retention-days": parseInt(document.getElementById('history-retention-days').value) || 365
+        };
+    }
+
     // Location
     const latVal = document.getElementById('location-lat').value.trim();
     const lonVal = document.getElementById('location-lon').value.trim();
@@ -2136,6 +2290,7 @@ async function saveConfiguration() {
                 };
                 return {
                     name: card.querySelector('.array-name').value.trim(),
+                    "capacity-w": getFloat('.array-capacity') || parseFloat(card.querySelector('.array-capacity').value) || 3000.0,
                     tilt: parseFloat(card.querySelector('.array-tilt').value) || 0.0,
                     azimuth: parseFloat(card.querySelector('.array-azimuth').value) || 0.0,
                     brand: getString('.array-brand'),
@@ -3258,5 +3413,81 @@ async function applyTuning() {
         btn.disabled = false;
         statusText.innerText = `Failed to apply: ${e.message}`;
         statusText.style.color = "var(--danger)";
+    }
+}
+
+async function exportConfigOnlyJSON() {
+    try {
+        const r = await fetch('/api/config');
+        if (!r.ok) return alert("Failed to fetch configuration.");
+        const cfg = await r.json();
+        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(cfg, null, 2));
+        const dlAnchor = document.createElement('a');
+        const nowStr = new Date().toISOString().replace(/[:.]/g, '-');
+        dlAnchor.setAttribute("href", dataStr);
+        dlAnchor.setAttribute("download", `powerscraper_config_${nowStr}.json`);
+        document.body.appendChild(dlAnchor);
+        dlAnchor.click();
+        dlAnchor.remove();
+    } catch (e) {
+        alert("Error exporting config: " + e.message);
+    }
+}
+
+async function restoreBackupFromFile() {
+    const input = document.getElementById('restore-file-input');
+    if (!input || !input.files || input.files.length === 0) {
+        return alert("Please select a valid backup file (.json.xz or .json) first.");
+    }
+    const file = input.files[0];
+    const reader = new FileReader();
+    reader.onload = async function(e) {
+        try {
+            const resp = await fetch('/api/backup/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/octet-stream' },
+                body: e.target.result
+            });
+            if (resp.ok) {
+                const result = await resp.json();
+                alert(`Backup restored successfully! (${result.imported_telemetry_records || 0} telemetry history records imported)`);
+                location.reload();
+            } else {
+                const errText = await resp.text();
+                alert("Backup restore failed: " + errText);
+            }
+        } catch (err) {
+            alert("Failed to upload backup file: " + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// --- History Tab Logic & 5 Stacked Metric Charts ---
+let currentHistoryRange = '24h';
+let customHistoryStart = null;
+let customHistoryEnd = null;
+let historyChartInstances = {
+    solar: null,
+    batterySoc: null,
+    batteryPower: null,
+    gridPower: null,
+    houseUsage: null
+};
+
+function openHistorySettingsModal() {
+    const modal = document.getElementById('history-settings-modal');
+    if (modal) modal.style.display = 'flex';
+}
+
+function closeHistorySettingsModal() {
+    const modal = document.getElementById('history-settings-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function saveHistorySettingsAndClose() {
+    closeHistorySettingsModal();
+    if (typeof applyConfig === 'function') {
+        await applyConfig();
     }
 }
