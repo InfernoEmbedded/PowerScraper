@@ -42,6 +42,19 @@ pub fn open_db_conn<P: AsRef<Path>>(db_path: P) -> rusqlite::Result<Connection> 
     Ok(conn)
 }
 
+/// Opens a read-only non-blocking database connection for query execution.
+pub fn open_db_conn_read_only<P: AsRef<Path>>(db_path: P) -> rusqlite::Result<Connection> {
+    let conn = Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )?;
+    let _ = conn.execute_batch("
+        PRAGMA busy_timeout = 5000;
+        PRAGMA query_only = ON;
+    ");
+    Ok(conn)
+}
+
 /// Flattens a serde_json::Value tree into dot-separated hierarchical key-value pairs.
 pub fn flatten_json_value(prefix: &str, val: &serde_json::Value, map: &mut std::collections::HashMap<String, String>) {
     match val {
@@ -356,8 +369,8 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
         }
     }
 
-    // Compact WAL file to prevent unbounded growth on embedded storage
-    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+    // Non-blocking WAL checkpoint to prevent unbounded growth on embedded storage
+    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);") {
         eprintln!("WAL checkpoint after telemetry flush failed: {}", e);
     }
 }
@@ -648,7 +661,7 @@ pub fn get_decimated_telemetry_in_range_profiled(
     topics: Option<&[String]>,
 ) -> Result<(Vec<(i64, String, f64)>, usize, f64, f64), rusqlite::Error> {
     let t0 = std::time::Instant::now();
-    let conn = open_db_conn(db_path)?;
+    let conn = open_db_conn_read_only(db_path)?;
 
     // 1. Resolve matching topic_id -> topic string mappings from dictionary table
     let mut topic_map: std::collections::HashMap<i64, String> = std::collections::HashMap::new();

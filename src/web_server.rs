@@ -472,10 +472,12 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                             });
 
                         let req_start = std::time::Instant::now();
-                        // Flush any buffered in-memory telemetry records to SQLite DB before querying
-                        crate::database::flush_pending_history_to_db(&path, None);
-                        match crate::database::get_decimated_telemetry_in_range_profiled(&path, start_ts, end_ts, max_pixels, topics_opt.as_deref()) {
-                            Ok((records, raw_count, db_dur, decimate_dur)) => {
+                        let res = tokio::task::spawn_blocking(move || {
+                            crate::database::get_decimated_telemetry_in_range_profiled(&path, start_ts, end_ts, max_pixels, topics_opt.as_deref())
+                        }).await;
+
+                        match res {
+                            Ok(Ok((records, raw_count, db_dur, decimate_dur))) => {
                                 let t_fmt = std::time::Instant::now();
                                 #[derive(serde::Serialize)]
                                 struct TelemetryRecordRef<'a> {
@@ -513,7 +515,8 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                                     json_body,
                                 ))
                             }
-                            Err(e) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Database query error: {}", e))),
+                            Ok(Err(e)) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Database query error: {}", e))),
+                            Err(e) => Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Blocking task error: {}", e))),
                         }
                     }
                 }
