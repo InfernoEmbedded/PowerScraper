@@ -337,6 +337,7 @@ mod tests {
     #[test]
     fn test_build_discovery_payload_sensor_deduction() {
         let mqtt_config = MqttBrokerConfig {
+            enabled: Some(true),
             broker: "localhost".to_string(),
             port: None,
             base_topic: Some("sensors".to_string()),
@@ -417,6 +418,7 @@ mod tests {
     #[test]
     fn test_build_discovery_payload_commands() {
         let mqtt_config = MqttBrokerConfig {
+            enabled: Some(true),
             broker: "localhost".to_string(),
             port: None,
             base_topic: Some("sensors".to_string()),
@@ -465,6 +467,7 @@ mod tests {
     fn test_mqtt_helper_extra_coverage() {
         // Test disabled discovery
         let disabled_config = MqttBrokerConfig {
+            enabled: Some(true),
             broker: "localhost".to_string(),
             port: None,
             base_topic: None,
@@ -477,6 +480,7 @@ mod tests {
 
         // Test power manager invalid metric
         let enabled_config = MqttBrokerConfig {
+            enabled: Some(true),
             broker: "localhost".to_string(),
             port: None,
             base_topic: None,
@@ -499,6 +503,7 @@ mod tests {
 
         // Test create_mqtt_client function
         let config = MqttBrokerConfig {
+            enabled: Some(true),
             broker: "127.0.0.1".to_string(),
             port: Some(1883),
             base_topic: Some("sensors".to_string()),

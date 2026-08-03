@@ -45,6 +45,7 @@ pub async fn run_mqtt_inverter_driver(
     let password = config.password.clone().or_else(|| mqtt_config.password.clone());
 
     let broker_config = MqttBrokerConfig {
+        enabled: mqtt_config.enabled,
         broker,
         port: Some(port),
         username,

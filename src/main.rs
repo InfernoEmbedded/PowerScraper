@@ -187,6 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "Warning: [MQTT] section not found in configuration. Defaulting to local broker at homeautomation.lan."
                 );
                 config::MqttBrokerConfig {
+                    enabled: Some(true),
                     broker: "homeautomation.lan".to_string(),
                     port: Some(1883),
                     base_topic: Some("sensors".to_string()),
@@ -217,13 +218,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut forwarder_senders = Vec::new();
 
         // 4a. MQTT Forwarder
-        let (tx_mqtt, rx_mqtt) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
-        forwarder_senders.push(tx_mqtt);
-        let mqtt_fwd = forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
-        let cancel_mqtt = cancel_token.clone();
-        tokio::spawn(async move {
-            mqtt_fwd.run(cancel_mqtt).await;
-        });
+        if mqtt_config.is_enabled() {
+            let (tx_mqtt, rx_mqtt) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            forwarder_senders.push(tx_mqtt);
+            let mqtt_fwd = forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
+            let cancel_mqtt = cancel_token.clone();
+            tokio::spawn(async move {
+                mqtt_fwd.run(cancel_mqtt).await;
+            });
+        }
 
         // 4b. EmonCMS Forwarder
         if let Some(ref emon_cfg) = config.emoncms {

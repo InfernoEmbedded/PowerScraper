@@ -170,6 +170,8 @@ pub struct InfluxConfig {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct MqttBrokerConfig {
+    #[serde(default)]
+    pub enabled: Option<bool>,
     pub broker: String,
     pub port: Option<u16>,
     #[serde(alias = "base_topic")]
@@ -183,6 +185,10 @@ pub struct MqttBrokerConfig {
 }
 
 impl MqttBrokerConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+
     pub fn is_ha_discovery_enabled(&self) -> bool {
         self.home_assistant_discovery.unwrap_or(true)
     }
@@ -536,6 +542,7 @@ impl Config {
             emoncms: None,
             influx: None,
             mqtt: Some(MqttBrokerConfig {
+                enabled: Some(true),
                 broker: "127.0.0.1".to_string(),
                 port: Some(1883),
                 base_topic: Some("sensors".to_string()),
@@ -795,6 +802,7 @@ topic_energy_total = "emon/aurora/total"
         // Modifying and saving
         let mut modified_config = config;
         modified_config.mqtt = Some(MqttBrokerConfig {
+            enabled: Some(true),
             broker: "192.168.1.50".to_string(),
             port: Some(1883),
             base_topic: Some("mytopic".to_string()),
