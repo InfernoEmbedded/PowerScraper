@@ -387,16 +387,59 @@ async fn test_integration_loop() {
                 let mut lock = act_token_clone.lock().unwrap();
                 *lock = token.clone();
             }
+            let (tx_driver_telemetry, rx_driver_telemetry) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            let (tx_command, rx_command) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::DriverCommand>(1024);
+            let (tx_power_manager, rx_power_manager) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(2048);
+            let (tx_mqtt, rx_mqtt) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+
+            let mut forwarder_senders = vec![tx_mqtt];
+            let mqtt_fwd = forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
+            let cancel_mqtt = token.clone();
+            tokio::spawn(async move {
+                mqtt_fwd.run(cancel_mqtt).await;
+            });
+
+            if let Some(ref emon_cfg) = current_cfg.emoncms {
+                let (tx_emon, rx_emon) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+                forwarder_senders.push(tx_emon);
+                let emon_fwd = forwarders::EmonCMSForwarder::new(emon_cfg.clone(), rx_emon);
+                let cancel_emon = token.clone();
+                tokio::spawn(async move {
+                    emon_fwd.run(cancel_emon).await;
+                });
+            }
+
+            if let Some(ref influx_cfg) = current_cfg.influx {
+                let (tx_influx, rx_influx) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+                forwarder_senders.push(tx_influx);
+                let influx_fwd = forwarders::InfluxForwarder::new(influx_cfg.clone(), rx_influx);
+                let cancel_influx = token.clone();
+                tokio::spawn(async move {
+                    influx_fwd.run(cancel_influx).await;
+                });
+            }
+
+            let dispatch_mgr = PowerScraper::dispatch_manager::DispatchManager::new(
+                rx_driver_telemetry,
+                forwarder_senders,
+                tx_power_manager,
+            );
+            let cancel_dispatch = token.clone();
+            tokio::spawn(async move {
+                dispatch_mgr.run(cancel_dispatch).await;
+            });
 
             if let Some(wifi_cfg) = current_cfg.solax_wifi.clone() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let hostname = wifi_cfg.inverters.first().cloned().unwrap_or_else(|| format!("127.0.0.1:{}", wifi_port));
                 tokio::spawn(async move {
                     drivers::solax_wifi::run_solax_wifi_driver(
                         hostname,
                         wifi_cfg,
                         mqtt_clone,
+                        tx_telemetry,
                         token_clone,
                     )
                     .await;
@@ -406,6 +449,7 @@ async fn test_integration_loop() {
             if let Some(modbus_cfg) = current_cfg.solax_modbus.clone() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let hostname = modbus_cfg.hostnames.as_ref().and_then(|h| h.first()).cloned().unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
                 tokio::spawn(async move {
                     drivers::solax_modbus::run_solax_modbus_driver(
@@ -413,6 +457,7 @@ async fn test_integration_loop() {
                         hostname,
                         modbus_cfg,
                         mqtt_clone,
+                        tx_telemetry,
                         token_clone,
                     )
                     .await;
@@ -422,6 +467,7 @@ async fn test_integration_loop() {
             if let Some(g3_cfg) = current_cfg.solax_g3_modbus.clone() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let hostname = g3_cfg.hostnames.as_ref().and_then(|h| h.first()).cloned().unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
                 tokio::spawn(async move {
                     drivers::solax_g3::run_solax_g3_driver(
@@ -429,6 +475,7 @@ async fn test_integration_loop() {
                         hostname,
                         g3_cfg,
                         mqtt_clone,
+                        tx_telemetry,
                         token_clone,
                     )
                     .await;
@@ -439,9 +486,18 @@ async fn test_integration_loop() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
                 let db_path_pm = db_path_loop.clone();
+                let tx_dispatch_agg = tx_driver_telemetry.clone();
                 tokio::spawn(async move {
-                    power_manager::run_power_manager_task(battery_cfg, mqtt_clone, token_clone, db_path_pm)
-                        .await;
+                    power_manager::run_power_manager_queue_task(
+                        battery_cfg,
+                        mqtt_clone,
+                        rx_power_manager,
+                        rx_command,
+                        tx_dispatch_agg,
+                        token_clone,
+                        db_path_pm,
+                    )
+                    .await;
                 });
             }
 
@@ -449,33 +505,19 @@ async fn test_integration_loop() {
                 if let Some(meter_dev_cfg) = mqtt_meter_cfg.meter_devices.get("custom-meter") {
                     let token_clone = token.clone();
                     let mqtt_clone = mqtt_config.clone();
+                    let tx_telemetry = tx_driver_telemetry.clone();
                     let dev_cfg = meter_dev_cfg.clone();
                     tokio::spawn(async move {
                         drivers::mqtt_meter::run_mqtt_meter_driver(
                             "custom-meter".to_string(),
                             dev_cfg,
                             mqtt_clone,
+                            tx_telemetry,
                             token_clone,
                         )
                         .await;
                     });
                 }
-            }
-
-            {
-                let emoncms_cfg = current_cfg.emoncms.clone();
-                let influx_cfg = current_cfg.influx.clone();
-                let mqtt_clone = mqtt_config.clone();
-                let token_clone = token.clone();
-                tokio::spawn(async move {
-                    forwarders::run_forwarders_task(
-                        emoncms_cfg,
-                        influx_cfg,
-                        mqtt_clone,
-                        token_clone,
-                    )
-                    .await;
-                });
             }
 
             tokio::select! {

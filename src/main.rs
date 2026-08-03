@@ -204,19 +204,75 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Spawning background drivers and manager tasks...");
         systemd_notify("READY=1");
 
-        // 3. Spawn Solax Wifi Drivers
+        // 1. Data Source Telemetry Output Queue (drivers -> DispatchManager)
+        let (tx_driver_telemetry, rx_driver_telemetry) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+
+        // 2. Command Queue (MQTT Forwarder -> PowerManager)
+        let (tx_command, rx_command) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::DriverCommand>(1024);
+
+        // 3. PowerManager Input Queue (DispatchManager -> PowerManager)
+        let (tx_power_manager, rx_power_manager) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(2048);
+
+        // 4. Forwarder Input Queues
+        let mut forwarder_senders = Vec::new();
+
+        // 4a. MQTT Forwarder
+        let (tx_mqtt, rx_mqtt) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+        forwarder_senders.push(tx_mqtt);
+        let mqtt_fwd = forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
+        let cancel_mqtt = cancel_token.clone();
+        tokio::spawn(async move {
+            mqtt_fwd.run(cancel_mqtt).await;
+        });
+
+        // 4b. EmonCMS Forwarder
+        if let Some(ref emon_cfg) = config.emoncms {
+            let (tx_emon, rx_emon) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            forwarder_senders.push(tx_emon);
+            let emon_fwd = forwarders::EmonCMSForwarder::new(emon_cfg.clone(), rx_emon);
+            let cancel_emon = cancel_token.clone();
+            tokio::spawn(async move {
+                emon_fwd.run(cancel_emon).await;
+            });
+        }
+
+        // 4c. InfluxDB Forwarder
+        if let Some(ref influx_cfg) = config.influx {
+            let (tx_influx, rx_influx) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            forwarder_senders.push(tx_influx);
+            let influx_fwd = forwarders::InfluxForwarder::new(influx_cfg.clone(), rx_influx);
+            let cancel_influx = cancel_token.clone();
+            tokio::spawn(async move {
+                influx_fwd.run(cancel_influx).await;
+            });
+        }
+
+        // 5. Spawn DispatchManager
+        let dispatch_mgr = PowerScraper::dispatch_manager::DispatchManager::new(
+            rx_driver_telemetry,
+            forwarder_senders,
+            tx_power_manager,
+        );
+        let cancel_dispatch = cancel_token.clone();
+        tokio::spawn(async move {
+            dispatch_mgr.run(cancel_dispatch).await;
+        });
+
+        // 6. Spawn Solax Wifi Drivers
         if let Some(ref wifi_cfg) = config.solax_wifi {
             println!("Spawning Solax Wifi Drivers...");
             for host in &wifi_cfg.inverters {
                 let host_clone = host.clone();
                 let cfg_clone = wifi_cfg.clone();
                 let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 tokio::spawn(async move {
                     drivers::solax_wifi::run_solax_wifi_driver(
                         host_clone,
                         cfg_clone,
                         mqtt_clone,
+                        tx_telemetry,
                         cancel_clone,
                     )
                     .await;
@@ -224,7 +280,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 4. Spawn Solax Modbus TCP Drivers
+        // 7. Spawn Solax Modbus TCP Drivers
         if let Some(ref modbus_cfg) = config.solax_modbus {
             println!("Spawning Solax Modbus TCP Drivers...");
             let hostnames = modbus_cfg.hostnames.clone().unwrap_or_default();
@@ -237,6 +293,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let inv_clone = inverter.clone();
                 let cfg_clone = modbus_cfg.clone();
                 let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 tokio::spawn(async move {
                     drivers::solax_modbus::run_solax_modbus_driver(
@@ -244,6 +301,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         hostname,
                         cfg_clone,
                         mqtt_clone,
+                        tx_telemetry,
                         cancel_clone,
                     )
                     .await;
@@ -251,8 +309,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-
-        // 5b. Spawn Solax G4 Modbus TCP Drivers
+        // 8. Spawn Solax G4 Modbus TCP Drivers
         if let Some(ref g4_cfg) = config.solax_g4_modbus {
             println!("Spawning Solax G4 Modbus TCP Drivers...");
             let hostnames = g4_cfg.hostnames.clone().unwrap_or_default();
@@ -265,6 +322,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let inv_clone = inverter.clone();
                 let cfg_clone = g4_cfg.clone();
                 let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 tokio::spawn(async move {
                     drivers::solax_g4::run_solax_g4_driver(
@@ -272,6 +330,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         hostname,
                         cfg_clone,
                         mqtt_clone,
+                        tx_telemetry,
                         cancel_clone,
                     )
                     .await;
@@ -279,7 +338,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 5c. Spawn Solax G3 Modbus TCP Drivers
+        // 9. Spawn Solax G3 Modbus TCP Drivers
         if let Some(ref g3_cfg) = config.solax_g3_modbus {
             println!("Spawning Solax G3 Modbus TCP Drivers...");
             let hostnames = g3_cfg.hostnames.clone().unwrap_or_default();
@@ -292,6 +351,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let inv_clone = inverter.clone();
                 let cfg_clone = g3_cfg.clone();
                 let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 tokio::spawn(async move {
                     drivers::solax_g3::run_solax_g3_driver(
@@ -299,6 +359,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         hostname,
                         cfg_clone,
                         mqtt_clone,
+                        tx_telemetry,
                         cancel_clone,
                     )
                     .await;
@@ -306,40 +367,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 6. Spawn SDM630 Serial Modbus RTU Meters
+        // 10. Spawn SDM630 Serial Modbus RTU Meters
         if let Some(ref sdm_cfg) = config.sdm630_modbus_v2 {
             println!("Spawning SDM630 Meter Drivers on dedicated realtime threads...");
             for port in &sdm_cfg.ports {
                 let port_clone = port.clone();
                 let cfg_clone = sdm_cfg.clone();
-                let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 let device_name = port_clone.replace("/dev/tty", "");
                 
                 std::thread::Builder::new()
                     .name(format!("sdm630-{}", device_name))
                     .spawn(move || {
-                        #[cfg(target_os = "linux")]
-                        unsafe {
-                            let thread_id = libc::pthread_self();
-                            // SCHED_FIFO = 1
-                            let policy = 1;
-                            let param = libc::sched_param { sched_priority: 50 };
-                            let res = libc::pthread_setschedparam(thread_id, policy, &param);
-                            if res != 0 {
-                                eprintln!("[Warning] Failed to set SDM630 thread to SCHED_FIFO (error code {}). Falling back to nice -20...", res);
-                                let tid = libc::gettid();
-                                let nice_res = libc::setpriority(0, tid as libc::id_t, -20);
-                                if nice_res != 0 {
-                                    eprintln!("[Warning] Failed to set SDM630 thread niceness to -20: error code {}", nice_res);
-                                } else {
-                                    println!("Successfully set SDM630 thread niceness to -20 (highest priority fallback)");
-                                }
-                            } else {
-                                println!("Successfully set SDM630 thread to SCHED_FIFO (realtime priority 50)");
-                            }
-                        }
-                        
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
@@ -349,7 +389,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             drivers::sdm630::run_sdm630_driver(
                                 port_clone,
                                 cfg_clone,
-                                mqtt_clone,
+                                tx_telemetry,
                                 cancel_clone,
                             )
                             .await;
@@ -359,40 +399,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 7. Spawn DTSU666 Serial Modbus RTU Meters
+        // 11. Spawn DTSU666 Serial Modbus RTU Meters
         if let Some(ref dtsu_cfg) = config.dtsu666 {
             println!("Spawning DTSU666 Meter Drivers on dedicated realtime threads...");
             for port in &dtsu_cfg.ports {
                 let port_clone = port.clone();
                 let cfg_clone = dtsu_cfg.clone();
-                let mqtt_clone = mqtt_config.clone();
+                let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 let device_name = port_clone.replace("/dev/tty", "");
                 
                 std::thread::Builder::new()
                     .name(format!("dtsu666-{}", device_name))
                     .spawn(move || {
-                        #[cfg(target_os = "linux")]
-                        unsafe {
-                            let thread_id = libc::pthread_self();
-                            // SCHED_FIFO = 1
-                            let policy = 1;
-                            let param = libc::sched_param { sched_priority: 50 };
-                            let res = libc::pthread_setschedparam(thread_id, policy, &param);
-                            if res != 0 {
-                                eprintln!("[Warning] Failed to set DTSU666 thread to SCHED_FIFO (error code {}). Falling back to nice -20...", res);
-                                let tid = libc::gettid();
-                                let nice_res = libc::setpriority(0, tid as libc::id_t, -20);
-                                if nice_res != 0 {
-                                    eprintln!("[Warning] Failed to set DTSU666 thread niceness to -20: error code {}", nice_res);
-                                } else {
-                                    println!("Successfully set DTSU666 thread niceness to -20 (highest priority fallback)");
-                                }
-                            } else {
-                                println!("Successfully set DTSU666 thread to SCHED_FIFO (realtime priority 50)");
-                            }
-                        }
-                        
                         let rt = tokio::runtime::Builder::new_current_thread()
                             .enable_all()
                             .build()
@@ -402,7 +421,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             drivers::dtsu666::run_dtsu666_driver(
                                 port_clone,
                                 cfg_clone,
-                                mqtt_clone,
+                                tx_telemetry,
                                 cancel_clone,
                             )
                             .await;
@@ -412,7 +431,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 8. Spawn MQTT Custom Power Meters
+        // 12. Spawn MQTT Custom Power Meters
         if let Some(ref mqtt_meter_cfg) = config.mqtt_power_meter {
             println!("Spawning MQTT Meter Bridge Drivers...");
             for name in &mqtt_meter_cfg.meters {
@@ -420,12 +439,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let name_clone = name.clone();
                     let dev_cfg_clone = dev_cfg.clone();
                     let mqtt_clone = mqtt_config.clone();
+                    let tx_telemetry = tx_driver_telemetry.clone();
                     let cancel_clone = cancel_token.clone();
                     tokio::spawn(async move {
                         drivers::mqtt_meter::run_mqtt_meter_driver(
                             name_clone,
                             dev_cfg_clone,
                             mqtt_clone,
+                            tx_telemetry,
                             cancel_clone,
                         )
                         .await;
@@ -434,7 +455,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // Spawn MQTT Inverters
+        // 13. Spawn MQTT Inverters
         if let Some(ref mqtt_inv_cfg) = config.mqtt_inverter {
             println!("Spawning MQTT Inverter Drivers...");
             for name in &mqtt_inv_cfg.inverters {
@@ -442,12 +463,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let name_clone = name.clone();
                     let dev_cfg_clone = dev_cfg.clone();
                     let mqtt_clone = mqtt_config.clone();
+                    let tx_telemetry = tx_driver_telemetry.clone();
                     let cancel_clone = cancel_token.clone();
                     tokio::spawn(async move {
                         drivers::mqtt_inverter::run_mqtt_inverter_driver(
                             name_clone,
                             dev_cfg_clone,
                             mqtt_clone,
+                            tx_telemetry,
                             cancel_clone,
                         )
                         .await;
@@ -456,28 +479,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        // 9. Spawn Power Manager (Solax-BatteryControl)
+        // 14. Spawn Power Manager (Solax-BatteryControl)
         if let Some(ref battery_cfg) = config.battery_control {
             println!("Spawning Power Manager (Battery Control)...");
             let cfg_clone = battery_cfg.clone();
-            let mqtt_clone = mqtt_config.clone();
-            let cancel_clone = cancel_token.clone();
+            let mqtt_cfg_clone = mqtt_config.clone();
+            let cancel_pm = cancel_token.clone();
             let db_path_pm = db_path.clone();
+            let tx_dispatch_agg = tx_driver_telemetry.clone();
             tokio::spawn(async move {
-                power_manager::run_power_manager_task(cfg_clone, mqtt_clone, cancel_clone, db_path_pm).await;
-            });
-        }
-
-        // 10. Spawn InfluxDB / EmonCMS Output Forwarders
-        if config.emoncms.is_some() || config.influx.is_some() {
-            println!("Spawning Output Forwarders (EmonCMS/InfluxDB)...");
-            let emon_cfg = config.emoncms.clone();
-            let influx_cfg = config.influx.clone();
-            let mqtt_clone = mqtt_config.clone();
-            let cancel_clone = cancel_token.clone();
-            tokio::spawn(async move {
-                forwarders::run_forwarders_task(emon_cfg, influx_cfg, mqtt_clone, cancel_clone)
-                    .await;
+                power_manager::run_power_manager_queue_task(
+                    cfg_clone,
+                    mqtt_cfg_clone,
+                    rx_power_manager,
+                    rx_command,
+                    tx_dispatch_agg,
+                    cancel_pm,
+                    db_path_pm,
+                )
+                .await;
             });
         }
 

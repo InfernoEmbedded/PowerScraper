@@ -1,6 +1,39 @@
 use crate::config::InfluxConfig;
+use crate::dispatch_manager::TelemetryBatch;
 use std::collections::HashMap;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+pub struct InfluxForwarder {
+    config: InfluxConfig,
+    rx_input: mpsc::Receiver<TelemetryBatch>,
+}
+
+impl InfluxForwarder {
+    pub fn new(config: InfluxConfig, rx_input: mpsc::Receiver<TelemetryBatch>) -> Self {
+        InfluxForwarder { config, rx_input }
+    }
+
+    pub async fn run(mut self, cancel_token: CancellationToken) {
+        let client = reqwest::Client::new();
+        println!("InfluxDB Forwarder running...");
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    println!("InfluxDB Forwarder shutting down...");
+                    break;
+                }
+                Some(batch) = self.rx_input.recv() => {
+                    let mut string_map = HashMap::new();
+                    for (k, v) in batch.metrics {
+                        string_map.insert(k, v.to_string());
+                    }
+                    forward_to_influx(&client, &self.config, &batch.device_name, &string_map, &cancel_token).await;
+                }
+            }
+        }
+    }
+}
 
 pub async fn forward_to_influx(
     client: &reqwest::Client,

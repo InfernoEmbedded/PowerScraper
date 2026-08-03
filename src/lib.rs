@@ -21,6 +21,7 @@ pub mod drivers {
     pub mod solax_g3;
 }
 pub mod forwarders;
+pub mod dispatch_manager;
 pub mod power_manager;
 pub mod simulation;
 pub mod tariff_manager;

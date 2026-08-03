@@ -1342,6 +1342,12 @@ impl PowerManager {
         mqtt_client: &rumqttc::AsyncClient,
         base_topic: &str,
     ) {
+        // Publish current mode and grid_target status
+        let mode_topic = format!("{}/power_manager/mode", base_topic);
+        let _ = mqtt_client.publish(&mode_topic, rumqttc::QoS::AtMostOnce, true, self.mode.to_string()).await;
+        let target_topic = format!("{}/power_manager/grid_target", base_topic);
+        let _ = mqtt_client.publish(&target_topic, rumqttc::QoS::AtMostOnce, true, self.grid_target.to_string()).await;
+
         // Run control logic to update state/commands
         self.evaluate_and_command(device_name);
 
@@ -1839,6 +1845,207 @@ fn parse_time(s: &str) -> Option<NaiveTime> {
         .or_else(|_| NaiveTime::parse_from_str(s, "%H:%M"))
         .or_else(|_| NaiveTime::parse_from_str(s, "%k:%M"))
         .ok()
+}
+
+pub async fn run_power_manager_queue_task(
+    config: SolaxBatteryControlConfig,
+    mqtt_config: crate::config::MqttBrokerConfig,
+    mut rx_telemetry: tokio::sync::mpsc::Receiver<crate::dispatch_manager::TelemetryBatch>,
+    mut rx_command: tokio::sync::mpsc::Receiver<crate::dispatch_manager::DriverCommand>,
+    tx_dispatch_agg: tokio::sync::mpsc::Sender<crate::dispatch_manager::TelemetryBatch>,
+    cancel_token: CancellationToken,
+    db_path: String,
+) {
+    let base_topic = mqtt_config
+        .base_topic
+        .clone()
+        .unwrap_or_else(|| "sensors".to_string());
+    let (mqtt_client, mut eventloop) = crate::mqtt_helper::create_mqtt_client("powerscraper-power-manager", &mqtt_config);
+
+    let cancel_eventloop = cancel_token.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = cancel_eventloop.cancelled() => break,
+                _ = eventloop.poll() => {}
+            }
+        }
+    });
+
+    let pm = Arc::new(Mutex::new(PowerManager::new(config.clone(), base_topic.clone())));
+
+    let inverter_names: Vec<String> = config.inverter.keys().cloned().collect();
+    update_all_inferred_capacities(&db_path, &inverter_names);
+
+    let tm = {
+        let pm_lock = pm.lock().await;
+        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+            status.active_mode = pm_lock.mode.to_string();
+            status.grid_target = pm_lock.grid_target;
+            status.mqtt_enabled = crate::config::Config::load_from_db(&db_path).map(|c| c.mqtt.is_some()).unwrap_or(false);
+            let aggregates = pm_lock.calculate_aggregates();
+            status.usage = aggregates.get("Usage").copied();
+            status.power_budget = aggregates.get("Power Budget").copied();
+            status.power_budget_with_charging = aggregates.get("Power Budget with charging").copied();
+            let rates = pm_lock.tariff_manager.get_current_rates();
+            status.import_price = Some(rates.import_rate);
+            status.export_price = Some(rates.export_rate);
+        }
+        pm_lock.tariff_manager.clone()
+    };
+    let cancel_token_clone = cancel_token.clone();
+    tokio::spawn(async move {
+        tm.start_background_loop(cancel_token_clone).await;
+    });
+
+    let cancel_token_weather = cancel_token.clone();
+    let db_path_weather = db_path.clone();
+    tokio::spawn(async move {
+        run_weather_fetcher_task(db_path_weather, cancel_token_weather).await;
+    });
+
+    println!("Power Manager queue processor running...");
+
+    let mut last_threshold_calc = std::time::Instant::now();
+    let mut history_ticker = tokio::time::interval(Duration::from_secs(60));
+
+    loop {
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                println!("Power Manager queue processor shutting down...");
+                break;
+            }
+            _ = history_ticker.tick() => {
+                if last_threshold_calc.elapsed() >= Duration::from_secs(24 * 3600) {
+                    if let Ok(thresholds) = calculate_price_thresholds(&db_path) {
+                        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                            status.price_thresholds = Some(thresholds);
+                        }
+                        last_threshold_calc = std::time::Instant::now();
+                    }
+                    let inv_names: Vec<String> = config.inverter.keys().cloned().collect();
+                    update_all_inferred_capacities(&db_path, &inv_names);
+                }
+            }
+            Some(cmd) = rx_command.recv() => {
+                let mut pm_lock = pm.lock().await;
+                match cmd {
+                    crate::dispatch_manager::DriverCommand::SetMode { mode } => {
+                        if let Ok(new_mode) = mode.parse::<PowerManagerMode>() {
+                            pm_lock.mode = new_mode;
+                            println!("Power Manager mode set via queue to: {}", new_mode);
+                            if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                status.active_mode = new_mode.to_string();
+                            }
+                            let inv_names: Vec<String> = pm_lock.config.inverter.keys().cloned().collect();
+                            for inv in inv_names {
+                                pm_lock.command_group(&inv, &mqtt_client, &base_topic).await;
+                            }
+                        }
+                    }
+                    crate::dispatch_manager::DriverCommand::SetGridTarget { watts } => {
+                        pm_lock.grid_target = watts;
+                        println!("Power Manager grid target set via queue to: {}", watts);
+                        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                            status.grid_target = watts;
+                        }
+                        let inv_names: Vec<String> = pm_lock.config.inverter.keys().cloned().collect();
+                        for inv in inv_names {
+                            pm_lock.command_group(&inv, &mqtt_client, &base_topic).await;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Some(batch) = rx_telemetry.recv() => {
+                let mut pm_lock = pm.lock().await;
+                let mut state_changed = false;
+
+                let source_opt = pm_lock.config.source.clone();
+                let is_source = source_opt.as_ref().map(|s| s == &batch.device_name).unwrap_or(false);
+
+                for (metric, &val) in &batch.metrics {
+                    if is_source {
+                        if metric == "Total system power" {
+                            pm_lock.total_power = val;
+                            state_changed = true;
+                            if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                status.meter_power = val;
+                                status.meter_last_updated = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+                            }
+                        } else if metric == "Phase 1 power" {
+                            pm_lock.phase_power[1] = val;
+                            state_changed = true;
+                        } else if metric == "Phase 2 power" {
+                            pm_lock.phase_power[2] = val;
+                            state_changed = true;
+                        } else if metric == "Phase 3 power" {
+                            pm_lock.phase_power[3] = val;
+                            state_changed = true;
+                        }
+                    }
+
+                    if let Some(inv_cfg) = pm_lock.config.inverter.get(&batch.device_name) {
+                        let mut state = pm_lock.inverters.get(&batch.device_name).cloned().unwrap_or_default();
+                        let mut updated = false;
+
+                        if metric == "Battery Capacity" {
+                            state.battery_capacity = val as u8;
+                            updated = true;
+                        } else if metric == "Battery Power" {
+                            state.battery_power = val;
+                            updated = true;
+                        } else if metric == "PV1 Power" {
+                            state.pv1_power = val;
+                            updated = true;
+                        } else if metric == "PV2 Power" {
+                            state.pv2_power = val;
+                            updated = true;
+                        } else if metric == "Measured Power" {
+                            state.measured_power = val;
+                            updated = true;
+                            if pm_lock.config.source.is_none() {
+                                let phase = inv_cfg.phase;
+                                pm_lock.handle_inverter_power(&batch.device_name, phase, val);
+                            }
+                        }
+
+                        if updated {
+                            pm_lock.inverters.insert(batch.device_name.clone(), state);
+                            state_changed = true;
+                        }
+                    }
+                }
+
+                if state_changed {
+                    let inv_names: Vec<String> = pm_lock.config.inverter.keys().cloned().collect();
+                    for inv in inv_names {
+                        pm_lock.command_group(&inv, &mqtt_client, &base_topic).await;
+                    }
+
+                    let aggregates = pm_lock.calculate_aggregates();
+                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                        status.usage = aggregates.get("Usage").copied();
+                        status.power_budget = aggregates.get("Power Budget").copied();
+                        status.power_budget_with_charging = aggregates.get("Power Budget with charging").copied();
+                        status.active_mode = pm_lock.mode.to_string();
+                        status.grid_target = pm_lock.grid_target;
+                        status.mqtt_enabled = crate::config::Config::load_from_db(&db_path).map(|c| c.mqtt.is_some()).unwrap_or(false);
+                        let rates = pm_lock.tariff_manager.get_current_rates();
+                        status.import_price = Some(rates.import_rate);
+                        status.export_price = Some(rates.export_rate);
+                    }
+
+                    let agg_batch = crate::dispatch_manager::TelemetryBatch {
+                        device_name: "aggregate".to_string(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        metrics: aggregates,
+                    };
+                    let _ = tx_dispatch_agg.try_send(agg_batch);
+                }
+            }
+        }
+    }
 }
 
 pub async fn run_power_manager_task(

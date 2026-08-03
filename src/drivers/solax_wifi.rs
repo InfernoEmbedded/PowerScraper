@@ -19,6 +19,7 @@ pub async fn run_solax_wifi_driver(
     inverter_host: String,
     config: SolaxWifiConfig,
     mqtt_config: MqttBrokerConfig,
+    tx_telemetry: tokio::sync::mpsc::Sender<crate::dispatch_manager::TelemetryBatch>,
     cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
@@ -110,6 +111,21 @@ pub async fn run_solax_wifi_driver(
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .unwrap()
                                             .as_secs());
+                                    }
+
+                                    let mut numeric_metrics = std::collections::HashMap::new();
+                                    for (metric, val_str) in &vals {
+                                        if let Ok(num) = val_str.parse::<f64>() {
+                                            numeric_metrics.insert(metric.clone(), num);
+                                        }
+                                    }
+                                    if !numeric_metrics.is_empty() {
+                                        let batch = crate::dispatch_manager::TelemetryBatch {
+                                            device_name: inverter_host.clone(),
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                            metrics: numeric_metrics,
+                                        };
+                                        let _ = tx_telemetry.try_send(batch);
                                     }
 
                                     for (metric, val) in vals {

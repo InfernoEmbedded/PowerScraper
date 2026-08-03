@@ -1,6 +1,4 @@
-use crate::config::{MqttBrokerConfig, SerialMeterConfig};
-use crate::mqtt_helper::create_mqtt_client;
-use rumqttc::QoS;
+use crate::config::SerialMeterConfig;
 use std::collections::HashMap;
 use tokio::time::{Duration, sleep};
 use tokio_modbus::client::{Context, Reader, rtu};
@@ -49,40 +47,14 @@ async fn connect_serial_meter(
 pub async fn run_sdm630_driver(
     port_path: String,
     config: SerialMeterConfig,
-    mqtt_config: MqttBrokerConfig,
+    tx_telemetry: tokio::sync::mpsc::Sender<crate::dispatch_manager::TelemetryBatch>,
     cancel_token: CancellationToken,
 ) {
-    let base_topic = mqtt_config
-        .base_topic
-        .clone()
-        .unwrap_or_else(|| "sensors".to_string());
     let device_name = port_path.replace("/dev/tty", "");
-    let client_id = format!("powerscraper-sdm630-{}", device_name);
-    let (mqtt_client, mut eventloop) = create_mqtt_client(&client_id, &mqtt_config);
-
-    // Spawn dummy MQTT loop to keep connection alive
-    let device_name_mqtt = device_name.clone();
-    let cancel_token_clone = cancel_token.clone();
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = cancel_token_clone.cancelled() => break,
-                res = eventloop.poll() => {
-                    if let Err(e) = res {
-                        println!("SDM630 [{}] MQTT error: {}", device_name_mqtt, e);
-                        tokio::select! {
-                            _ = cancel_token_clone.cancelled() => break,
-                            _ = sleep(Duration::from_secs(5)) => {}
-                        }
-                    }
-                }
-            }
-        }
-    });
-
     let poll_interval = Duration::from_secs_f64(config.poll_period);
-    let mut ctx_opt = None;
-    let mut discovered_metrics = std::collections::HashSet::new();
+    let mut ctx_opt: Option<Context> = None;
+
+
 
     loop {
         if cancel_token.is_cancelled() {
@@ -482,23 +454,19 @@ pub async fn run_sdm630_driver(
                     );
                 }
 
-                for (metric, val) in vals {
-                    if !discovered_metrics.contains(&metric) {
-                        crate::mqtt_helper::publish_home_assistant_discovery(
-                            &mqtt_client,
-                            &mqtt_config,
-                            &device_name,
-                            &metric,
-                            false,
-                        )
-                        .await;
-                        discovered_metrics.insert(metric.clone());
+                let mut numeric_metrics = HashMap::new();
+                for (metric, val_str) in vals {
+                    if let Ok(num) = val_str.parse::<f64>() {
+                        numeric_metrics.insert(metric, num);
                     }
-
-                    let topic = format!("{}/{}/{}", base_topic, device_name, metric);
-                    let _ = mqtt_client
-                        .publish(&topic, QoS::AtMostOnce, false, val)
-                        .await;
+                }
+                if !numeric_metrics.is_empty() {
+                    let batch = crate::dispatch_manager::TelemetryBatch {
+                        device_name: device_name.clone(),
+                        timestamp: chrono::Utc::now().timestamp(),
+                        metrics: numeric_metrics,
+                    };
+                    let _ = tx_telemetry.try_send(batch);
                 }
             }
             Ok(Err(e)) => {

@@ -9,6 +9,7 @@ pub async fn run_mqtt_meter_driver(
     meter_name: String,
     config: MQTTPowerMeterDeviceConfig,
     mqtt_config: MqttBrokerConfig,
+    tx_telemetry: tokio::sync::mpsc::Sender<crate::dispatch_manager::TelemetryBatch>,
     cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
@@ -73,6 +74,17 @@ pub async fn run_mqtt_meter_driver(
                             };
 
                             if let Some(metric_name) = target_metric {
+                                if let Ok(num) = payload.parse::<f64>() {
+                                    let mut metrics = std::collections::HashMap::new();
+                                    metrics.insert(metric_name.to_string(), num);
+                                    let batch = crate::dispatch_manager::TelemetryBatch {
+                                        device_name: meter_name.clone(),
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                        metrics,
+                                    };
+                                    let _ = tx_telemetry.try_send(batch);
+                                }
+
                                 if !discovered_metrics.contains(metric_name) {
                                     crate::mqtt_helper::publish_home_assistant_discovery(
                                         &mqtt_client,

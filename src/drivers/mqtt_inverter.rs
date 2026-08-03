@@ -9,6 +9,7 @@ pub async fn run_mqtt_inverter_driver(
     inverter_name: String,
     config: MQTTInverterDeviceConfig,
     mqtt_config: MqttBrokerConfig,
+    tx_telemetry: tokio::sync::mpsc::Sender<crate::dispatch_manager::TelemetryBatch>,
     cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
@@ -139,7 +140,16 @@ pub async fn run_mqtt_inverter_driver(
                                 let parsed_val: Option<f64> = payload.parse::<f64>().ok();
 
                                 if let Some(val) = parsed_val {
-                                    if metric_name == "PV1 Power" {
+                                     let mut metrics = std::collections::HashMap::new();
+                                     metrics.insert(metric_name.to_string(), val);
+                                     let batch = crate::dispatch_manager::TelemetryBatch {
+                                         device_name: inverter_name.clone(),
+                                         timestamp: chrono::Utc::now().timestamp(),
+                                         metrics,
+                                     };
+                                     let _ = tx_telemetry.try_send(batch);
+
+                                     if metric_name == "PV1 Power" {
                                         pv1_power = val;
                                     } else if metric_name == "PV2 Power" {
                                         pv2_power = val;

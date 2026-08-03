@@ -26,6 +26,7 @@ pub async fn run_solax_g4_driver(
     hostname: String,
     config: SolaxG4ModbusConfig,
     mqtt_config: MqttBrokerConfig,
+    tx_telemetry: tokio::sync::mpsc::Sender<crate::dispatch_manager::TelemetryBatch>,
     cancel_token: CancellationToken,
 ) {
     let base_topic = mqtt_config
@@ -245,7 +246,20 @@ pub async fn run_solax_g4_driver(
                         }
                     }
 
-                    vals.insert("name".to_string(), inverter_name.clone());
+                    let mut numeric_metrics = std::collections::HashMap::new();
+                    for (metric, val_str) in &vals {
+                        if let Ok(num) = val_str.parse::<f64>() {
+                            numeric_metrics.insert(metric.clone(), num);
+                        }
+                    }
+                    if !numeric_metrics.is_empty() {
+                        let batch = crate::dispatch_manager::TelemetryBatch {
+                            device_name: inverter_name.clone(),
+                            timestamp: chrono::Utc::now().timestamp(),
+                            metrics: numeric_metrics,
+                        };
+                        let _ = tx_telemetry.try_send(batch);
+                    }
 
                     for (metric, val) in vals {
                         if !discovered_metrics.contains(&metric) {

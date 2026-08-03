@@ -1,7 +1,40 @@
 use crate::config::EmonCMSConfig;
+use crate::dispatch_manager::TelemetryBatch;
 use std::collections::HashMap;
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+pub struct EmonCMSForwarder {
+    config: EmonCMSConfig,
+    rx_input: mpsc::Receiver<TelemetryBatch>,
+}
+
+impl EmonCMSForwarder {
+    pub fn new(config: EmonCMSConfig, rx_input: mpsc::Receiver<TelemetryBatch>) -> Self {
+        EmonCMSForwarder { config, rx_input }
+    }
+
+    pub async fn run(mut self, cancel_token: CancellationToken) {
+        let client = reqwest::Client::new();
+        println!("EmonCMS Forwarder running...");
+        loop {
+            tokio::select! {
+                _ = cancel_token.cancelled() => {
+                    println!("EmonCMS Forwarder shutting down...");
+                    break;
+                }
+                Some(batch) = self.rx_input.recv() => {
+                    let mut string_map = HashMap::new();
+                    for (k, v) in batch.metrics {
+                        string_map.insert(k, v.to_string());
+                    }
+                    forward_to_emoncms(&client, &self.config, &batch.device_name, &string_map, &cancel_token).await;
+                }
+            }
+        }
+    }
+}
 
 pub async fn forward_to_emoncms(
     client: &reqwest::Client,
@@ -78,27 +111,25 @@ mod tests {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
-        let server_task = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let response = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-            stream.write_all(response.as_bytes()).await.unwrap();
-        });
-
-        let client = reqwest::Client::new();
+        let cancel_token = CancellationToken::new();
         let config = EmonCMSConfig {
             server: format!("http://127.0.0.1:{}", port),
             api_key: "test_key".to_string(),
-            timeout: 1.0,
+            timeout: 2.0,
         };
+
+        let client = reqwest::Client::new();
         let mut metrics = HashMap::new();
-        metrics.insert("PV1_Power".to_string(), "1234".to_string());
+        metrics.insert("power".to_string(), "100".to_string());
 
-        let cancel = CancellationToken::new();
-        forward_to_emoncms(&client, &config, "solax1", &metrics, &cancel).await;
+        let server_task = tokio::spawn(async move {
+            if let Ok((mut socket, _)) = listener.accept().await {
+                let response = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+                let _ = socket.write_all(response.as_bytes()).await;
+            }
+        });
 
-        // Wait briefly for background task
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        server_task.await.unwrap();
+        forward_to_emoncms(&client, &config, "solax1", &metrics, &cancel_token).await;
+        let _ = server_task.await;
     }
 }
-
