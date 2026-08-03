@@ -648,15 +648,139 @@ pub fn get_decimated_telemetry_in_range_profiled(
     topics: Option<&[String]>,
 ) -> Result<(Vec<(i64, String, f64)>, usize, f64, f64), rusqlite::Error> {
     let t0 = std::time::Instant::now();
-    let records = get_telemetry_in_range_filtered(db_path, start_ts, end_ts, topics)?;
-    let db_dur = t0.elapsed().as_secs_f64() * 1000.0;
-    let raw_count = records.len();
+    let conn = open_db_conn(db_path)?;
+
+    // 1. Resolve matching topic_id -> topic string mappings from dictionary table
+    let mut topic_map: std::collections::HashMap<i64, String> = std::collections::HashMap::new();
+    if let Some(topic_list) = topics {
+        if !topic_list.is_empty() {
+            let placeholders = vec!["?"; topic_list.len()].join(",");
+            let sql = format!("SELECT id, topic FROM telemetry_topics WHERE topic IN ({})", placeholders);
+            let mut stmt = conn.prepare(&sql)?;
+            let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+            for t in topic_list {
+                params_vec.push(Box::new(t.clone()));
+            }
+            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt.query_map(params_refs.as_slice(), |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for r in rows {
+                if let Ok((id, top)) = r {
+                    topic_map.insert(id, top);
+                }
+            }
+        }
+    }
+
+    if topic_map.is_empty() && (topics.is_none() || topics.map_or(false, |t| t.is_empty())) {
+        let default_fields = [
+            "PV1 Power", "PV2 Power", "PV Power", "Solar Power",
+            "Battery Capacity", "Battery SOC", "SOC", "Battery Power",
+            "Total active power", "Grid Power", "Grid Power (P1)", "Grid Power (P2)", "Grid Power (P3)", "Measured Power",
+            "Usage"
+        ];
+        let placeholders = vec!["?"; default_fields.len()].join(",");
+        let sql = format!("SELECT id, topic FROM telemetry_topics WHERE field IN ({})", placeholders);
+        let mut stmt = conn.prepare(&sql)?;
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+        for f in default_fields {
+            params_vec.push(Box::new(f));
+        }
+        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let rows = stmt.query_map(params_refs.as_slice(), |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
+        for r in rows {
+            if let Ok((id, top)) = r {
+                topic_map.insert(id, top);
+            }
+        }
+    }
+
+    if topic_map.is_empty() {
+        let db_dur = t0.elapsed().as_secs_f64() * 1000.0;
+        return Ok((Vec::new(), 0, db_dur, 0.0));
+    }
+
+    // 2. Perform streaming on-the-fly decimation per topic
+    // Direct index scan on WITHOUT ROWID PRIMARY KEY (topic_id, timestamp) for zero-sorting instant retrieval
+    let num_buckets = (max_pixels / 2).max(1);
+    let duration = (end_ts - start_ts).max(1) as f64;
+    let bucket_width = (duration / (num_buckets as f64)).max(1.0);
+
+    let mut decimated_records = Vec::new();
+    let mut raw_count = 0usize;
+
+    let mut stmt = conn.prepare(
+        "SELECT timestamp, value FROM telemetry_history WHERE topic_id = ?1 AND timestamp >= ?2 AND timestamp <= ?3 ORDER BY timestamp ASC"
+    )?;
 
     let t1 = std::time::Instant::now();
-    let decimated = decimate_telemetry_records(records, start_ts, end_ts, max_pixels);
+
+    for (&tid, topic_str) in &topic_map {
+        let mut rows = stmt.query(params![tid, start_ts, end_ts])?;
+
+        let mut current_bucket: Option<i64> = None;
+        let mut min_pt: Option<(i64, f64)> = None;
+        let mut max_pt: Option<(i64, f64)> = None;
+
+        while let Some(row) = rows.next()? {
+            raw_count += 1;
+            let ts: i64 = row.get(0)?;
+            let val: f64 = row.get(1)?;
+            let b_idx = (((ts - start_ts) as f64) / bucket_width).floor() as i64;
+
+            match current_bucket {
+                Some(b) if b == b_idx => {
+                    if let Some(ref mut min) = min_pt {
+                        if val < min.1 {
+                            *min = (ts, val);
+                        }
+                    }
+                    if let Some(ref mut max) = max_pt {
+                        if val > max.1 {
+                            *max = (ts, val);
+                        }
+                    }
+                }
+                _ => {
+                    if let (Some(min), Some(max)) = (min_pt, max_pt) {
+                        if min.0 == max.0 || (min.1 - max.1).abs() < f64::EPSILON {
+                            decimated_records.push((min.0, topic_str.clone(), min.1));
+                        } else if min.0 < max.0 {
+                            decimated_records.push((min.0, topic_str.clone(), min.1));
+                            decimated_records.push((max.0, topic_str.clone(), max.1));
+                        } else {
+                            decimated_records.push((max.0, topic_str.clone(), max.1));
+                            decimated_records.push((min.0, topic_str.clone(), min.1));
+                        }
+                    }
+                    current_bucket = Some(b_idx);
+                    min_pt = Some((ts, val));
+                    max_pt = Some((ts, val));
+                }
+            }
+        }
+
+        if let (Some(min), Some(max)) = (min_pt, max_pt) {
+            if min.0 == max.0 || (min.1 - max.1).abs() < f64::EPSILON {
+                decimated_records.push((min.0, topic_str.clone(), min.1));
+            } else if min.0 < max.0 {
+                decimated_records.push((min.0, topic_str.clone(), min.1));
+                decimated_records.push((max.0, topic_str.clone(), max.1));
+            } else {
+                decimated_records.push((max.0, topic_str.clone(), max.1));
+                decimated_records.push((min.0, topic_str.clone(), min.1));
+            }
+        }
+    }
+
+    let db_dur = t0.elapsed().as_secs_f64() * 1000.0;
     let decimate_dur = t1.elapsed().as_secs_f64() * 1000.0;
 
-    Ok((decimated, raw_count, db_dur, decimate_dur))
+    decimated_records.sort_by_key(|(ts, _, _)| *ts);
+    Ok((decimated_records, raw_count, db_dur, decimate_dur))
 }
 
 /// Queries and decimates telemetry records in a specific window range.
