@@ -1920,7 +1920,6 @@ pub async fn run_power_manager_queue_task(
 
     let history_config = crate::config::Config::load_from_db(&db_path).ok().and_then(|c| c.history);
     let history_enabled = history_config.as_ref().map(|h| h.enabled).unwrap_or(true);
-    let flush_interval_mins = history_config.as_ref().map(|h| h.flush_interval_mins).unwrap_or(30);
     let retention_days = history_config.as_ref().and_then(|h| h.retention_days);
 
     if history_enabled {
@@ -1929,9 +1928,8 @@ pub async fn run_power_manager_queue_task(
         }
     }
 
-    let mut last_flush = std::time::Instant::now();
     let mut last_threshold_calc = std::time::Instant::now();
-    let mut history_ticker = tokio::time::interval(Duration::from_secs(60));
+    let mut history_ticker = tokio::time::interval(Duration::from_secs(10));
 
     loop {
         tokio::select! {
@@ -1943,9 +1941,8 @@ pub async fn run_power_manager_queue_task(
                 break;
             }
             _ = history_ticker.tick() => {
-                if history_enabled && last_flush.elapsed() >= Duration::from_secs(flush_interval_mins as u64 * 60) {
+                if history_enabled {
                     crate::database::flush_pending_history_to_db(&db_path, retention_days);
-                    last_flush = std::time::Instant::now();
                 }
 
                 if last_threshold_calc.elapsed() >= Duration::from_secs(24 * 3600) {

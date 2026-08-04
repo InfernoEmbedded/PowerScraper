@@ -5263,6 +5263,9 @@ async function fetchAndRenderHistoryCharts() {
         renderHistoryCharts(records, startTs, endTs);
         const t3 = performance.now();
 
+        const serverTiming = resp.headers.get('Server-Timing');
+        console.log(`[Profile History Load] Total Client: ${(t3 - t0).toFixed(1)}ms | Network/Fetch: ${(t1 - t0).toFixed(1)}ms | JSON Parse: ${(t2 - t1).toFixed(1)}ms (${records.length} records) | Chart Render: ${(t3 - t2).toFixed(1)}ms | Server-Timing: ${serverTiming || 'none'}`);
+
         // Ensure minimum duration (250ms) so smooth pulse transition is visually perceptible
         const elapsed = t3 - t0;
         const minPulseMs = 250;
@@ -5279,8 +5282,7 @@ async function fetchAndRenderHistoryCharts() {
             }
         });
 
-        const serverTiming = resp.headers.get('Server-Timing') || 'N/A';
-        console.log(`[Profile Graph Loading] Network Fetch: ${(t1 - t0).toFixed(1)}ms, JSON Parse: ${(t2 - t1).toFixed(1)}ms, Chart Render: ${(t3 - t2).toFixed(1)}ms, Total Frontend: ${(t3 - t0).toFixed(1)}ms, Decimated Points: ${records.length}, Server-Timing: [${serverTiming}]`);
+        console.log(`[Profile Graph Loading] Network Fetch: ${(t1 - t0).toFixed(1)}ms, JSON Parse: ${(t2 - t1).toFixed(1)}ms, Chart Render: ${(t3 - t2).toFixed(1)}ms, Total Frontend: ${(t3 - t0).toFixed(1)}ms, Decimated Points: ${records.length}, Server-Timing: [${serverTiming || 'N/A'}]`);
     } catch (e) {
         console.error("Failed to fetch history telemetry:", e);
         chartIds.forEach(id => {

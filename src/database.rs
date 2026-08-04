@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::{Mutex, LazyLock};
 
 static PENDING_HISTORY: LazyLock<Mutex<Vec<HistoryRecord>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static LAST_PRUNE: LazyLock<Mutex<Option<std::time::Instant>>> = LazyLock::new(|| Mutex::new(None));
 
 pub fn push_pending_history_record(rec: HistoryRecord) {
     if let Ok(mut lock) = PENDING_HISTORY.lock() {
@@ -18,17 +19,19 @@ pub fn push_pending_history_records(records: impl IntoIterator<Item = HistoryRec
     }
 }
 
-pub fn flush_pending_history_to_db(db_path: &str, retention_days: Option<u32>) {
+pub fn flush_pending_history_to_db(db_path: &str, retention_days: Option<u32>) -> usize {
     let mut buffer = Vec::new();
     if let Ok(mut lock) = PENDING_HISTORY.lock() {
         if lock.is_empty() {
-            return;
+            return 0;
         }
         std::mem::swap(&mut *lock, &mut buffer);
     }
+    let count = buffer.len();
     if !buffer.is_empty() {
         flush_history_to_db(db_path, &mut buffer, retention_days);
     }
+    count
 }
 
 /// Opens a database connection with Write-Ahead Logging (WAL) and a 5-second busy timeout.
@@ -249,6 +252,10 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
         "CREATE INDEX IF NOT EXISTS idx_telemetry_topics_device ON telemetry_topics (device)",
         [],
     )?;
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_telemetry_topics_topic ON telemetry_topics (topic)",
+        [],
+    )?;
 
     // Check if telemetry_history is in old schema (has 'topic' column instead of 'topic_id')
     let is_old_schema: bool = conn
@@ -363,9 +370,18 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
     buffer.clear();
 
     if let Some(days) = retention_days {
-        let cutoff = chrono::Utc::now().timestamp() - (days as i64 * 24 * 3600);
-        if let Err(e) = conn.execute("DELETE FROM telemetry_history WHERE timestamp < ?1", params![cutoff]) {
-            eprintln!("Failed to prune old telemetry records: {}", e);
+        let mut should_prune = false;
+        if let Ok(mut lock) = LAST_PRUNE.lock() {
+            if lock.map_or(true, |t| t.elapsed() >= std::time::Duration::from_secs(24 * 3600)) {
+                *lock = Some(std::time::Instant::now());
+                should_prune = true;
+            }
+        }
+        if should_prune {
+            let cutoff = chrono::Utc::now().timestamp() - (days as i64 * 24 * 3600);
+            if let Err(e) = conn.execute("DELETE FROM telemetry_history WHERE timestamp < ?1", params![cutoff]) {
+                eprintln!("Failed to prune old telemetry records: {}", e);
+            }
         }
     }
 
@@ -729,6 +745,7 @@ pub fn get_decimated_telemetry_in_range_profiled(
         "SELECT timestamp, value FROM telemetry_history WHERE topic_id = ?1 AND timestamp >= ?2 AND timestamp <= ?3 ORDER BY timestamp ASC"
     )?;
 
+    let topic_dur = t0.elapsed().as_secs_f64() * 1000.0;
     let t1 = std::time::Instant::now();
 
     for (&tid, topic_str) in &topic_map {
@@ -789,11 +806,10 @@ pub fn get_decimated_telemetry_in_range_profiled(
         }
     }
 
-    let db_dur = t0.elapsed().as_secs_f64() * 1000.0;
-    let decimate_dur = t1.elapsed().as_secs_f64() * 1000.0;
+    let query_decimate_dur = t1.elapsed().as_secs_f64() * 1000.0;
 
     decimated_records.sort_by_key(|(ts, _, _)| *ts);
-    Ok((decimated_records, raw_count, db_dur, decimate_dur))
+    Ok((decimated_records, raw_count, topic_dur, query_decimate_dur))
 }
 
 /// Queries and decimates telemetry records in a specific window range.

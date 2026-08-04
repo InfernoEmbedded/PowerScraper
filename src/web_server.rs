@@ -535,16 +535,23 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
 
                         let req_start = std::time::Instant::now();
                         let res = tokio::task::spawn_blocking(move || {
+                            let t_flush = std::time::Instant::now();
                             let retention_days = crate::config::Config::load_from_db(&path)
                                 .ok()
                                 .and_then(|c| c.history)
                                 .and_then(|h| h.retention_days);
-                            crate::database::flush_pending_history_to_db(&path, retention_days);
-                            crate::database::get_decimated_telemetry_in_range_profiled(&path, start_ts, end_ts, max_pixels, topics_opt.as_deref())
+                            let flushed_count = crate::database::flush_pending_history_to_db(&path, retention_days);
+                            let flush_dur = t_flush.elapsed().as_secs_f64() * 1000.0;
+
+                            let (records, raw_count, topic_dur, query_decimate_dur) =
+                                crate::database::get_decimated_telemetry_in_range_profiled(&path, start_ts, end_ts, max_pixels, topics_opt.as_deref())
+                                .map_err(|e| e.to_string())?;
+
+                            Ok::<_, String>((flushed_count, flush_dur, records, raw_count, topic_dur, query_decimate_dur))
                         }).await;
 
                         match res {
-                            Ok(Ok((records, raw_count, db_dur, decimate_dur))) => {
+                            Ok(Ok((flushed_count, flush_dur, records, raw_count, topic_dur, query_decimate_dur))) => {
                                 let t_fmt = std::time::Instant::now();
                                 #[derive(serde::Serialize)]
                                 struct TelemetryRecordRef<'a> {
@@ -565,13 +572,13 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                                 let total_dur = req_start.elapsed().as_secs_f64() * 1000.0;
 
                                 println!(
-                                    "[Profile /api/history] DB Query: {:.2}ms ({} rows), Decimation: {:.2}ms ({} decimated rows), Format: {:.2}ms, Total Server: {:.2}ms, Payload: {} bytes",
-                                    db_dur, raw_count, decimate_dur, refs.len(), fmt_dur, total_dur, json_body.len()
+                                    "[Profile /api/history] Flush: {:.2}ms ({} flushed), Topic Lookup: {:.2}ms, DB Query & Decimate: {:.2}ms ({} rows -> {} points), JSON Format: {:.2}ms, Total Server: {:.2}ms, Payload: {} bytes",
+                                    flush_dur, flushed_count, topic_dur, query_decimate_dur, raw_count, refs.len(), fmt_dur, total_dur, json_body.len()
                                 );
 
                                 let server_timing = format!(
-                                    "db;dur={:.2};desc=\"DB Query\", decimate;dur={:.2};desc=\"Decimation\", format;dur={:.2};desc=\"JSON Format\", total;dur={:.2};desc=\"Total Server\"",
-                                    db_dur, decimate_dur, fmt_dur, total_dur
+                                    "flush;dur={:.2};desc=\"DB Flush\", topic_lookup;dur={:.2};desc=\"Topic Lookup\", db_query;dur={:.2};desc=\"DB Query & Decimate\", format;dur={:.2};desc=\"JSON Format\", total;dur={:.2};desc=\"Total Server\"",
+                                    flush_dur, topic_dur, query_decimate_dur, fmt_dur, total_dur
                                 );
 
                                 Ok((
