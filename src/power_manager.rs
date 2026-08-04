@@ -1929,7 +1929,7 @@ pub async fn run_power_manager_queue_task(
     }
 
     let mut last_threshold_calc = std::time::Instant::now();
-    let mut history_ticker = tokio::time::interval(Duration::from_secs(10));
+    let mut history_ticker = tokio::time::interval(Duration::from_secs(60));
 
     loop {
         tokio::select! {
