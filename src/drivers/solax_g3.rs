@@ -252,11 +252,6 @@ pub async fn run_solax_g3_driver(
             Ok((reg_a, reg_b, reg_c)) => {
                 if reg_a.len() >= 0x1D {
                     let mut vals = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power);
-                    eprintln!(
-                        "[SolaxG3 Log] Driver [{}] parsed {} metrics",
-                        inverter_name,
-                        vals.len()
-                    );
 
                     // Update global status for dashboard
                     let bat_cap = vals
