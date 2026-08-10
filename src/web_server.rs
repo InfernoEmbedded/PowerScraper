@@ -40,6 +40,9 @@ pub struct SystemStatus {
     pub mqtt_enabled: bool,
     pub import_price: Option<f64>,
     pub export_price: Option<f64>,
+    pub battery_unit_cost: Option<f64>,
+    pub battery_kwh: Option<f64>,
+    pub battery_soc: Option<f64>,
     pub price_thresholds: Option<PriceThresholds>,
     pub usage: Option<f64>,
     pub power_budget: Option<f64>,
@@ -59,6 +62,9 @@ impl Default for SystemStatus {
             mqtt_enabled: false,
             import_price: None,
             export_price: None,
+            battery_unit_cost: None,
+            battery_kwh: None,
+            battery_soc: None,
             price_thresholds: None,
             usage: None,
             power_budget: None,
@@ -74,11 +80,15 @@ pub fn get_system_status() -> &'static Mutex<SystemStatus> {
     SYSTEM_STATUS.get_or_init(|| Mutex::new(SystemStatus::default()))
 }
 
+pub fn get_system_status_lock() -> std::sync::MutexGuard<'static, SystemStatus> {
+    get_system_status().lock().unwrap_or_else(|e| e.into_inner())
+}
+
 pub async fn get_health_status(db_path: &str) -> (axum::http::StatusCode, Json<serde_json::Value>) {
     let config = Config::load_from_db(db_path).unwrap_or_else(|_| Config::default_empty());
     let mut target_inverters = config.get_configured_battery_inverters();
 
-    let status = get_system_status().lock().unwrap().clone();
+    let status = get_system_status_lock().clone();
     if target_inverters.is_empty() {
         target_inverters = status.inverters.keys().cloned().collect();
     }
@@ -599,7 +609,7 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
         .route(
             "/api/status",
             get(|| async {
-                let lock = get_system_status().lock().unwrap();
+                let lock = get_system_status_lock();
                 Json(lock.clone())
             }),
         )
@@ -631,7 +641,7 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                     let path = db_path.clone();
                     async move {
                         let config = Config::load_from_db(&path).unwrap_or_else(|_| Config::default_empty());
-                        let status = get_system_status().lock().unwrap().clone();
+                        let status = get_system_status_lock().clone();
 
                         let mut data_sources = Vec::new();
                         if let Some(ref wifi) = config.solax_wifi {
@@ -744,7 +754,7 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                     let path = db_path.clone();
                     async move {
                         let config = Config::load_from_db(&path).unwrap_or_else(|_| Config::default_empty());
-                        let status = get_system_status().lock().unwrap().clone();
+                        let status = get_system_status_lock().clone();
 
                         let mut data_sources = Vec::new();
                         if let Some(ref wifi) = config.solax_wifi {

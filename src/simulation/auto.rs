@@ -6,6 +6,8 @@ use std::collections::HashMap;
 pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
     let mut auto_peaks = HashMap::new();
     let mut bat_soc = config.battery_capacity_kwh * 0.5;
+    let initial_export = records.first().map_or(0.0, |r| r.export_price_cents);
+    let mut bat_total_cost = bat_soc * initial_export;
     let mut tracker = SimTracker::new();
     let mut is_low_capacity = false;
 
@@ -18,6 +20,12 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         let mut discharge_w = 0.0;
 
         let now_time = r.dt_local.time();
+
+        let bat_unit_cost = if bat_soc > 1e-6 {
+            bat_total_cost / bat_soc
+        } else {
+            r.export_price_cents
+        };
 
         // Match period
         let mut active_period = None;
@@ -71,8 +79,14 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             }
         } else {
             if net_w > 0.0 {
-                let max_avail_discharge = ((bat_soc - (min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
-                discharge_w = net_w.min(config.max_power_w).min(max_avail_discharge);
+                let allow_discharge = match config.auto_cost_margin {
+                    Some(margin) => (bat_unit_cost + margin) <= r.import_price_cents,
+                    None => true,
+                };
+                if allow_discharge {
+                    let max_avail_discharge = ((bat_soc - (min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                    discharge_w = net_w.min(config.max_power_w).min(max_avail_discharge);
+                }
             } else {
                 let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
                 charge_w = (-net_w).min(config.max_power_w).min(max_avail_charge);
@@ -82,11 +96,29 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         let net_grid_w;
         let mut step_cycles = 0.0;
         if charge_w > 0.0 {
-            bat_soc += (charge_w / 1000.0) * r.duration_hours * 0.95;
+            let charge_kwh = (charge_w / 1000.0) * r.duration_hours * 0.95;
+            bat_soc += charge_kwh;
             step_cycles = (charge_w / 1000.0) * r.duration_hours / config.battery_capacity_kwh;
             net_grid_w = net_w + charge_w;
+
+            let excess_solar_w = (r.solar_power_w - r.load_power_w).max(0.0);
+            let solar_charge_w = charge_w.min(excess_solar_w);
+            let grid_charge_w = charge_w - solar_charge_w;
+
+            let solar_kwh = (solar_charge_w / 1000.0) * r.duration_hours * 0.95;
+            let grid_kwh = (grid_charge_w / 1000.0) * r.duration_hours * 0.95;
+
+            let added_cost = solar_kwh * r.export_price_cents + grid_kwh * r.import_price_cents;
+            bat_total_cost += added_cost;
         } else if discharge_w > 0.0 {
-            bat_soc -= (discharge_w / 1000.0) * r.duration_hours / 0.95;
+            let discharge_kwh_removed = (discharge_w / 1000.0) * r.duration_hours / 0.95;
+            let removed_cost = discharge_kwh_removed * bat_unit_cost;
+            bat_soc -= discharge_kwh_removed;
+            bat_total_cost = (bat_total_cost - removed_cost).max(0.0);
+            if bat_soc <= 1e-6 {
+                bat_soc = 0.0;
+                bat_total_cost = 0.0;
+            }
             step_cycles = (discharge_w / 1000.0) * r.duration_hours / config.battery_capacity_kwh;
             net_grid_w = net_w - discharge_w;
         } else {
@@ -178,12 +210,10 @@ mod tests {
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
             min_charge_hysteresis: None,
+            auto_cost_margin: None,
         };
 
         let result = run(&records, &config);
-
-        // Grid charge rate should be max power W (3000W) or available deficit (3000W)
-        // Since load is 1000W and battery charges at 3000W, total grid import is 4000W -> 4.0 kWh.
         assert_eq!(result.import_kwh, 4.0);
     }
 
@@ -231,9 +261,161 @@ mod tests {
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
             min_charge_hysteresis: None,
+            auto_cost_margin: None,
         };
 
         let result = run(&records, &config);
         assert_eq!(result.import_kwh, 3.0);
+    }
+
+    #[test]
+    fn test_auto_cost_margin_discharge_allowed_and_suppressed() {
+        let tz = FixedOffset::east_opt(36000).unwrap();
+        let dt1 = tz.with_ymd_and_hms(2026, 6, 26, 12, 0, 0).unwrap();
+        let dt2 = tz.with_ymd_and_hms(2026, 6, 26, 13, 0, 0).unwrap();
+
+        // Step 1: Solar charges battery (initial export 8.0 c/kWh).
+        // Step 2: Load of 1000W. Import price 20.0 c/kWh. Margin 2.0.
+        // Battery unit cost (8.0) + margin (2.0) = 10.0 <= 20.0 -> Discharge allowed!
+        let records_allowed = vec![SimRecord {
+            timestamp: dt1.timestamp(),
+            dt_local: dt1,
+            solar_power_w: 0.0,
+            load_power_w: 1000.0,
+            import_price_cents: 20.0,
+            export_price_cents: 8.0,
+            duration_hours: 1.0,
+            day_solar_kwh: 0.0,
+        }];
+
+        let config_allowed = SimConfig {
+            battery_capacity_kwh: 10.0,
+            max_power_w: 3000.0,
+            min_charge_pct: 20,
+            max_charge_pct: 100,
+            demand_window: None,
+            demand_rate: 0.0,
+            negative_export_prevent: false,
+            low_price_charge: false,
+            low_price_threshold: 0.0,
+            high_price_discharge: false,
+            high_price_threshold: 0.0,
+            periods: vec![],
+            evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
+            auto_cost_margin: Some(2.0),
+        };
+
+        let res_allowed = run(&records_allowed, &config_allowed);
+        assert_eq!(res_allowed.import_kwh, 0.0);
+
+        // Step 3: Battery charged from expensive grid during step 1 (import 30 c/kWh).
+        // Step 2: Load 1000W, import price drops to 15 c/kWh. Margin 2.0.
+        // Battery unit cost (30.0) + margin (2.0) = 32.0 > 15.0 -> Discharge suppressed!
+        let records_suppressed = vec![
+            SimRecord {
+                timestamp: dt1.timestamp(),
+                dt_local: dt1,
+                solar_power_w: 0.0,
+                load_power_w: 0.0,
+                import_price_cents: 30.0,
+                export_price_cents: 8.0,
+                duration_hours: 1.0,
+                day_solar_kwh: 0.0,
+            },
+            SimRecord {
+                timestamp: dt2.timestamp(),
+                dt_local: dt2,
+                solar_power_w: 0.0,
+                load_power_w: 1000.0,
+                import_price_cents: 15.0,
+                export_price_cents: 8.0,
+                duration_hours: 1.0,
+                day_solar_kwh: 0.0,
+            },
+        ];
+
+        let config_suppressed = SimConfig {
+            battery_capacity_kwh: 10.0,
+            max_power_w: 3000.0,
+            min_charge_pct: 20,
+            max_charge_pct: 100,
+            demand_window: None,
+            demand_rate: 0.0,
+            negative_export_prevent: false,
+            low_price_charge: false,
+            low_price_threshold: 0.0,
+            high_price_discharge: false,
+            high_price_threshold: 0.0,
+            periods: vec![BatteryControlPeriod {
+                start: "11:30:00".to_string(),
+                end: "12:30:00".to_string(),
+                min_charge: 80,
+                grid_charge: true,
+                force_discharge: None,
+                grace: false,
+                prefer_battery: false,
+                min_charge_hysteresis: None,
+            }],
+            evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
+            auto_cost_margin: Some(2.0),
+        };
+
+        let res_suppressed = run(&records_suppressed, &config_suppressed);
+        // During dt2, discharge was suppressed because 30+2 > 15, so import_kwh for 1kW load is 1.0 kWh.
+        // Plus grid charge import in dt1 (3.0 kWh) = 4.0 kWh total import.
+        assert_eq!(res_suppressed.import_kwh, 4.0);
+    }
+
+    #[test]
+    fn test_auto_simulation_solar_and_grid_cost_apportionment() {
+        let dt1 = chrono::DateTime::parse_from_rfc3339("2026-08-10T12:00:00+10:00").unwrap();
+
+        let records = vec![
+            SimRecord {
+                timestamp: dt1.timestamp(),
+                dt_local: dt1,
+                solar_power_w: 3000.0,
+                load_power_w: 1000.0,
+                import_price_cents: 30.0,
+                export_price_cents: 10.0,
+                duration_hours: 1.0,
+                day_solar_kwh: 3.0,
+            },
+        ];
+
+        let config = SimConfig {
+            battery_capacity_kwh: 10.0,
+            max_power_w: 3000.0,
+            min_charge_pct: 20,
+            max_charge_pct: 100,
+            demand_window: None,
+            demand_rate: 0.0,
+            negative_export_prevent: false,
+            low_price_charge: false,
+            low_price_threshold: 0.0,
+            high_price_discharge: false,
+            high_price_threshold: 0.0,
+            periods: vec![BatteryControlPeriod {
+                start: "11:30:00".to_string(),
+                end: "12:30:00".to_string(),
+                min_charge: 80,
+                grid_charge: true,
+                force_discharge: None,
+                grace: false,
+                prefer_battery: false,
+                min_charge_hysteresis: None,
+            }],
+            evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
+            auto_cost_margin: None,
+        };
+
+        let res = run(&records, &config);
+        assert_eq!(res.import_kwh, 1.0);
     }
 }

@@ -123,6 +123,18 @@
                     <div class="card-title">Export Price</div>
                     <div class="stat-val" id="stat-export-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
                 </div>
+                <div class="glass-card">
+                    <div class="card-title">Stored Battery Cost</div>
+                    <div class="stat-val" id="stat-battery-cost" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Battery Available Energy</div>
+                    <div class="stat-val" id="stat-battery-kwh" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0.0 kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Total Battery %</div>
+                    <div class="stat-val" id="stat-battery-soc" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 %</div>
+                </div>
                 <div class="glass-card" id="card-mqtt-status" style="display: none;">
                     <div class="card-title">MQTT Status</div>
                     <div class="stat-val" id="stat-mqtt-status" style="color: var(--danger); text-shadow: 0 0 10px rgba(239, 68, 68, 0.2);">Disconnected</div>
@@ -243,6 +255,8 @@
                             <input type="number" id="battery-hysteresis" min="0" max="50" placeholder="e.g. 3">
                         </div>
                         <div class="form-group">
+                            <label for="battery-auto-margin">Auto Discharge Margin (c/kWh)</label>
+                            <input type="number" step="0.1" id="battery-auto-margin" placeholder="e.g. 2.0 (empty to disable)">
                         </div>
                     </div>
                     <div class="checkbox-group">

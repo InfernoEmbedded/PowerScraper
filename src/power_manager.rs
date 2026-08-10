@@ -351,37 +351,72 @@ pub fn calculate_inferred_battery_capacity(db_path: &str, inverter_name: &str) -
     }
 }
 
-pub fn update_all_inferred_capacities(db_path: &str, inverters: &[String]) {
-    println!("Calculating inferred battery capacities from SQLite history in parallel...");
-    let mut results = Vec::new();
-    std::thread::scope(|s| {
-        let mut threads = Vec::new();
-        for inv_name in inverters {
-            let inv_name_clone = inv_name.clone();
-            let handle = s.spawn(move || {
-                let cap = calculate_inferred_battery_capacity(db_path, &inv_name_clone);
-                (inv_name_clone, cap)
-            });
-            threads.push(handle);
+pub fn load_cached_battery_capacities(db_path: &str, inverters: &[String]) -> HashMap<String, f64> {
+    let _ = crate::database::init_history_db(db_path);
+    let mut caps = HashMap::new();
+
+    for inv_name in inverters {
+        if let Some(cached_cap) = crate::database::get_latest_inferred_battery_capacity(db_path, inv_name) {
+            println!("Loaded cached battery capacity for inverter [{}]: {:.2} kWh", inv_name, cached_cap);
+            caps.insert(inv_name.clone(), cached_cap);
+            let mut status = crate::web_server::get_system_status_lock();
+            let inv_status = status.inverters.entry(inv_name.clone()).or_default();
+            inv_status.calculated_battery_capacity = Some(cached_cap);
         }
-        for handle in threads {
-            if let Ok(res) = handle.join() {
-                results.push(res);
+    }
+    caps
+}
+
+pub fn recalculate_and_store_inferred_capacities(db_path: &str, inverters: &[String]) {
+    let db_path_owned = db_path.to_string();
+    let inverters_owned = inverters.to_vec();
+    std::thread::spawn(move || {
+        let num_cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
+        let max_threads = num_cpus.saturating_sub(1).max(1);
+        println!(
+            "Calculating inferred battery capacities from SQLite history in background (limiting concurrency to {} worker threads out of {} CPUs)...",
+            max_threads, num_cpus
+        );
+
+        let mut results = Vec::new();
+        for chunk in inverters_owned.chunks(max_threads) {
+            std::thread::scope(|s| {
+                let mut handles = Vec::new();
+                for inv_name in chunk {
+                    let inv_name_clone = inv_name.clone();
+                    let db_path_ref = &db_path_owned;
+                    let handle = s.spawn(move || {
+                        let cap = calculate_inferred_battery_capacity(db_path_ref, &inv_name_clone);
+                        (inv_name_clone, cap)
+                    });
+                    handles.push(handle);
+                }
+                for handle in handles {
+                    if let Ok(res) = handle.join() {
+                        results.push(res);
+                    }
+                }
+            });
+        }
+
+        for (inv_name, cap_opt) in results {
+            if let Some(cap) = cap_opt {
+                println!("Inferred battery capacity for inverter [{}]: {:.2} kWh", inv_name, cap);
+                let mut status = crate::web_server::get_system_status_lock();
+                let inv_status = status.inverters.entry(inv_name.clone()).or_default();
+                inv_status.calculated_battery_capacity = Some(cap);
+                if let Err(e) = crate::database::save_inferred_battery_capacity(&db_path_owned, &inv_name, cap) {
+                    eprintln!("Failed to save inferred battery capacity for [{}]: {}", inv_name, e);
+                }
+            } else {
+                println!("Not enough history/data to infer battery capacity for inverter [{}]", inv_name);
             }
         }
     });
+}
 
-    for (inv_name, cap_opt) in results {
-        if let Some(cap) = cap_opt {
-            println!("Inferred battery capacity for inverter [{}]: {:.2} kWh", inv_name, cap);
-            if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                let inv_status = status.inverters.entry(inv_name).or_default();
-                inv_status.calculated_battery_capacity = Some(cap);
-            }
-        } else {
-            println!("Not enough history/data to infer battery capacity for inverter [{}]", inv_name);
-        }
-    }
+pub fn update_all_inferred_capacities(db_path: &str, inverters: &[String]) -> HashMap<String, f64> {
+    load_cached_battery_capacities(db_path, inverters)
 }
 
 
@@ -465,6 +500,9 @@ pub struct PowerManager {
     phase_discharge_power: [f64; 16],
     commanded_powers: HashMap<String, i32>,
     pub low_capacity_state: HashMap<String, bool>,
+    pub battery_total_cost: f64,
+    pub battery_energy_kwh: f64,
+    pub inferred_battery_capacities: HashMap<String, f64>,
 }
 
 impl PowerManager {
@@ -540,7 +578,88 @@ impl PowerManager {
             phase_discharge_power: [0.0; 16],
             commanded_powers: HashMap::new(),
             low_capacity_state: HashMap::new(),
+            battery_total_cost: 0.0,
+            battery_energy_kwh: 0.0,
+            inferred_battery_capacities: HashMap::new(),
         }
+    }
+
+    pub fn get_battery_unit_cost(&self, default_export_rate: f64) -> f64 {
+        if self.battery_energy_kwh > 1e-6 {
+            self.battery_total_cost / self.battery_energy_kwh
+        } else {
+            default_export_rate
+        }
+    }
+
+    pub fn allow_auto_discharge(&self, rates: &crate::tariff_manager::CurrentTariffRates) -> bool {
+        match self.config.auto_cost_margin {
+            Some(margin) => {
+                let unit_cost = self.get_battery_unit_cost(rates.export_rate);
+                (unit_cost + margin) <= rates.import_rate
+            }
+            None => true,
+        }
+    }
+
+    pub fn update_battery_energy_tracking(&mut self, dt_hours: f64, rates: &crate::tariff_manager::CurrentTariffRates) {
+        let total_battery_power: f64 = self.inverters.values().map(|inv| inv.battery_power).sum();
+        if total_battery_power < 0.0 {
+            let charge_w = -total_battery_power;
+            let charge_kwh = (charge_w / 1000.0) * dt_hours;
+            let total_pv: f64 = self.inverters.values().map(|inv| inv.pv1_power + inv.pv2_power).sum();
+            let house_load = (total_pv + self.total_power + total_battery_power).max(0.0);
+            let excess_solar = (total_pv - house_load).max(0.0);
+            let solar_charge_w = charge_w.min(excess_solar);
+            let grid_charge_w = charge_w - solar_charge_w;
+
+            let solar_kwh = (solar_charge_w / 1000.0) * dt_hours;
+            let grid_kwh = (grid_charge_w / 1000.0) * dt_hours;
+            let added_cost = solar_kwh * rates.export_rate + grid_kwh * rates.import_rate;
+            self.battery_total_cost += added_cost;
+            self.battery_energy_kwh += charge_kwh;
+        } else if total_battery_power > 0.0 {
+            let discharge_w = total_battery_power;
+            let discharge_kwh = (discharge_w / 1000.0) * dt_hours;
+            let unit_cost = self.get_battery_unit_cost(rates.export_rate);
+            let removed_cost = discharge_kwh * unit_cost;
+            self.battery_energy_kwh = (self.battery_energy_kwh - discharge_kwh).max(0.0);
+            self.battery_total_cost = (self.battery_total_cost - removed_cost).max(0.0);
+            if self.battery_energy_kwh <= 1e-6 {
+                self.battery_energy_kwh = 0.0;
+                self.battery_total_cost = 0.0;
+            }
+        }
+
+        let _ = crate::database::save_battery_energy_state(&self.db_path, self.battery_energy_kwh, self.battery_total_cost);
+    }
+
+    pub fn calculate_battery_kwh_and_soc(&self) -> (f64, f64) {
+        let mut total_stored_kwh = 0.0;
+        let mut total_capacity_kwh = 0.0;
+
+        for (name, inv_cfg) in &self.config.inverter {
+            if !inv_cfg.has_battery() {
+                continue;
+            }
+            let inv_state = self.inverters.get(name);
+            let cap_kwh = self.inferred_battery_capacities.get(name).copied()
+                .or_else(|| inv_cfg.battery_capacity.filter(|&c| c > 0.0))
+                .unwrap_or(13.8);
+            let soc_pct = inv_state.map(|s| s.battery_capacity as f64).unwrap_or(0.0);
+
+            let stored_kwh = (soc_pct / 100.0) * cap_kwh;
+            total_stored_kwh += stored_kwh;
+            total_capacity_kwh += cap_kwh;
+        }
+
+        let avg_soc = if total_capacity_kwh > 0.0 {
+            (total_stored_kwh / total_capacity_kwh) * 100.0
+        } else {
+            0.0
+        };
+
+        (total_stored_kwh, avg_soc)
     }
 
     fn get_period(&self) -> Option<&BatteryControlPeriod> {
@@ -689,6 +808,14 @@ impl PowerManager {
             battery_map.insert(name.clone(), battery);
         }
 
+        let now_inst = std::time::Instant::now();
+        let dt_sec = now_inst.duration_since(self.last_regulation_update).as_secs_f64();
+        if dt_sec >= 1.0 && dt_sec < 300.0 {
+            let dt_hours = dt_sec / 3600.0;
+            let rates = self.tariff_manager.get_current_rates();
+            self.update_battery_energy_tracking(dt_hours, &rates);
+        }
+
         let unique_phases: std::collections::HashSet<usize> = self.config.inverter.values().map(|inv| inv.phase).collect();
         let phase_count = unique_phases.len().max(1) as f64;
 
@@ -719,6 +846,11 @@ impl PowerManager {
                         self.total_discharge_power += total_error * 0.1;
                     }
                     self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+
+                    let rates = self.tariff_manager.get_current_rates();
+                    if !self.allow_auto_discharge(&rates) {
+                        self.total_discharge_power = self.total_discharge_power.min(0.0);
+                    }
 
                     if period.grid_charge && any_low_capacity {
                         -max_total_charge
@@ -1047,6 +1179,11 @@ impl PowerManager {
                             self.phase_discharge_power[p] += phase_error * 0.25;
                         }
                         self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+
+                        let rates = self.tariff_manager.get_current_rates();
+                        if !self.allow_auto_discharge(&rates) {
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].min(0.0);
+                        }
 
                         if period.grid_charge && any_low_capacity {
                             -max_phase_charge
@@ -1388,11 +1525,7 @@ impl PowerManager {
                     continue;
                 }
                 let state = self.inverters.get(name).cloned().unwrap_or_default();
-                let calc_cap = if let Ok(status) = crate::web_server::get_system_status().lock() {
-                    status.inverters.get(name).and_then(|i| i.calculated_battery_capacity)
-                } else {
-                    None
-                };
+                let calc_cap = self.inferred_battery_capacities.get(name).copied();
                 let cap_kwh = calc_cap
                     .or_else(|| inv_cfg.battery_capacity.filter(|&c| c > 0.0))
                     .unwrap_or(13.8);
@@ -1470,11 +1603,7 @@ impl PowerManager {
                             continue;
                         }
                         let state = self.inverters.get(name).cloned().unwrap_or_default();
-                        let calc_cap = if let Ok(status) = crate::web_server::get_system_status().lock() {
-                            status.inverters.get(name).and_then(|i| i.calculated_battery_capacity)
-                        } else {
-                            None
-                        };
+                        let calc_cap = self.inferred_battery_capacities.get(name).copied();
                         let cap_kwh = calc_cap
                             .or_else(|| cfg.battery_capacity.filter(|&c| c > 0.0))
                             .unwrap_or(13.8);
@@ -1629,6 +1758,14 @@ impl PowerManager {
         );
         aggregates.insert("Power Budget with charging".to_string(), power_budget_with_charging);
         aggregates.insert("Power Budget with Charging".to_string(), power_budget_with_charging);
+
+        let rates = self.tariff_manager.get_current_rates();
+        let battery_unit_cost = self.get_battery_unit_cost(rates.export_rate);
+        let (total_kwh, avg_soc) = self.calculate_battery_kwh_and_soc();
+
+        aggregates.insert("Stored Battery Unit Cost".to_string(), battery_unit_cost);
+        aggregates.insert("Battery Stored Energy".to_string(), total_kwh);
+        aggregates.insert("Total Battery SoC".to_string(), avg_soc);
 
         aggregates
     }
@@ -1887,23 +2024,43 @@ pub async fn run_power_manager_queue_task(
     let pm = Arc::new(Mutex::new(PowerManager::new(config.clone(), base_topic.clone())));
 
     let inverter_names: Vec<String> = config.inverter.keys().cloned().collect();
-    update_all_inferred_capacities(&db_path, &inverter_names);
+    let cached_caps = update_all_inferred_capacities(&db_path, &inverter_names);
+    {
+        let mut pm_lock = pm.lock().await;
+        pm_lock.inferred_battery_capacities = cached_caps;
+        pm_lock.db_path = db_path.clone();
+        if let Some((energy_kwh, total_cost_cents)) = crate::database::load_battery_energy_state(&db_path) {
+            println!("Loaded persisted battery energy state: {:.2} kWh @ total cost {:.2} cents", energy_kwh, total_cost_cents);
+            pm_lock.battery_energy_kwh = energy_kwh;
+            pm_lock.battery_total_cost = total_cost_cents;
+        }
+    }
 
     let tm = {
         let pm_lock = pm.lock().await;
-        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-            status.active_mode = pm_lock.mode.to_string();
-            status.grid_target = pm_lock.grid_target;
-            status.mqtt_enabled = crate::config::Config::load_from_db(&db_path).map(|c| c.mqtt.is_some()).unwrap_or(false);
-            let aggregates = pm_lock.calculate_aggregates();
-            status.usage = aggregates.get("Usage").copied();
-            status.power_budget = aggregates.get("Power Budget").copied();
-            status.power_budget_with_charging = aggregates.get("Power Budget with charging").copied();
-            let rates = pm_lock.tariff_manager.get_current_rates();
-            status.import_price = Some(rates.import_rate);
-            status.export_price = Some(rates.export_rate);
-        }
-        pm_lock.tariff_manager.clone()
+        let active_mode = pm_lock.mode.to_string();
+        let grid_target = pm_lock.grid_target;
+        let aggregates = pm_lock.calculate_aggregates();
+        let rates = pm_lock.tariff_manager.get_current_rates();
+        let unit_cost = pm_lock.get_battery_unit_cost(rates.export_rate);
+        let (total_kwh, avg_soc) = pm_lock.calculate_battery_kwh_and_soc();
+        let tm = pm_lock.tariff_manager.clone();
+        drop(pm_lock);
+
+        let mut status = crate::web_server::get_system_status_lock();
+        status.active_mode = active_mode;
+        status.grid_target = grid_target;
+        status.mqtt_enabled = crate::config::Config::load_from_db(&db_path).map(|c| c.mqtt.is_some()).unwrap_or(false);
+        status.usage = aggregates.get("Usage").copied();
+        status.power_budget = aggregates.get("Power Budget").copied();
+        status.power_budget_with_charging = aggregates.get("Power Budget with charging").copied();
+        status.import_price = Some(rates.import_rate);
+        status.export_price = Some(rates.export_rate);
+        status.battery_unit_cost = Some(unit_cost);
+        status.battery_kwh = Some(total_kwh);
+        status.battery_soc = Some(avg_soc);
+
+        tm
     };
     let cancel_token_clone = cancel_token.clone();
     tokio::spawn(async move {
@@ -1953,7 +2110,7 @@ pub async fn run_power_manager_queue_task(
                         last_threshold_calc = std::time::Instant::now();
                     }
                     let inv_names: Vec<String> = config.inverter.keys().cloned().collect();
-                    update_all_inferred_capacities(&db_path, &inv_names);
+                    recalculate_and_store_inferred_capacities(&db_path, &inv_names);
                 }
             }
             Some(cmd) = rx_command.recv() => {
@@ -1993,15 +2150,14 @@ pub async fn run_power_manager_queue_task(
                 let source_opt = pm_lock.config.source.clone();
                 let is_source = source_opt.as_ref().map(|s| s == &batch.device_name).unwrap_or(false);
 
+                let mut meter_power_val = None;
+
                 for (metric, &val) in &batch.metrics {
                     if is_source {
                         if metric == "Total system power" {
                             pm_lock.total_power = val;
+                            meter_power_val = Some(val);
                             state_changed = true;
-                            if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                                status.meter_power = val;
-                                status.meter_last_updated = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
-                            }
                         } else if metric == "Phase 1 power" {
                             pm_lock.phase_power[1] = val;
                             state_changed = true;
@@ -2054,17 +2210,30 @@ pub async fn run_power_manager_queue_task(
                     }
 
                     let aggregates = pm_lock.calculate_aggregates();
-                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                        status.usage = aggregates.get("Usage").copied();
-                        status.power_budget = aggregates.get("Power Budget").copied();
-                        status.power_budget_with_charging = aggregates.get("Power Budget with charging").copied();
-                        status.active_mode = pm_lock.mode.to_string();
-                        status.grid_target = pm_lock.grid_target;
-                        status.mqtt_enabled = crate::config::Config::load_from_db(&db_path).map(|c| c.mqtt.is_some()).unwrap_or(false);
-                        let rates = pm_lock.tariff_manager.get_current_rates();
-                        status.import_price = Some(rates.import_rate);
-                        status.export_price = Some(rates.export_rate);
+                    let active_mode = pm_lock.mode.to_string();
+                    let grid_target = pm_lock.grid_target;
+                    let rates = pm_lock.tariff_manager.get_current_rates();
+                    let battery_unit_cost = pm_lock.get_battery_unit_cost(rates.export_rate);
+                    let (total_kwh, avg_soc) = pm_lock.calculate_battery_kwh_and_soc();
+
+                    drop(pm_lock);
+
+                    let mut status = crate::web_server::get_system_status_lock();
+                    if let Some(val) = meter_power_val {
+                        status.meter_power = val;
+                        status.meter_last_updated = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
                     }
+                    status.usage = aggregates.get("Usage").copied();
+                    status.power_budget = aggregates.get("Power Budget").copied();
+                    status.power_budget_with_charging = aggregates.get("Power Budget with charging").copied();
+                    status.active_mode = active_mode;
+                    status.grid_target = grid_target;
+                    status.mqtt_enabled = crate::config::Config::load_from_db(&db_path).map(|c| c.mqtt.is_some()).unwrap_or(false);
+                    status.import_price = Some(rates.import_rate);
+                    status.export_price = Some(rates.export_rate);
+                    status.battery_unit_cost = Some(battery_unit_cost);
+                    status.battery_kwh = Some(total_kwh);
+                    status.battery_soc = Some(avg_soc);
 
                     let agg_batch = crate::dispatch_manager::TelemetryBatch {
                         device_name: "aggregate".to_string(),
@@ -2294,7 +2463,7 @@ pub async fn run_power_manager_task(
                     }
                     // Run daily battery capacity inference
                     let inverter_names: Vec<String> = config.inverter.keys().cloned().collect();
-                    update_all_inferred_capacities(&db_path, &inverter_names);
+                    recalculate_and_store_inferred_capacities(&db_path, &inverter_names);
                 }
 
                 if history_enabled {
@@ -2840,6 +3009,7 @@ pub fn load_sim_records(
         evolved_heuristic: evolved_heuristic_config,
         evolved_heuristic_monthly: config.battery_control.as_ref().and_then(|bc| bc.evolved_heuristic_monthly.clone()),
         min_charge_hysteresis: config.battery_control.as_ref().and_then(|bc| bc.min_charge_hysteresis),
+        auto_cost_margin: config.battery_control.as_ref().and_then(|bc| bc.auto_cost_margin),
     };
 
     Ok((records, sim_config))
@@ -3183,6 +3353,7 @@ mod tests {
             evolved_heuristic: None,
             evolved_heuristic_monthly: None,
             min_charge_hysteresis: Some(5), // 5% global hysteresis
+            auto_cost_margin: None,
         };
 
         let mut pm = PowerManager::new(config, "powerscraper".to_string());
@@ -5125,10 +5296,92 @@ mod tests {
         assert_eq!(bat_ctrl_loaded.grid_target, Some(-250.0));
 
         // 3. Verify PowerManager initializes grid_target from reloaded config
-        let pm = PowerManager::new(bat_ctrl_loaded.clone(), "sensors".to_string());
-        assert_eq!(pm.grid_target, -250.0);
-
         let _ = std::fs::remove_file(temp_db);
+    }
+
+    #[test]
+    fn test_auto_cost_margin_power_manager() {
+        let mut cfg = SolaxBatteryControlConfig::default();
+        cfg.auto_cost_margin = Some(5.0);
+        let mut inv = BatteryControlInverter::default();
+        inv.max_charge = 3000.0;
+        inv.max_discharge = 3000.0;
+        inv.battery_capacity = Some(10.0);
+        cfg.inverter.insert("inv1".to_string(), inv);
+
+        let pm = PowerManager::new(cfg, "sensors".to_string());
+        let rates_low = crate::tariff_manager::CurrentTariffRates {
+            import_rate: 22.0, // 22 < 20 + 5 -> Discharge suppressed!
+            export_rate: 8.0,
+        };
+        // Battery energy = 10 kWh, total cost = 200 c (20 c/kWh unit cost)
+        let mut pm = pm;
+        pm.battery_energy_kwh = 10.0;
+        pm.battery_total_cost = 200.0;
+
+        assert!(!pm.allow_auto_discharge(&rates_low));
+
+        let rates_high = crate::tariff_manager::CurrentTariffRates {
+            import_rate: 30.0, // 30 >= 20 + 5 -> Discharge allowed!
+            export_rate: 8.0,
+        };
+        assert!(pm.allow_auto_discharge(&rates_high));
+    }
+
+    #[test]
+    fn test_battery_energy_cost_apportionment() {
+        let mut cfg = SolaxBatteryControlConfig::default();
+        let mut inv = BatteryControlInverter::default();
+        inv.max_charge = 10000.0;
+        inv.max_discharge = 10000.0;
+        inv.battery_capacity = Some(15.0);
+        cfg.inverter.insert("solax-1".to_string(), inv);
+
+        let mut pm = PowerManager::new(cfg, "sensors".to_string());
+        let rates = crate::tariff_manager::CurrentTariffRates {
+            import_rate: 30.0, // 30 c/kWh grid import
+            export_rate: 10.0, // 10 c/kWh solar export
+        };
+
+        // Scenario 1: Pure solar charging
+        let mut inv_state = InverterState::default();
+        inv_state.pv1_power = 5000.0;
+        inv_state.battery_power = -2000.0;
+        pm.inverters.insert("solax-1".to_string(), inv_state);
+        pm.total_power = -2000.0; // Meter power
+
+        pm.update_battery_energy_tracking(1.0, &rates); // 1 hour at 2kW charge = 2 kWh
+
+        assert_eq!(pm.battery_energy_kwh, 2.0);
+        assert_eq!(pm.battery_total_cost, 20.0); // 2.0 kWh * 10 c/kWh export rate = 20 cents
+        assert!((pm.get_battery_unit_cost(10.0) - 10.0).abs() < 1e-6);
+
+        // Scenario 2: Mixed Solar + Grid Charging
+        pm.battery_energy_kwh = 0.0;
+        pm.battery_total_cost = 0.0;
+
+        let mut inv_state2 = InverterState::default();
+        inv_state2.pv1_power = 3000.0;
+        inv_state2.battery_power = -5000.0;
+        pm.inverters.insert("solax-1".to_string(), inv_state2);
+        pm.total_power = 2000.0;
+
+        pm.update_battery_energy_tracking(1.0, &rates);
+
+        assert_eq!(pm.battery_energy_kwh, 5.0);
+        assert_eq!(pm.battery_total_cost, 90.0); // 30c solar + 60c grid = 90 cents
+        assert!((pm.get_battery_unit_cost(10.0) - 18.0).abs() < 1e-6); // 90c / 5kWh = 18 c/kWh
+
+        // Scenario 3: Partial Discharge preserves weighted unit cost
+        let mut inv_state3 = InverterState::default();
+        inv_state3.battery_power = 2500.0; // 2.5 kW discharge for 1 hour = 2.5 kWh
+        pm.inverters.insert("solax-1".to_string(), inv_state3);
+
+        pm.update_battery_energy_tracking(1.0, &rates);
+
+        assert_eq!(pm.battery_energy_kwh, 2.5);
+        assert_eq!(pm.battery_total_cost, 45.0); // 90c - 45c = 45 cents
+        assert!((pm.get_battery_unit_cost(10.0) - 18.0).abs() < 1e-6); // Unit cost remains 18 c/kWh!
     }
 }
 

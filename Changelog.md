@@ -4,6 +4,16 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.120] - 2026-08-10
+
+### Added
+* **Configurable Auto Mode Energy Cost Margin Control**:
+  - Added running calculation of stored battery energy unit cost based on charging sources (export price for solar charging, import price for grid charging).
+  - Added `auto_cost_margin` (`auto-cost-margin`) configuration parameter to `SolaxBatteryControlConfig` (c/kWh).
+  - Configured Auto mode regulation in both `PowerManager` live control and historical simulation (`auto.rs`) to suppress battery discharging whenever stored battery unit cost + margin exceeds the current grid import price.
+
+---
+
 ## [1.0.119] - 2026-08-03
 
 ### Added

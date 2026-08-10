@@ -200,7 +200,7 @@ impl MqttBrokerConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
 pub struct BatteryControlInverter {
     pub phase: usize,
@@ -425,6 +425,8 @@ pub struct SolaxBatteryControlConfig {
     pub evolved_heuristic_monthly: Option<HashMap<String, EvolvedHeuristicConfig>>,
     #[serde(default, alias = "min-charge-hysteresis", alias = "min_charge_hysteresis")]
     pub min_charge_hysteresis: Option<u8>,
+    #[serde(default, alias = "auto-cost-margin", alias = "auto_cost_margin")]
+    pub auto_cost_margin: Option<f64>,
 }
 
 fn default_flush_interval() -> u32 { 30 }

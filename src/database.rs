@@ -318,7 +318,97 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
         )",
         [],
     )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS inferred_battery_capacity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp INTEGER NOT NULL,
+            inverter_name TEXT NOT NULL,
+            capacity_kwh REAL NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_inferred_battery_cap_inv_ts ON inferred_battery_capacity (inverter_name, timestamp DESC)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS battery_energy_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            energy_kwh REAL NOT NULL,
+            total_cost_cents REAL NOT NULL,
+            updated_at INTEGER NOT NULL
+        )",
+        [],
+    )?;
     Ok(())
+}
+
+/// Saves stored battery energy and total cost tracking state to database.
+pub fn save_battery_energy_state(db_path: &str, energy_kwh: f64, total_cost_cents: f64) -> Result<(), rusqlite::Error> {
+    let conn = open_db_conn(db_path)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    conn.execute(
+        "INSERT INTO battery_energy_state (id, energy_kwh, total_cost_cents, updated_at) VALUES (1, ?1, ?2, ?3)
+         ON CONFLICT(id) DO UPDATE SET energy_kwh = ?1, total_cost_cents = ?2, updated_at = ?3",
+        params![energy_kwh, total_cost_cents, now],
+    )?;
+    Ok(())
+}
+
+/// Loads the latest persisted stored battery energy and total cost tracking state from database.
+pub fn load_battery_energy_state(db_path: &str) -> Option<(f64, f64)> {
+    let conn = open_db_conn_read_only(db_path).ok()?;
+    conn.query_row(
+        "SELECT energy_kwh, total_cost_cents FROM battery_energy_state WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .ok()
+}
+
+/// Saves an inferred battery capacity reading for a specific inverter.
+pub fn save_inferred_battery_capacity(db_path: &str, inverter_name: &str, capacity_kwh: f64) -> Result<(), rusqlite::Error> {
+    let conn = open_db_conn(db_path)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    conn.execute(
+        "INSERT INTO inferred_battery_capacity (timestamp, inverter_name, capacity_kwh) VALUES (?1, ?2, ?3)",
+        params![now, inverter_name, capacity_kwh],
+    )?;
+    Ok(())
+}
+
+/// Retrieves the latest cached inferred battery capacity for an inverter.
+pub fn get_latest_inferred_battery_capacity(db_path: &str, inverter_name: &str) -> Option<f64> {
+    let conn = open_db_conn_read_only(db_path).ok()?;
+    conn.query_row(
+        "SELECT capacity_kwh FROM inferred_battery_capacity WHERE inverter_name = ?1 ORDER BY timestamp DESC, id DESC LIMIT 1",
+        params![inverter_name],
+        |row| row.get(0),
+    )
+    .ok()
+}
+
+/// Retrieves historical inferred battery capacity readings for degradation tracking over time.
+pub fn get_inferred_battery_capacity_history(db_path: &str, inverter_name: &str) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
+    let conn = open_db_conn_read_only(db_path)?;
+    let mut stmt = conn.prepare(
+        "SELECT timestamp, capacity_kwh FROM inferred_battery_capacity WHERE inverter_name = ?1 ORDER BY timestamp ASC, id ASC",
+    )?;
+    let rows = stmt.query_map(params![inverter_name], |row| {
+        Ok((row.get(0)?, row.get(1)?))
+    })?;
+
+    let mut result = Vec::new();
+    for r in rows {
+        result.push(r?);
+    }
+    Ok(result)
 }
 
 /// Flushes a batch of in-memory telemetry records to the history table and prunes old records.
@@ -1044,6 +1134,54 @@ mod tests {
         // Under limit (max_pixels = 1000): returns all records
         let undecimated = decimate_telemetry_records(records.clone(), start_ts, end_ts, 1000);
         assert_eq!(undecimated.len(), 500);
+    }
+
+    #[test]
+    fn test_inferred_battery_capacity_db() {
+        let db_path = "test_inferred_cap.db";
+        let _ = std::fs::remove_file(db_path);
+
+        init_history_db(db_path).unwrap();
+
+        // Initial check: empty
+        assert_eq!(get_latest_inferred_battery_capacity(db_path, "solax-1"), None);
+
+        // Save two readings
+        save_inferred_battery_capacity(db_path, "solax-1", 13.82).unwrap();
+        save_inferred_battery_capacity(db_path, "solax-1", 13.75).unwrap();
+
+        let latest = get_latest_inferred_battery_capacity(db_path, "solax-1");
+        assert_eq!(latest, Some(13.75));
+
+        let history = get_inferred_battery_capacity_history(db_path, "solax-1").unwrap();
+        assert_eq!(history.len(), 2);
+        assert_eq!(history[0].1, 13.82);
+        assert_eq!(history[1].1, 13.75);
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_battery_energy_state_db() {
+        let db_path = "test_battery_energy_state.db";
+        let _ = std::fs::remove_file(db_path);
+
+        init_history_db(db_path).unwrap();
+
+        // Initial check: empty
+        assert_eq!(load_battery_energy_state(db_path), None);
+
+        // Save state
+        save_battery_energy_state(db_path, 8.5, 170.0).unwrap();
+        let state = load_battery_energy_state(db_path);
+        assert_eq!(state, Some((8.5, 170.0)));
+
+        // Update state
+        save_battery_energy_state(db_path, 10.0, 210.0).unwrap();
+        let updated = load_battery_energy_state(db_path);
+        assert_eq!(updated, Some((10.0, 210.0)));
+
+        let _ = std::fs::remove_file(db_path);
     }
 }
 

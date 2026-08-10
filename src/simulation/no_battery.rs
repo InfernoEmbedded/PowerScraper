@@ -84,6 +84,7 @@ mod tests {
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
             min_charge_hysteresis: None,
+            auto_cost_margin: None,
         };
 
         let result = run(&records, &config);
@@ -128,6 +129,7 @@ mod tests {
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
             min_charge_hysteresis: None,
+            auto_cost_margin: None,
         };
 
         let result = run(&records, &config);

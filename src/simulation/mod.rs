@@ -32,6 +32,7 @@ pub struct SimConfig {
     pub evolved_heuristic: EvolvedHeuristicConfig,
     pub evolved_heuristic_monthly: Option<std::collections::HashMap<String, EvolvedHeuristicConfig>>,
     pub min_charge_hysteresis: Option<u8>,
+    pub auto_cost_margin: Option<f64>,
 }
 
 pub struct SimTracker {

@@ -163,7 +163,7 @@ impl TariffManager {
             if price.channel_type == "general" {
                 import_rate = price.per_kwh; // already in cents/kWh
             } else if price.channel_type == "feedIn" {
-                export_rate = price.per_kwh; // already in cents/kWh
+                export_rate = -price.per_kwh; // Amber API returns negative values for feed-in income; negate to get positive export tariff
             }
         }
 
@@ -288,7 +288,7 @@ mod tests {
             let (mut stream, _) = listener.accept().await.unwrap();
             let json_body = r#"[
                 {"channelType": "general", "perKwh": 35.4},
-                {"channelType": "feedIn", "perKwh": 8.2}
+                {"channelType": "feedIn", "perKwh": -8.2}
             ]"#;
             let response = format!(
                 "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

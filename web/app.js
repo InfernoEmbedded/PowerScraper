@@ -319,6 +319,33 @@ async function fetchStatus() {
             }
         }
 
+        const batteryCostEl = document.getElementById('stat-battery-cost');
+        if (batteryCostEl) {
+            if (status.battery_unit_cost !== undefined && status.battery_unit_cost !== null) {
+                batteryCostEl.innerText = `${status.battery_unit_cost.toFixed(1)} c/kWh`;
+            } else {
+                batteryCostEl.innerText = `-- c/kWh`;
+            }
+        }
+
+        const batteryKwhEl = document.getElementById('stat-battery-kwh');
+        if (batteryKwhEl) {
+            if (status.battery_kwh !== undefined && status.battery_kwh !== null) {
+                batteryKwhEl.innerText = `${status.battery_kwh.toFixed(2)} kWh`;
+            } else {
+                batteryKwhEl.innerText = `0.0 kWh`;
+            }
+        }
+
+        const batterySocEl = document.getElementById('stat-battery-soc');
+        if (batterySocEl) {
+            if (status.battery_soc !== undefined && status.battery_soc !== null) {
+                batterySocEl.innerText = `${status.battery_soc.toFixed(0)} %`;
+            } else {
+                batterySocEl.innerText = `0 %`;
+            }
+        }
+
         // Update calculated battery capacity fields in constraint cards
         document.querySelectorAll('.inverter-constraint-card').forEach(card => {
             const nameEl = card.querySelector('.inv-name');
@@ -1024,6 +1051,8 @@ async function loadConfig(configData = null) {
             document.getElementById('battery-init-mode').value = bat["initial-mode"] || 'Auto';
             document.getElementById('battery-linked').checked = bat["linked-batteries"] === true;
             document.getElementById('battery-hysteresis').value = bat["min-charge-hysteresis"] !== undefined ? bat["min-charge-hysteresis"] : '';
+            const marginVal = bat["auto-cost-margin"] !== undefined ? bat["auto-cost-margin"] : (bat["auto_cost_margin"] !== undefined ? bat["auto_cost_margin"] : '');
+            document.getElementById('battery-auto-margin').value = (marginVal !== null && marginVal !== undefined) ? marginVal : '';
 
             // Load Instant controls defaults
             const gridTarget = bat["grid-target"] || 0.0;
@@ -2123,6 +2152,7 @@ async function saveConfiguration() {
     // Battery Control
     if (document.getElementById('battery-enable').checked) {
         const globalHystVal = parseInt(document.getElementById('battery-hysteresis').value);
+        const autoMarginVal = parseFloat(document.getElementById('battery-auto-margin').value);
         cfg["Solax-BatteryControl"] = {
             source: document.getElementById('battery-source').value || null,
             timezone: document.getElementById('battery-tz').value || "UTC",
@@ -2130,6 +2160,7 @@ async function saveConfiguration() {
             "initial-mode": document.getElementById('battery-init-mode').value || "Auto",
             "linked-batteries": document.getElementById('battery-linked').checked,
             "min-charge-hysteresis": isNaN(globalHystVal) ? null : globalHystVal,
+            "auto-cost-margin": isNaN(autoMarginVal) ? null : autoMarginVal,
             inverter: {},
             period: {}
         };

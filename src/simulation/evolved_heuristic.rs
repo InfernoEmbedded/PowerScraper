@@ -218,6 +218,7 @@ mod tests {
             evolved_heuristic: evolved,
             evolved_heuristic_monthly: None,
             min_charge_hysteresis: None,
+            auto_cost_margin: None,
         };
 
         let result = run(&records, &config);
@@ -279,6 +280,7 @@ mod tests {
             },
             evolved_heuristic_monthly: Some(monthly_map),
             min_charge_hysteresis: None,
+            auto_cost_margin: None,
         };
 
         // 1. High export price (tier 2) -> dump reserve normal

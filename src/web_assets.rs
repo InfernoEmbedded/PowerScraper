@@ -126,6 +126,18 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     <div class="card-title">Export Price</div>
                     <div class="stat-val" id="stat-export-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
                 </div>
+                <div class="glass-card">
+                    <div class="card-title">Stored Battery Cost</div>
+                    <div class="stat-val" id="stat-battery-cost" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Battery Available Energy</div>
+                    <div class="stat-val" id="stat-battery-kwh" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0.0 kWh</div>
+                </div>
+                <div class="glass-card">
+                    <div class="card-title">Total Battery %</div>
+                    <div class="stat-val" id="stat-battery-soc" style="color: var(--accent); text-shadow: 0 0 10px var(--accent-glow);">0 %</div>
+                </div>
                 <div class="glass-card" id="card-mqtt-status" style="display: none;">
                     <div class="card-title">MQTT Status</div>
                     <div class="stat-val" id="stat-mqtt-status" style="color: var(--danger); text-shadow: 0 0 10px rgba(239, 68, 68, 0.2);">Disconnected</div>
@@ -246,6 +258,8 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                             <input type="number" id="battery-hysteresis" min="0" max="50" placeholder="e.g. 3">
                         </div>
                         <div class="form-group">
+                            <label for="battery-auto-margin">Auto Discharge Margin (c/kWh)</label>
+                            <input type="number" step="0.1" id="battery-auto-margin" placeholder="e.g. 2.0 (empty to disable)">
                         </div>
                     </div>
                     <div class="checkbox-group">
@@ -1978,6 +1992,33 @@ async function fetchStatus() {
             }
         }
 
+        const batteryCostEl = document.getElementById('stat-battery-cost');
+        if (batteryCostEl) {
+            if (status.battery_unit_cost !== undefined && status.battery_unit_cost !== null) {
+                batteryCostEl.innerText = `${status.battery_unit_cost.toFixed(1)} c/kWh`;
+            } else {
+                batteryCostEl.innerText = `-- c/kWh`;
+            }
+        }
+
+        const batteryKwhEl = document.getElementById('stat-battery-kwh');
+        if (batteryKwhEl) {
+            if (status.battery_kwh !== undefined && status.battery_kwh !== null) {
+                batteryKwhEl.innerText = `${status.battery_kwh.toFixed(2)} kWh`;
+            } else {
+                batteryKwhEl.innerText = `0.0 kWh`;
+            }
+        }
+
+        const batterySocEl = document.getElementById('stat-battery-soc');
+        if (batterySocEl) {
+            if (status.battery_soc !== undefined && status.battery_soc !== null) {
+                batterySocEl.innerText = `${status.battery_soc.toFixed(0)} %`;
+            } else {
+                batterySocEl.innerText = `0 %`;
+            }
+        }
+
         // Update calculated battery capacity fields in constraint cards
         document.querySelectorAll('.inverter-constraint-card').forEach(card => {
             const nameEl = card.querySelector('.inv-name');
@@ -2683,6 +2724,8 @@ async function loadConfig(configData = null) {
             document.getElementById('battery-init-mode').value = bat["initial-mode"] || 'Auto';
             document.getElementById('battery-linked').checked = bat["linked-batteries"] === true;
             document.getElementById('battery-hysteresis').value = bat["min-charge-hysteresis"] !== undefined ? bat["min-charge-hysteresis"] : '';
+            const marginVal = bat["auto-cost-margin"] !== undefined ? bat["auto-cost-margin"] : (bat["auto_cost_margin"] !== undefined ? bat["auto_cost_margin"] : '');
+            document.getElementById('battery-auto-margin').value = (marginVal !== null && marginVal !== undefined) ? marginVal : '';
 
             // Load Instant controls defaults
             const gridTarget = bat["grid-target"] || 0.0;
@@ -3782,6 +3825,7 @@ async function saveConfiguration() {
     // Battery Control
     if (document.getElementById('battery-enable').checked) {
         const globalHystVal = parseInt(document.getElementById('battery-hysteresis').value);
+        const autoMarginVal = parseFloat(document.getElementById('battery-auto-margin').value);
         cfg["Solax-BatteryControl"] = {
             source: document.getElementById('battery-source').value || null,
             timezone: document.getElementById('battery-tz').value || "UTC",
@@ -3789,6 +3833,7 @@ async function saveConfiguration() {
             "initial-mode": document.getElementById('battery-init-mode').value || "Auto",
             "linked-batteries": document.getElementById('battery-linked').checked,
             "min-charge-hysteresis": isNaN(globalHystVal) ? null : globalHystVal,
+            "auto-cost-margin": isNaN(autoMarginVal) ? null : autoMarginVal,
             inverter: {},
             period: {}
         };
@@ -5263,9 +5308,6 @@ async function fetchAndRenderHistoryCharts() {
         renderHistoryCharts(records, startTs, endTs);
         const t3 = performance.now();
 
-        const serverTiming = resp.headers.get('Server-Timing');
-        console.log(`[Profile History Load] Total Client: ${(t3 - t0).toFixed(1)}ms | Network/Fetch: ${(t1 - t0).toFixed(1)}ms | JSON Parse: ${(t2 - t1).toFixed(1)}ms (${records.length} records) | Chart Render: ${(t3 - t2).toFixed(1)}ms | Server-Timing: ${serverTiming || 'none'}`);
-
         // Ensure minimum duration (250ms) so smooth pulse transition is visually perceptible
         const elapsed = t3 - t0;
         const minPulseMs = 250;
@@ -5282,7 +5324,8 @@ async function fetchAndRenderHistoryCharts() {
             }
         });
 
-        console.log(`[Profile Graph Loading] Network Fetch: ${(t1 - t0).toFixed(1)}ms, JSON Parse: ${(t2 - t1).toFixed(1)}ms, Chart Render: ${(t3 - t2).toFixed(1)}ms, Total Frontend: ${(t3 - t0).toFixed(1)}ms, Decimated Points: ${records.length}, Server-Timing: [${serverTiming || 'N/A'}]`);
+        const serverTiming = resp.headers.get('Server-Timing') || 'N/A';
+        console.log(`[Profile Graph Loading] Network Fetch: ${(t1 - t0).toFixed(1)}ms, JSON Parse: ${(t2 - t1).toFixed(1)}ms, Chart Render: ${(t3 - t2).toFixed(1)}ms, Total Frontend: ${(t3 - t0).toFixed(1)}ms, Decimated Points: ${records.length}, Server-Timing: [${serverTiming}]`);
     } catch (e) {
         console.error("Failed to fetch history telemetry:", e);
         chartIds.forEach(id => {

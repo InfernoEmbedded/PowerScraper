@@ -286,7 +286,11 @@ pub fn build_discovery_payload(
         {
             val_payload["unit_of_measurement"] = json!("kWh");
             val_payload["device_class"] = json!("energy");
-            val_payload["state_class"] = json!("total_increasing");
+            if m_lower.contains("stored") || m_lower.contains("available") {
+                val_payload["state_class"] = json!("measurement");
+            } else {
+                val_payload["state_class"] = json!("total_increasing");
+            }
         }
 
         ("sensor", config_topic, val_payload)
