@@ -56,13 +56,12 @@ Description=PowerScraper daemon
 After=network.target
 
 [Service]
-Type=notify
+Type=exec
 User=root
 WorkingDirectory=/var/lib/powerscraper
 ExecStart=/usr/bin/powerscraper
 Restart=always
 RestartSec=5
-WatchdogSec=180
 LimitRTPRIO=99
 
 [Install]
