@@ -631,15 +631,24 @@ impl PowerManager {
     }
 
     pub fn update_battery_energy_tracking(&mut self, dt_hours: f64, rates: &crate::tariff_manager::CurrentTariffRates) {
+        // Sync tracked battery_energy_kwh with actual physical battery SOC if uninitialized or zero
+        if self.battery_energy_kwh <= 1e-6 {
+            let (stored_kwh, _) = self.calculate_battery_kwh_and_soc();
+            if stored_kwh > 1e-6 {
+                self.battery_energy_kwh = stored_kwh;
+                self.battery_total_cost = stored_kwh * rates.export_rate;
+            }
+        }
+
         let total_battery_power: f64 = self.inverters.values().map(|inv| inv.battery_power).sum();
         if total_battery_power < 0.0 {
             let charge_w = -total_battery_power;
             let charge_kwh = (charge_w / 1000.0) * dt_hours;
-            let total_pv: f64 = self.inverters.values().map(|inv| inv.pv1_power + inv.pv2_power).sum();
-            let house_load = (total_pv + self.total_power + total_battery_power).max(0.0);
-            let excess_solar = (total_pv - house_load).max(0.0);
-            let solar_charge_w = charge_w.min(excess_solar);
-            let grid_charge_w = charge_w - solar_charge_w;
+
+            // Direct grid import attribution (self.total_power > 0 represents grid import)
+            let grid_import_w = self.total_power.max(0.0);
+            let grid_charge_w = charge_w.min(grid_import_w);
+            let solar_charge_w = (charge_w - grid_charge_w).max(0.0);
 
             let solar_kwh = (solar_charge_w / 1000.0) * dt_hours;
             let grid_kwh = (grid_charge_w / 1000.0) * dt_hours;
