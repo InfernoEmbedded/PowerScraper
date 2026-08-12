@@ -67,6 +67,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let db_path = "config.db".to_string();
 
+    // Initialize dedicated background SQLite writer thread
+    if let Err(e) = PowerScraper::database::init_db_writer(db_path.clone()) {
+        eprintln!("Failed to initialize background DB writer: {}", e);
+    } else {
+        println!("Background DB writer initialized successfully.");
+    }
+
     // Check for CSV import CLI subcommand
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && (args[1] == "import-csv" || args[1] == "import") {

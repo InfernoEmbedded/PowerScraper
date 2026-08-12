@@ -2,10 +2,121 @@ use crate::config::Config;
 use crate::power_manager::HistoryRecord;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use std::sync::{Mutex, LazyLock};
+use std::sync::{Mutex, LazyLock, mpsc as std_mpsc};
+use tokio::sync::oneshot;
 
+pub type DbWriteTask = Box<dyn FnOnce(&mut rusqlite::Connection) -> Result<(), String> + Send>;
+
+pub struct DbWriteMessage {
+    pub task: DbWriteTask,
+    pub responder: Option<oneshot::Sender<Result<(), String>>>,
+}
+
+#[derive(Clone)]
+struct DbWriter {
+    db_path: String,
+    tx: std_mpsc::Sender<DbWriteMessage>,
+}
+
+static DB_WRITER: LazyLock<Mutex<Option<DbWriter>>> = LazyLock::new(|| Mutex::new(None));
 static PENDING_HISTORY: LazyLock<Mutex<Vec<HistoryRecord>>> = LazyLock::new(|| Mutex::new(Vec::new()));
 static LAST_PRUNE: LazyLock<Mutex<Option<std::time::Instant>>> = LazyLock::new(|| Mutex::new(None));
+
+/// Initializes the dedicated background SQLite writer thread for the given database path.
+/// All write operations dispatched via database writer functions execute sequentially
+/// on a single persistent database connection, completely eliminating write lock contention.
+pub fn init_db_writer(db_path: String) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (tx, rx) = std_mpsc::channel::<DbWriteMessage>();
+    let db_path_clone = db_path.clone();
+
+    std::thread::Builder::new()
+        .name("db-writer".to_string())
+        .spawn(move || {
+            let mut conn = match open_db_conn(&db_path_clone) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Background DB writer failed to open connection to {}: {}", db_path_clone, e);
+                    return;
+                }
+            };
+
+            println!("Background DB writer thread running for '{}'", db_path_clone);
+
+            while let Ok(msg) = rx.recv() {
+                let res = (msg.task)(&mut conn);
+                if let Some(responder) = msg.responder {
+                    let _ = responder.send(res);
+                }
+            }
+            println!("Background DB writer thread exiting for '{}'.", db_path_clone);
+        })?;
+
+    if let Ok(mut lock) = DB_WRITER.lock() {
+        *lock = Some(DbWriter { db_path, tx });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn shutdown_db_writer() {
+    if let Ok(mut lock) = DB_WRITER.lock() {
+        *lock = None;
+    }
+}
+
+fn execute_write_op<F>(db_path: &str, task: F) -> Result<(), String>
+where
+    F: FnOnce(&mut rusqlite::Connection) -> Result<(), String> + Send + 'static,
+{
+    let writer_opt = DB_WRITER.lock().ok().and_then(|guard| guard.clone());
+    if let Some(ref writer) = writer_opt {
+        if writer.db_path == db_path {
+            let (resp_tx, resp_rx) = oneshot::channel();
+            let msg = DbWriteMessage {
+                task: Box::new(task),
+                responder: Some(resp_tx),
+            };
+            if writer.tx.send(msg).is_ok() {
+                let recv_res = if tokio::runtime::Handle::try_current().is_ok() {
+                    tokio::task::block_in_place(|| resp_rx.blocking_recv())
+                } else {
+                    resp_rx.blocking_recv()
+                };
+                match recv_res {
+                    Ok(res) => return res,
+                    Err(e) => return Err(format!("DB writer channel dropped: {}", e)),
+                }
+            }
+            return Err("DB writer channel send failed".to_string());
+        }
+    }
+
+    // Direct fallback if background writer thread is not initialized or db_path differs
+    let mut conn = open_db_conn(db_path).map_err(|e| e.to_string())?;
+    task(&mut conn)
+}
+
+fn execute_write_op_async_fire_forget<F>(db_path: &str, task: F)
+where
+    F: FnOnce(&mut rusqlite::Connection) -> Result<(), String> + Send + 'static,
+{
+    let writer_opt = DB_WRITER.lock().ok().and_then(|guard| guard.clone());
+    if let Some(ref writer) = writer_opt {
+        if writer.db_path == db_path {
+            let msg = DbWriteMessage {
+                task: Box::new(task),
+                responder: None,
+            };
+            let _ = writer.tx.send(msg);
+            return;
+        }
+    }
+
+    // Direct fallback if background writer thread is not initialized or db_path differs
+    if let Ok(mut conn) = open_db_conn(db_path) {
+        let _ = task(&mut conn);
+    }
+}
 
 pub fn push_pending_history_record(rec: HistoryRecord) {
     if let Ok(mut lock) = PENDING_HISTORY.lock() {
@@ -191,36 +302,64 @@ pub fn load_config_from_db(db_path: &str) -> Result<Config, Box<dyn std::error::
     Ok(config)
 }
 
-/// Saves application configuration into hierarchical key-value database (config_kv).
-pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
-    let mut conn = open_db_conn(db_path)?;
+pub fn save_config_with_conn(conn: &mut Connection, config: &Config) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS config_kv (
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         )",
         [],
-    )?;
+    ).map_err(|e| e.to_string())?;
 
-    let val = serde_json::to_value(config)?;
+    let val = serde_json::to_value(config).map_err(|e| e.to_string())?;
     let mut map = std::collections::HashMap::new();
     flatten_json_value("", &val, &mut map);
 
-    let tx = conn.transaction()?;
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
-        tx.execute("DELETE FROM config_kv", [])?;
-        let mut stmt = tx.prepare("INSERT INTO config_kv (key, value) VALUES (?1, ?2)")?;
+        tx.execute("DELETE FROM config_kv", []).map_err(|e| e.to_string())?;
+        let mut stmt = tx.prepare("INSERT INTO config_kv (key, value) VALUES (?1, ?2)").map_err(|e| e.to_string())?;
         for (k, v) in &map {
-            stmt.execute(params![k, v])?;
+            stmt.execute(params![k, v]).map_err(|e| e.to_string())?;
         }
     }
-    tx.commit()?;
+    tx.commit().map_err(|e| e.to_string())?;
 
     // Compact WAL file to prevent unbounded growth on embedded storage
-    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);") {
         eprintln!("WAL checkpoint after config save failed: {}", e);
     }
     Ok(())
+}
+
+/// Saves application configuration into hierarchical key-value database (config_kv).
+pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
+    let config = config.clone();
+    execute_write_op(db_path, move |conn| {
+        save_config_with_conn(conn, &config)
+    }).map_err(|e| e.into())
+}
+
+/// Async variant to save application configuration without blocking Tokio runtime worker threads.
+pub async fn save_config_to_db_async(db_path: &str, config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let writer_opt = DB_WRITER.lock().ok().and_then(|guard| guard.clone());
+    if let Some(ref writer) = writer_opt {
+        if writer.db_path == db_path {
+            let (resp_tx, resp_rx) = oneshot::channel();
+            let config_clone = config.clone();
+            let msg = DbWriteMessage {
+                task: Box::new(move |conn| save_config_with_conn(conn, &config_clone)),
+                responder: Some(resp_tx),
+            };
+            if writer.tx.send(msg).is_ok() {
+                let res = resp_rx.await.map_err(|e| format!("DB writer channel dropped: {}", e))?;
+                return res.map_err(|e| e.into());
+            }
+        }
+    }
+
+    let mut conn = open_db_conn(db_path)?;
+    save_config_with_conn(&mut conn, &config).map_err(|e| e.into())
 }
 
 
@@ -352,9 +491,7 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-/// Saves stored battery energy and total cost tracking state to database.
-pub fn save_battery_energy_state(db_path: &str, energy_kwh: f64, total_cost_cents: f64) -> Result<(), rusqlite::Error> {
-    let conn = open_db_conn(db_path)?;
+pub fn save_battery_energy_state_with_conn(conn: &mut Connection, energy_kwh: f64, total_cost_cents: f64) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -363,8 +500,15 @@ pub fn save_battery_energy_state(db_path: &str, energy_kwh: f64, total_cost_cent
         "INSERT INTO battery_energy_state (id, energy_kwh, total_cost_cents, updated_at) VALUES (1, ?1, ?2, ?3)
          ON CONFLICT(id) DO UPDATE SET energy_kwh = ?1, total_cost_cents = ?2, updated_at = ?3",
         params![energy_kwh, total_cost_cents, now],
-    )?;
+    ).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Saves stored battery energy and total cost tracking state to database.
+pub fn save_battery_energy_state(db_path: &str, energy_kwh: f64, total_cost_cents: f64) -> Result<(), rusqlite::Error> {
+    execute_write_op(db_path, move |conn| {
+        save_battery_energy_state_with_conn(conn, energy_kwh, total_cost_cents)
+    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 /// Loads the latest persisted stored battery energy and total cost tracking state from database.
@@ -378,9 +522,7 @@ pub fn load_battery_energy_state(db_path: &str) -> Option<(f64, f64)> {
     .ok()
 }
 
-/// Saves an inferred battery capacity reading for a specific inverter.
-pub fn save_inferred_battery_capacity(db_path: &str, inverter_name: &str, capacity_kwh: f64) -> Result<(), rusqlite::Error> {
-    let conn = open_db_conn(db_path)?;
+pub fn save_inferred_battery_capacity_with_conn(conn: &mut Connection, inverter_name: &str, capacity_kwh: f64) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -388,8 +530,16 @@ pub fn save_inferred_battery_capacity(db_path: &str, inverter_name: &str, capaci
     conn.execute(
         "INSERT INTO inferred_battery_capacity (timestamp, inverter_name, capacity_kwh) VALUES (?1, ?2, ?3)",
         params![now, inverter_name, capacity_kwh],
-    )?;
+    ).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Saves an inferred battery capacity reading for a specific inverter.
+pub fn save_inferred_battery_capacity(db_path: &str, inverter_name: &str, capacity_kwh: f64) -> Result<(), rusqlite::Error> {
+    let inverter_name = inverter_name.to_string();
+    execute_write_op(db_path, move |conn| {
+        save_inferred_battery_capacity_with_conn(conn, &inverter_name, capacity_kwh)
+    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 /// Retrieves the latest cached inferred battery capacity for an inverter.
@@ -420,27 +570,17 @@ pub fn get_inferred_battery_capacity_history(db_path: &str, inverter_name: &str)
     Ok(result)
 }
 
-/// Flushes a batch of in-memory telemetry records to the history table and prunes old records.
-pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, retention_days: Option<u32>) {
-    if buffer.is_empty() {
-        return;
+pub fn flush_history_with_conn(
+    conn: &mut Connection,
+    records: &[HistoryRecord],
+    retention_days: Option<u32>,
+) -> Result<(), String> {
+    if records.is_empty() {
+        return Ok(());
     }
-    let mut conn = match open_db_conn(db_path) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("Failed to open DB for telemetry flush: {}", e);
-            return;
-        }
-    };
-    let tx = match conn.transaction() {
-        Ok(t) => t,
-        Err(e) => {
-            eprintln!("Failed to start transaction for telemetry flush: {}", e);
-            return;
-        }
-    };
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
-        for rec in buffer.iter() {
+        for rec in records.iter() {
             let topic_id = match get_or_create_topic_id(&tx, &rec.topic) {
                 Ok(id) => id,
                 Err(e) => {
@@ -454,7 +594,7 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("Failed to prepare telemetry flush statement: {}", e);
-                    return;
+                    return Err(e.to_string());
                 }
             };
             if let Err(e) = stmt.execute(params![rec.timestamp, topic_id, rec.value]) {
@@ -462,11 +602,7 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
             }
         }
     }
-    if let Err(e) = tx.commit() {
-        eprintln!("Failed to commit telemetry flush transaction: {}", e);
-        return;
-    }
-    buffer.clear();
+    tx.commit().map_err(|e| e.to_string())?;
 
     if let Some(days) = retention_days {
         let mut should_prune = false;
@@ -487,6 +623,23 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
     // Non-blocking WAL checkpoint to prevent unbounded growth on embedded storage
     if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);") {
         eprintln!("WAL checkpoint after telemetry flush failed: {}", e);
+    }
+    Ok(())
+}
+
+/// Flushes a batch of in-memory telemetry records to the history table and prunes old records.
+pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, retention_days: Option<u32>) {
+    if buffer.is_empty() {
+        return;
+    }
+    let records = buffer.clone();
+
+    let res = execute_write_op(db_path, move |conn| {
+        flush_history_with_conn(conn, &records, retention_days)
+    });
+
+    if res.is_ok() {
+        buffer.clear();
     }
 }
 
@@ -937,24 +1090,30 @@ pub fn get_monthly_peak_draw(db_path: &str, topic: &str, since_timestamp: i64) -
     }
 }
 
-/// Overwrites the solar forecast table with a new forecast dataset in a transaction.
-pub fn delete_and_save_solar_forecast(db_path: &str, predictions: &[(i64, f64)]) -> Result<(), rusqlite::Error> {
-    let mut conn = open_db_conn(db_path)?;
-    let tx = conn.transaction()?;
-    tx.execute("DELETE FROM solar_forecast", [])?;
+pub fn delete_and_save_solar_forecast_with_conn(conn: &mut Connection, predictions: &[(i64, f64)]) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM solar_forecast", []).map_err(|e| e.to_string())?;
     {
-        let mut stmt = tx.prepare("INSERT OR REPLACE INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)")?;
+        let mut stmt = tx.prepare("INSERT OR REPLACE INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)").map_err(|e| e.to_string())?;
         for (ts, predicted_w) in predictions {
-            stmt.execute(params![ts, *predicted_w])?;
+            stmt.execute(params![ts, *predicted_w]).map_err(|e| e.to_string())?;
         }
     }
-    tx.commit()?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Overwrites the solar forecast table with a new forecast dataset in a transaction.
+pub fn delete_and_save_solar_forecast(db_path: &str, predictions: &[(i64, f64)]) -> Result<(), rusqlite::Error> {
+    let predictions = predictions.to_vec();
+    execute_write_op(db_path, move |conn| {
+        delete_and_save_solar_forecast_with_conn(conn, &predictions)
+    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 /// Loads solar forecast predictions within a time range.
 pub fn load_solar_forecast_range(db_path: &str, start_ts: i64, end_ts: i64) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
-    let conn = open_db_conn(db_path)?;
+    let conn = open_db_conn_read_only(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT timestamp, predicted_solar_w FROM solar_forecast WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC"
     )?;
@@ -977,7 +1136,7 @@ pub fn get_telemetry_history_multiple_topics(
     topic2: &str,
     since_timestamp: i64,
 ) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
-    let conn = open_db_conn(db_path)?;
+    let conn = open_db_conn_read_only(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT h.timestamp, t.topic, h.value 
          FROM telemetry_history h
@@ -997,24 +1156,33 @@ pub fn get_telemetry_history_multiple_topics(
     Ok(records)
 }
 
+pub fn insert_telemetry_history_batch_with_conn(
+    conn: &mut Connection,
+    records: &[(i64, String, f64)],
+) -> Result<(), String> {
+    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        for (ts, topic, val) in records {
+            let topic_id = get_or_create_topic_id(&tx, topic).map_err(|e| e.to_string())?;
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
+            ).map_err(|e| e.to_string())?;
+            stmt.execute(params![*ts, topic_id, *val]).map_err(|e| e.to_string())?;
+        }
+    }
+    tx.commit().map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 /// Inserts a batch of telemetry history records in a transaction.
 pub fn insert_telemetry_history_batch(
     db_path: &str,
     records: &[(i64, String, f64)],
 ) -> Result<(), rusqlite::Error> {
-    let mut conn = open_db_conn(db_path)?;
-    let tx = conn.transaction()?;
-    {
-        for (ts, topic, val) in records {
-            let topic_id = get_or_create_topic_id(&tx, topic)?;
-            let mut stmt = tx.prepare_cached(
-                "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
-            )?;
-            stmt.execute(params![*ts, topic_id, *val])?;
-        }
-    }
-    tx.commit()?;
-    Ok(())
+    let records = records.to_vec();
+    execute_write_op(db_path, move |conn| {
+        insert_telemetry_history_batch_with_conn(conn, &records)
+    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 #[cfg(test)]
@@ -1190,6 +1358,28 @@ mod tests {
         let updated = load_battery_energy_state(db_path);
         assert_eq!(updated, Some((10.0, 210.0)));
 
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_background_db_writer() {
+        let db_path = "./test_bg_db_writer.db";
+        let _ = std::fs::remove_file(db_path);
+
+        init_history_db(db_path).unwrap();
+        init_db_writer(db_path.to_string()).unwrap();
+
+        // Write battery state via background writer thread
+        save_battery_energy_state(db_path, 12.5, 250.0).unwrap();
+        let state = load_battery_energy_state(db_path);
+        assert_eq!(state, Some((12.5, 250.0)));
+
+        // Save inferred capacity via background writer thread
+        save_inferred_battery_capacity(db_path, "inverter-test", 9.85).unwrap();
+        let latest = get_latest_inferred_battery_capacity(db_path, "inverter-test");
+        assert_eq!(latest, Some(9.85));
+
+        shutdown_db_writer();
         let _ = std::fs::remove_file(db_path);
     }
 }
