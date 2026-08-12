@@ -1388,5 +1388,87 @@ mod tests {
         shutdown_db_writer();
         let _ = std::fs::remove_file(db_path);
     }
+
+    #[test]
+    fn test_sync_on_kill_flushes_pending_history_to_db() {
+        let db_path = "./test_sync_on_kill.db";
+        let _ = std::fs::remove_file(db_path);
+
+        init_history_db(db_path).unwrap();
+        init_db_writer(db_path.to_string()).unwrap();
+
+        // Push pending telemetry records into in-memory queue
+        let now = chrono::Utc::now().timestamp();
+        let records = vec![
+            HistoryRecord {
+                timestamp: now,
+                topic: "solax1/Battery SoC".to_string(),
+                value: 88.5,
+            },
+            HistoryRecord {
+                timestamp: now + 1,
+                topic: "solax1/Grid Power".to_string(),
+                value: -1250.0,
+            },
+        ];
+        push_pending_history_records(records);
+
+        // Confirm pending buffer contains 2 items
+        assert_eq!(PENDING_HISTORY.lock().unwrap().len(), 2);
+
+        // Simulate kill / shutdown atexit flush
+        let flushed = flush_pending_history_to_db(db_path, None);
+        assert_eq!(flushed, 2);
+
+        // Confirm pending buffer is now empty
+        assert_eq!(PENDING_HISTORY.lock().unwrap().len(), 0);
+
+        // Query DB to verify records were flushed through the background DB writer
+        let conn = open_db_conn_read_only(db_path).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM telemetry_history h JOIN telemetry_topics t ON h.topic_id = t.id WHERE t.device = 'solax1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+
+        shutdown_db_writer();
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn test_flush_on_exit_c_abi_safety() {
+        let db_path = "./test_flush_on_exit.db";
+        let _ = std::fs::remove_file(db_path);
+
+        init_history_db(db_path).unwrap();
+        init_db_writer(db_path.to_string()).unwrap();
+
+        push_pending_history_records(vec![HistoryRecord {
+            timestamp: chrono::Utc::now().timestamp(),
+            topic: "sdm630/Voltage".to_string(),
+            value: 239.4,
+        }]);
+
+        // Simulates the exact call made by the atexit C-ABI handler on process exit/SIGTERM
+        let _ = std::panic::catch_unwind(|| {
+            flush_pending_history_to_db(db_path, None);
+        });
+
+        let conn = open_db_conn_read_only(db_path).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM telemetry_history h JOIN telemetry_topics t ON h.topic_id = t.id WHERE t.device = 'sdm630'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        shutdown_db_writer();
+        let _ = std::fs::remove_file(db_path);
+    }
 }
 
