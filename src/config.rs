@@ -62,6 +62,8 @@ pub struct SolaxG3ModbusConfig {
 pub struct SerialMeterConfig {
     #[serde(alias = "poll_period")]
     pub poll_period: f64,
+    #[serde(default, alias = "extended_poll_period")]
+    pub extended_poll_period: Option<f64>,
     pub timeout: f64,
     pub baud: u32,
     pub parity: String, // 'N', 'E', 'O'

@@ -52,9 +52,10 @@ pub async fn run_sdm630_driver(
 ) {
     let device_name = port_path.replace("/dev/tty", "");
     let poll_interval = Duration::from_secs_f64(config.poll_period);
+    let extended_poll_interval =
+        Duration::from_secs_f64(config.extended_poll_period.unwrap_or(60.0));
+    let mut last_extended_poll: Option<tokio::time::Instant> = None;
     let mut ctx_opt: Option<Context> = None;
-
-
 
     loop {
         if cancel_token.is_cancelled() {
@@ -79,18 +80,31 @@ pub async fn run_sdm630_driver(
 
         let ctx = ctx_opt.as_mut().unwrap();
         let timeout_dur = Duration::from_secs_f64(config.timeout);
+        let should_poll_extended = match last_extended_poll {
+            None => true,
+            Some(last) => last.elapsed() >= extended_poll_interval,
+        };
+
         let read_res = tokio::time::timeout(timeout_dur, async {
             let reg1 = ctx.read_input_registers(0x0000, 60).await?;
             let reg2 = ctx.read_input_registers(0x003C, 48).await?;
-            let reg3 = ctx.read_input_registers(0x00C8, 8).await?;
-            let reg4 = ctx.read_input_registers(0x00E0, 46).await?;
-            let reg5 = ctx.read_input_registers(0x014E, 48).await?;
-            Ok::<_, std::io::Error>((reg1, reg2, reg3, reg4, reg5))
+            let (reg3_opt, reg4_opt, reg5_opt) = if should_poll_extended {
+                let r3 = ctx.read_input_registers(0x00C8, 8).await?;
+                let r4 = ctx.read_input_registers(0x00E0, 46).await?;
+                let r5 = ctx.read_input_registers(0x014E, 48).await?;
+                (Some(r3), Some(r4), Some(r5))
+            } else {
+                (None, None, None)
+            };
+            Ok::<_, std::io::Error>((reg1, reg2, reg3_opt, reg4_opt, reg5_opt))
         })
         .await;
 
         match read_res {
-            Ok(Ok((reg1, reg2, reg3, reg4, reg5))) => {
+            Ok(Ok((reg1, reg2, reg3_opt, reg4_opt, reg5_opt))) => {
+                if should_poll_extended {
+                    last_extended_poll = Some(tokio::time::Instant::now());
+                }
                 let mut vals = HashMap::new();
                 vals.insert("name".to_string(), device_name.clone());
 
@@ -270,188 +284,194 @@ pub async fn run_sdm630_driver(
                     );
                 }
 
-                if reg3.len() >= 8 {
-                    let base = 0x00C8;
-                    vals.insert(
-                        "Line 1 to Line 2 volts".to_string(),
-                        format!("{:.3}", float32(&reg3, base, 0x00C8)),
-                    );
-                    vals.insert(
-                        "Line 2 to Line 3 volts".to_string(),
-                        format!("{:.3}", float32(&reg3, base, 0x00CA)),
-                    );
-                    vals.insert(
-                        "Line 3 to Line 1 volts".to_string(),
-                        format!("{:.3}", float32(&reg3, base, 0x00CC)),
-                    );
-                    vals.insert(
-                        "Average line to line volts".to_string(),
-                        format!("{:.3}", float32(&reg3, base, 0x00CE)),
-                    );
+                if let Some(reg3) = reg3_opt {
+                    if reg3.len() >= 8 {
+                        let base = 0x00C8;
+                        vals.insert(
+                            "Line 1 to Line 2 volts".to_string(),
+                            format!("{:.3}", float32(&reg3, base, 0x00C8)),
+                        );
+                        vals.insert(
+                            "Line 2 to Line 3 volts".to_string(),
+                            format!("{:.3}", float32(&reg3, base, 0x00CA)),
+                        );
+                        vals.insert(
+                            "Line 3 to Line 1 volts".to_string(),
+                            format!("{:.3}", float32(&reg3, base, 0x00CC)),
+                        );
+                        vals.insert(
+                            "Average line to line volts".to_string(),
+                            format!("{:.3}", float32(&reg3, base, 0x00CE)),
+                        );
+                    }
                 }
 
-                if reg4.len() >= 46 {
-                    let base = 0x00E0;
-                    vals.insert(
-                        "Neutral current".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00E0)),
-                    );
-                    vals.insert(
-                        "Phase 1 L-N volts THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00EA)),
-                    );
-                    vals.insert(
-                        "Phase 2 L-N volts THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00EC)),
-                    );
-                    vals.insert(
-                        "Phase 3 L-N volts THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00EE)),
-                    );
-                    vals.insert(
-                        "Phase 1 current THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00F0)),
-                    );
-                    vals.insert(
-                        "Phase 2 current THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00F2)),
-                    );
-                    vals.insert(
-                        "Phase 3 current THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00F4)),
-                    );
-                    vals.insert(
-                        "Average line to neutral volts THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00F8)),
-                    );
-                    vals.insert(
-                        "Average line current THD".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x00FA)),
-                    );
-                    vals.insert(
-                        "Phase 1 current demand".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x0102)),
-                    );
-                    vals.insert(
-                        "Phase 2 current demand".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x0104)),
-                    );
-                    vals.insert(
-                        "Phase 3 current demand".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x0106)),
-                    );
-                    vals.insert(
-                        "Maximum phase 1 current demand".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x0108)),
-                    );
-                    vals.insert(
-                        "Maximum phase 2 current demand".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x010A)),
-                    );
-                    vals.insert(
-                        "Maximum phase 3 current demand".to_string(),
-                        format!("{:.3}", float32(&reg4, base, 0x010C)),
-                    );
+                if let Some(reg4) = reg4_opt {
+                    if reg4.len() >= 46 {
+                        let base = 0x00E0;
+                        vals.insert(
+                            "Neutral current".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00E0)),
+                        );
+                        vals.insert(
+                            "Phase 1 L-N volts THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00EA)),
+                        );
+                        vals.insert(
+                            "Phase 2 L-N volts THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00EC)),
+                        );
+                        vals.insert(
+                            "Phase 3 L-N volts THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00EE)),
+                        );
+                        vals.insert(
+                            "Phase 1 current THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00F0)),
+                        );
+                        vals.insert(
+                            "Phase 2 current THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00F2)),
+                        );
+                        vals.insert(
+                            "Phase 3 current THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00F4)),
+                        );
+                        vals.insert(
+                            "Average line to neutral volts THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00F8)),
+                        );
+                        vals.insert(
+                            "Average line current THD".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x00FA)),
+                        );
+                        vals.insert(
+                            "Phase 1 current demand".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x0102)),
+                        );
+                        vals.insert(
+                            "Phase 2 current demand".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x0104)),
+                        );
+                        vals.insert(
+                            "Phase 3 current demand".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x0106)),
+                        );
+                        vals.insert(
+                            "Maximum phase 1 current demand".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x0108)),
+                        );
+                        vals.insert(
+                            "Maximum phase 2 current demand".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x010A)),
+                        );
+                        vals.insert(
+                            "Maximum phase 3 current demand".to_string(),
+                            format!("{:.3}", float32(&reg4, base, 0x010C)),
+                        );
+                    }
                 }
 
-                if reg5.len() >= 48 {
-                    let base = 0x014E;
-                    vals.insert(
-                        "Line 1 to line 2 volts THD".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x014E)),
-                    );
-                    vals.insert(
-                        "Line 2 to line 3 volts THD".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0150)),
-                    );
-                    vals.insert(
-                        "Line 3 to line 1 volts THD".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0152)),
-                    );
-                    vals.insert(
-                        "Average line to line volts THD".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0154)),
-                    );
-                    vals.insert(
-                        "Total kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0156)),
-                    );
-                    vals.insert(
-                        "Total kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0158)),
-                    );
-                    vals.insert(
-                        "Phase 1 import kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x015a)),
-                    );
-                    vals.insert(
-                        "Phase 2 import kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x015c)),
-                    );
-                    vals.insert(
-                        "Phase 3 import kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x015e)),
-                    );
-                    vals.insert(
-                        "Phase 1 export kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0160)),
-                    );
-                    vals.insert(
-                        "Phase 2 export kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0162)),
-                    );
-                    vals.insert(
-                        "Phase 3 export kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0164)),
-                    );
-                    vals.insert(
-                        "Phase 1 total kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0166)),
-                    );
-                    vals.insert(
-                        "Phase 2 total kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0168)),
-                    );
-                    vals.insert(
-                        "Phase 3 total kWh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x016A)),
-                    );
-                    vals.insert(
-                        "Phase 1 import kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x016c)),
-                    );
-                    vals.insert(
-                        "Phase 2 import kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x016e)),
-                    );
-                    vals.insert(
-                        "Phase 3 import kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0170)),
-                    );
-                    vals.insert(
-                        "Phase 1 export kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0172)),
-                    );
-                    vals.insert(
-                        "Phase 2 export kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0174)),
-                    );
-                    vals.insert(
-                        "Phase 3 export kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0176)),
-                    );
-                    vals.insert(
-                        "Phase 1 total kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x0178)),
-                    );
-                    vals.insert(
-                        "Phase 2 total kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x017a)),
-                    );
-                    vals.insert(
-                        "Phase 3 total kvarh".to_string(),
-                        format!("{:.3}", float32(&reg5, base, 0x017c)),
-                    );
+                if let Some(reg5) = reg5_opt {
+                    if reg5.len() >= 48 {
+                        let base = 0x014E;
+                        vals.insert(
+                            "Line 1 to line 2 volts THD".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x014E)),
+                        );
+                        vals.insert(
+                            "Line 2 to line 3 volts THD".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0150)),
+                        );
+                        vals.insert(
+                            "Line 3 to line 1 volts THD".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0152)),
+                        );
+                        vals.insert(
+                            "Average line to line volts THD".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0154)),
+                        );
+                        vals.insert(
+                            "Total kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0156)),
+                        );
+                        vals.insert(
+                            "Total kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0158)),
+                        );
+                        vals.insert(
+                            "Phase 1 import kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x015a)),
+                        );
+                        vals.insert(
+                            "Phase 2 import kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x015c)),
+                        );
+                        vals.insert(
+                            "Phase 3 import kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x015e)),
+                        );
+                        vals.insert(
+                            "Phase 1 export kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0160)),
+                        );
+                        vals.insert(
+                            "Phase 2 export kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0162)),
+                        );
+                        vals.insert(
+                            "Phase 3 export kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0164)),
+                        );
+                        vals.insert(
+                            "Phase 1 total kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0166)),
+                        );
+                        vals.insert(
+                            "Phase 2 total kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0168)),
+                        );
+                        vals.insert(
+                            "Phase 3 total kWh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x016A)),
+                        );
+                        vals.insert(
+                            "Phase 1 import kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x016c)),
+                        );
+                        vals.insert(
+                            "Phase 2 import kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x016e)),
+                        );
+                        vals.insert(
+                            "Phase 3 import kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0170)),
+                        );
+                        vals.insert(
+                            "Phase 1 export kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0172)),
+                        );
+                        vals.insert(
+                            "Phase 2 export kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0174)),
+                        );
+                        vals.insert(
+                            "Phase 3 export kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0176)),
+                        );
+                        vals.insert(
+                            "Phase 1 total kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x0178)),
+                        );
+                        vals.insert(
+                            "Phase 2 total kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x017a)),
+                        );
+                        vals.insert(
+                            "Phase 3 total kvarh".to_string(),
+                            format!("{:.3}", float32(&reg5, base, 0x017c)),
+                        );
+                    }
                 }
 
                 let mut numeric_metrics = HashMap::new();

@@ -2427,6 +2427,7 @@ function renderDriverCard(type, data = {}) {
     } else if (type === 'SDM630Modbusv2') {
         const port = data.port || '';
         const poll = data.poll_period !== undefined ? data.poll_period : 1;
+        const extPoll = data.extended_poll_period !== undefined ? data.extended_poll_period : (data["extended-poll-period"] !== undefined ? data["extended-poll-period"] : 60);
         const timeout = data.timeout !== undefined ? data.timeout : 1;
         const baud = data.baud !== undefined ? data.baud : 38400;
         const parity = data.parity || 'E';
@@ -2442,8 +2443,12 @@ function renderDriverCard(type, data = {}) {
                     <input type="text" class="driver-sdm-port" value="${port}" placeholder="e.g. /dev/ttyUSB0">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between SDM630 register queries.">?</span></label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between critical SDM630 register queries (grid active power, volts, currents).">?</span></label>
                     <input type="number" class="driver-sdm-poll" value="${poll}">
+                </div>
+                <div class="form-group">
+                    <label>Extended Poll Period (s)<span class="tooltip-icon" data-tooltip="Interval in seconds for polling non-critical extended registers (THD harmonics, Line-to-Line volts, per-phase energy).">?</span></label>
+                    <input type="number" class="driver-sdm-ext-poll" value="${extPoll}">
                 </div>
                 <div class="form-group">
                     <label>Timeout (s)<span class="tooltip-icon" data-tooltip="RS485 serial read timeout in seconds per request.">?</span></label>
@@ -2816,6 +2821,7 @@ async function loadConfig(configData = null) {
                 renderDriverCard('SDM630Modbusv2', {
                     port: port,
                     poll_period: sdm["poll-period"] || sdm.poll_period || 1,
+                    extended_poll_period: sdm["extended-poll-period"] || sdm.extended_poll_period || 60,
                     timeout: sdm.timeout || 1,
                     baud: sdm.baud || 38400,
                     parity: sdm.parity || 'E',
@@ -3857,6 +3863,8 @@ async function saveConfiguration() {
         } else if (type === 'SDM630Modbusv2') {
             const port = card.querySelector('.driver-sdm-port').value.trim();
             const poll = parseInt(card.querySelector('.driver-sdm-poll').value) || 1;
+            const extPollInput = card.querySelector('.driver-sdm-ext-poll');
+            const extPoll = extPollInput ? parseFloat(extPollInput.value) || 60 : 60;
             const timeout = parseFloat(card.querySelector('.driver-sdm-timeout').value) || 1;
             const baud = parseInt(card.querySelector('.driver-sdm-baud').value) || 38400;
             const parity = card.querySelector('.driver-sdm-parity').value;
@@ -3867,6 +3875,7 @@ async function saveConfiguration() {
                 if (!sdmConfig) {
                     sdmConfig = {
                         "poll-period": poll,
+                        "extended-poll-period": extPoll,
                         timeout: timeout,
                         baud: baud,
                         parity: parity,
