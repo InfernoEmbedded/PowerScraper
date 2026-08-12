@@ -2193,9 +2193,6 @@ pub async fn run_power_manager_queue_task(
         tokio::select! {
             _ = cancel_token.cancelled() => {
                 println!("Power Manager queue processor shutting down...");
-                if history_enabled {
-                    crate::database::flush_pending_history_to_db(&db_path, retention_days);
-                }
                 break;
             }
             _ = history_ticker.tick() => {
@@ -3405,7 +3402,7 @@ pub async fn run_weather_fetcher_task(db_path: String, cancel_token: tokio_util:
                                 }
                             }
                             
-                            if !predictions.is_empty() {
+                            if !cancel_token.is_cancelled() && !predictions.is_empty() {
                                 if let Err(e) = crate::database::delete_and_save_solar_forecast(&db_path, &predictions) {
                                     eprintln!("Failed to save solar forecast: {}", e);
                                 } else {
