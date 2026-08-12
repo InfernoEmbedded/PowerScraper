@@ -359,8 +359,9 @@ async fn test_integration_loop() {
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(10);
     let db_path_clone = db_path.clone();
+    let web_cancel_token = tokio_util::sync::CancellationToken::new();
     tokio::spawn(async move {
-        PowerScraper::web_server::run_web_server_with_listener(reload_tx, db_path_clone, web_listener).await;
+        PowerScraper::web_server::run_web_server_with_listener(reload_tx, db_path_clone, web_listener, web_cancel_token).await;
     });
     sleep(Duration::from_millis(500)).await; // Allow server to start
 
@@ -910,4 +911,55 @@ async fn test_integration_loop() {
         reload_count.load(std::sync::atomic::Ordering::SeqCst) >= 1,
         "Integration test failed: reload count was 0"
     );
+}
+
+#[tokio::test]
+async fn test_sync_on_kill_exits_cleanly() {
+    use std::os::unix::process::CommandExt;
+    
+    let temp_dir = std::env::temp_dir().join(format!("powerscraper_test_{}", std::process::id()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    
+    let db_path = temp_dir.join("config.db");
+    
+    let mut config = Config::default_empty();
+    config.mqtt = Some(PowerScraper::config::MqttBrokerConfig {
+        enabled: Some(false),
+        broker: "127.0.0.1".to_string(),
+        port: Some(1883),
+        base_topic: Some("sensors".to_string()),
+        username: None,
+        password: None,
+        home_assistant_discovery: Some(false),
+        home_assistant_prefix: None,
+    });
+    
+    PowerScraper::database::save_config_to_db(db_path.to_str().unwrap(), &config).unwrap();
+    
+    let mut child = Command::new(env!("CARGO_BIN_EXE_PowerScraper"))
+        .current_dir(&temp_dir)
+        .spawn()
+        .expect("Failed to start PowerScraper binary");
+        
+    // Allow process to start up
+    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    
+    // Send SIGTERM
+    unsafe {
+        libc::kill(child.id() as i32, libc::SIGTERM);
+    }
+    
+    // Wait for exit with a timeout
+    let exit_status = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if let Ok(Some(status)) = child.try_wait() {
+                return status;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }).await.expect("Process did not exit within 5 seconds of SIGTERM (shutdown hang)");
+    
+    assert!(exit_status.success() || exit_status.code() == Some(0), "Process did not exit with code 0");
+    
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }
