@@ -181,7 +181,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     </div>
                 </div>
                 <div class="form-group" style="margin-top: 10px;">
-                    <label for="instant-target">Change Grid Target (W)</label>
+                    <label for="instant-target">Change Grid Target (W)<span class="tooltip-icon" data-tooltip="Target active grid power in Watts. Positive values target import; negative values target export. Set to 0 to zero out house usage.">?</span></label>
                     <div style="display: flex; gap: 15px; align-items: center;">
                         <input type="range" id="instant-target-slider" min="-5000" max="5000" step="50" style="flex: 1; accent-color: var(--primary);" oninput="updateTargetText(this.value)">
                         <input type="number" id="instant-target-val" style="width: 100px;" onchange="updateTargetText(this.value)">
@@ -225,21 +225,21 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div id="battery-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="battery-source">Grid Power Source (Meter Name)</label>
+                            <label for="battery-source">Grid Power Source (Meter Name)<span class="tooltip-icon" data-tooltip="Name of the main grid meter device providing real-time grid active power telemetry (e.g. MainsMeter or custom-meter).">?</span></label>
                             <input type="text" id="battery-source" placeholder="e.g. MainsMeter">
                         </div>
                         <div class="form-group">
-                            <label for="battery-tz">Grid Timezone</label>
+                            <label for="battery-tz">Grid Timezone<span class="tooltip-icon" data-tooltip="Local timezone identifier used for matching Time-of-Use schedule periods and peak demand windows.">?</span></label>
                             <input type="text" id="battery-tz" placeholder="e.g. AEST-10">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="battery-grid-target">Grid Regulate Target (W)</label>
+                            <label for="battery-grid-target">Grid Regulate Target (W)<span class="tooltip-icon" data-tooltip="Global default grid active power target in Watts. Inverters adjust charge/discharge output continuously to balance house load against this target.">?</span></label>
                             <input type="number" id="battery-grid-target">
                         </div>
                         <div class="form-group">
-                            <label for="battery-init-mode">Initial Mode</label>
+                            <label for="battery-init-mode">Initial Mode<span class="tooltip-icon" data-tooltip="Operating mode loaded on startup: Auto (dynamic regulation), ChargeBatteries (force grid charge), or MaximumFeedin (force max discharge).">?</span></label>
                             <select id="battery-init-mode">
                                 <option value="Auto">Auto</option>
                                 <option value="ChargeBatteries">Charge Batteries</option>
@@ -254,17 +254,17 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="battery-hysteresis">Min Charge Hysteresis (%)</label>
+                            <label for="battery-hysteresis">Min Charge Hysteresis (%)<span class="tooltip-icon" data-tooltip="Deadband percentage added to period minimum SOC limits before exiting grid charge mode, preventing rapid toggling near threshold.">?</span></label>
                             <input type="number" id="battery-hysteresis" min="0" max="50" placeholder="e.g. 3">
                         </div>
                         <div class="form-group">
-                            <label for="battery-auto-margin">Auto Discharge Margin (c/kWh)</label>
+                            <label for="battery-auto-margin">Auto Discharge Margin (c/kWh)<span class="tooltip-icon" data-tooltip="Minimum required spot price margin in cents/kWh above stored battery energy unit cost before automatic discharge is permitted.">?</span></label>
                             <input type="number" step="0.1" id="battery-auto-margin" placeholder="e.g. 2.0 (empty to disable)">
                         </div>
                     </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="battery-linked">
-                        <label for="battery-linked">Enable Linked Batteries (balances charge rates proportionately)</label>
+                        <label for="battery-linked">Enable Linked Batteries (balances charge rates proportionately)<span class="tooltip-icon" data-tooltip="When enabled, coordinates multiple inverters to share discharge and charge targets proportionately based on their active capacity.">?</span></label>
                     </div>
 
                     <div style="margin-top: 30px;">
@@ -304,37 +304,37 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div id="mqtt-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="mqtt-broker">Broker Hostname / IP</label>
+                            <label for="mqtt-broker">Broker Hostname / IP<span class="tooltip-icon" data-tooltip="Hostname or IP address of the target MQTT broker (e.g. localhost or 192.168.1.50).">?</span></label>
                             <input type="text" id="mqtt-broker" placeholder="mqtt.example.com">
                         </div>
                         <div class="form-group">
-                            <label for="mqtt-port">Broker Port</label>
+                            <label for="mqtt-port">Broker Port<span class="tooltip-icon" data-tooltip="TCP port for MQTT connection (default 1883 for unencrypted, 8883 for TLS).">?</span></label>
                             <input type="number" id="mqtt-port" placeholder="1883">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="mqtt-username">Username</label>
+                            <label for="mqtt-username">Username<span class="tooltip-icon" data-tooltip="Username credential for logging into the MQTT broker.">?</span></label>
                             <input type="text" id="mqtt-username" placeholder="Optional">
                         </div>
                         <div class="form-group">
-                            <label for="mqtt-password">Password</label>
+                            <label for="mqtt-password">Password<span class="tooltip-icon" data-tooltip="Password credential for logging into the MQTT broker.">?</span></label>
                             <input type="password" id="mqtt-password" placeholder="Optional">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="mqtt-base">Base Topic Path</label>
+                            <label for="mqtt-base">Base Topic Path<span class="tooltip-icon" data-tooltip="Prefix topic path under which all telemetry metrics are published (e.g. sensors or powerscraper).">?</span></label>
                             <input type="text" id="mqtt-base" placeholder="sensors">
                         </div>
                     </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="mqtt-ha-discovery">
-                        <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery</label>
+                        <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery<span class="tooltip-icon" data-tooltip="Automatically publishes Home Assistant discovery payloads so all sensors and controls appear in Home Assistant.">?</span></label>
                     </div>
                     <div class="form-row" style="margin-top: 15px;">
                         <div class="form-group" id="mqtt-ha-prefix-group">
-                            <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix</label>
+                            <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix<span class="tooltip-icon" data-tooltip="Discovery topic prefix monitored by Home Assistant (default homeassistant).">?</span></label>
                             <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
                         </div>
                     </div>
@@ -357,16 +357,16 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div id="emon-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="emon-server">EmonCMS Server URL</label>
+                            <label for="emon-server">EmonCMS Server URL<span class="tooltip-icon" data-tooltip="Base HTTP URL of your local or remote EmonCMS server (e.g. http://emoncms or http://emoncms.org).">?</span></label>
                             <input type="text" id="emon-server" placeholder="http://emoncms">
                         </div>
                         <div class="form-group">
-                            <label for="emon-timeout">Timeout (seconds)</label>
+                            <label for="emon-timeout">Timeout (seconds)<span class="tooltip-icon" data-tooltip="HTTP connection and request timeout in seconds for EmonCMS posts.">?</span></label>
                             <input type="number" id="emon-timeout">
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="emon-api">Write API Key</label>
+                        <label for="emon-api">Write API Key<span class="tooltip-icon" data-tooltip="Write API key generated in EmonCMS account settings for posting inputs.">?</span></label>
                         <input type="password" id="emon-api">
                     </div>
                 </div>
@@ -384,31 +384,31 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div id="influx-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="influx-url">InfluxDB Server URL</label>
+                            <label for="influx-url">InfluxDB Server URL<span class="tooltip-icon" data-tooltip="HTTP URL of your InfluxDB database instance (e.g. http://localhost:8086).">?</span></label>
                             <input type="text" id="influx-url" placeholder="http://localhost:8086">
                         </div>
                         <div class="form-group">
-                            <label for="influx-db">Target Database Name</label>
+                            <label for="influx-db">Target Database Name<span class="tooltip-icon" data-tooltip="Name of the target InfluxDB database (v1.x) or bucket (v2.x) to write measurement points into.">?</span></label>
                             <input type="text" id="influx-db">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="influx-measurement">Measurement / Table Name</label>
+                            <label for="influx-measurement">Measurement / Table Name<span class="tooltip-icon" data-tooltip="Measurement series name for stored metrics (default powerscraper).">?</span></label>
                             <input type="text" id="influx-measurement">
                         </div>
                         <div class="form-group">
-                            <label for="influx-rp">Retention Policy</label>
+                            <label for="influx-rp">Retention Policy<span class="tooltip-icon" data-tooltip="Retention policy name for controlling data lifespan in InfluxDB 1.x (default autogen).">?</span></label>
                             <input type="text" id="influx-rp" placeholder="autogen">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="influx-user">Username</label>
+                            <label for="influx-user">Username<span class="tooltip-icon" data-tooltip="Username for InfluxDB basic authentication.">?</span></label>
                             <input type="text" id="influx-user" placeholder="Optional">
                         </div>
                         <div class="form-group">
-                            <label for="influx-pass">Password</label>
+                            <label for="influx-pass">Password<span class="tooltip-icon" data-tooltip="Password for InfluxDB basic authentication.">?</span></label>
                             <input type="password" id="influx-pass" placeholder="Optional">
                         </div>
                     </div>
@@ -421,7 +421,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
             <div class="glass-card">
                 <div class="card-title">Electricity Tariff Settings</div>
                 <div class="form-group">
-                    <label for="tariff-type">Tariff Structure / API Mode</label>
+                    <label for="tariff-type">Tariff Structure / API Mode<span class="tooltip-icon" data-tooltip="Select flat rates, custom Time-of-Use schedule, or dynamic live spot prices via Amber Electric API.">?</span></label>
                     <select id="tariff-type" onchange="toggleTariffType(this.value)">
                         <option value="none">Disabled (No pricing optimization)</option>
                         <option value="flat">Flat Rate (Fixed import/export pricing)</option>
@@ -436,11 +436,11 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div class="card-title">Flat Rate Pricing</div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="flat-import-rate">Grid Import Rate (cents/kWh)</label>
+                        <label for="flat-import-rate">Grid Import Rate (cents/kWh)<span class="tooltip-icon" data-tooltip="Fixed electricity grid import purchase cost in cents per kilowatt-hour.">?</span></label>
                         <input type="number" step="0.01" id="flat-import-rate" placeholder="e.g. 30.5">
                     </div>
                     <div class="form-group">
-                        <label for="flat-export-rate">Feed-in Export Rate (cents/kWh)</label>
+                        <label for="flat-export-rate">Feed-in Export Rate (cents/kWh)<span class="tooltip-icon" data-tooltip="Fixed feed-in solar/battery export rate in cents per kilowatt-hour.">?</span></label>
                         <input type="number" step="0.01" id="flat-export-rate" placeholder="e.g. 8.5">
                     </div>
                 </div>
@@ -462,17 +462,17 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div class="card-title">Amber Electric API Integration</div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="amber-api-key">Amber API Key / Token</label>
+                        <label for="amber-api-key">Amber API Key / Token<span class="tooltip-icon" data-tooltip="Personal API token generated from your Amber Electric account dashboard.">?</span></label>
                         <input type="password" id="amber-api-key" placeholder="e.g. psk_...">
                     </div>
                     <div class="form-group">
-                        <label for="amber-site-id">Site ID</label>
+                        <label for="amber-site-id">Site ID<span class="tooltip-icon" data-tooltip="Unique NMI site identifier returned by Amber API for your account.">?</span></label>
                         <input type="text" id="amber-site-id" placeholder="e.g. 01H...">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="amber-api-url">API Base URL Override</label>
+                        <label for="amber-api-url">API Base URL Override<span class="tooltip-icon" data-tooltip="Optional base URL override for custom or mock Amber API proxy servers.">?</span></label>
                         <input type="text" id="amber-api-url" placeholder="https://api.amber.com.au (Optional)">
                     </div>
                 </div>
@@ -481,17 +481,17 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 
                 <div class="checkbox-group">
                     <input type="checkbox" id="amber-neg-export-prevent">
-                    <label for="amber-neg-export-prevent">Enable Negative Export Prevention (stop exporting or charge when feed-in rate is negative)</label>
+                    <label for="amber-neg-export-prevent">Enable Negative Export Prevention (stop exporting or charge when feed-in rate is negative)<span class="tooltip-icon" data-tooltip="Stops battery/solar export or forces charging when feed-in prices fall below zero.">?</span></label>
                 </div>
 
                 <div style="margin-top: 20px;">
                     <div class="checkbox-group">
                         <input type="checkbox" id="amber-low-price-charge" onchange="toggleFormSection('amber-low-price-group', this.checked)">
-                        <label for="amber-low-price-charge">Enable Low-Price Forced Charging (charge battery from grid when import rate is low)</label>
+                        <label for="amber-low-price-charge">Enable Low-Price Forced Charging (charge battery from grid when import rate is low)<span class="tooltip-icon" data-tooltip="Forces grid charging when import price drops below the specified threshold.">?</span></label>
                     </div>
                     <div id="amber-low-price-group" style="margin-top: 10px; margin-left: 25px;">
                         <div class="form-group" style="max-width: 300px;">
-                            <label for="amber-low-price-threshold">Low-Price Threshold (cents/kWh)</label>
+                            <label for="amber-low-price-threshold">Low-Price Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Import price threshold in c/kWh below which forced grid charging triggers.">?</span></label>
                             <input type="number" step="0.01" id="amber-low-price-threshold" placeholder="e.g. 10.0">
                         </div>
                     </div>
@@ -500,11 +500,11 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div style="margin-top: 20px;">
                     <div class="checkbox-group">
                         <input type="checkbox" id="amber-high-price-discharge" onchange="toggleFormSection('amber-high-price-group', this.checked)">
-                        <label for="amber-high-price-discharge">Enable High-Price Forced Discharging (force feed-in when export rate is premium)</label>
+                        <label for="amber-high-price-discharge">Enable High-Price Forced Discharging (force feed-in when export rate is premium)<span class="tooltip-icon" data-tooltip="Forces maximum battery discharge to grid when export spot price exceeds threshold.">?</span></label>
                     </div>
                     <div id="amber-high-price-group" style="margin-top: 10px; margin-left: 25px;">
                         <div class="form-group" style="max-width: 300px;">
-                            <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)</label>
+                            <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Export spot price threshold in c/kWh above which forced grid discharging triggers.">?</span></label>
                             <input type="number" step="0.01" id="amber-high-price-threshold" placeholder="e.g. 60.0">
                         </div>
                     </div>
@@ -524,15 +524,15 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="demand-start">Demand Period Start Time</label>
+                        <label for="demand-start">Demand Period Start Time<span class="tooltip-icon" data-tooltip="Start time of daily peak demand billing window (e.g. 17:00:00).">?</span></label>
                         <input type="time" id="demand-start">
                     </div>
                     <div class="form-group">
-                        <label for="demand-end">Demand Period End Time</label>
+                        <label for="demand-end">Demand Period End Time<span class="tooltip-icon" data-tooltip="End time of daily peak demand billing window (e.g. 20:00:00).">?</span></label>
                         <input type="time" id="demand-end">
                     </div>
                     <div class="form-group">
-                        <label for="demand-rate">Daily Demand Rate ($/kW/day)</label>
+                        <label for="demand-rate">Daily Demand Rate ($/kW/day)<span class="tooltip-icon" data-tooltip="Network demand charge penalty rate per peak kW per day during demand window.">?</span></label>
                         <input type="number" step="0.0001" id="demand-rate" placeholder="e.g. 0.155">
                     </div>
                 </div>
@@ -548,11 +548,11 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 </p>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="location-lat">Latitude</label>
+                        <label for="location-lat">Latitude<span class="tooltip-icon" data-tooltip="Geographic latitude coordinate (decimal degrees) used for solar position and forecast modeling.">?</span></label>
                         <input type="number" step="0.000001" id="location-lat" placeholder="e.g. -33.8688">
                     </div>
                     <div class="form-group">
-                        <label for="location-lon">Longitude</label>
+                        <label for="location-lon">Longitude<span class="tooltip-icon" data-tooltip="Geographic longitude coordinate (decimal degrees) used for solar position and forecast modeling.">?</span></label>
                         <input type="number" step="0.000001" id="location-lon" placeholder="e.g. 151.2093">
                     </div>
                 </div>
@@ -577,7 +577,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 </p>
                 <div class="form-row" style="align-items: flex-end;">
                     <div class="form-group" style="max-width: 250px;">
-                        <label for="sim-range">Telemetry Historical Range</label>
+                        <label for="sim-range">Telemetry Historical Range<span class="tooltip-icon" data-tooltip="Historical telemetry timeframe loaded from local database for model simulation.">?</span></label>
                         <select id="sim-range" style="width: 100%;">
                             <option value="1d">Past 24 Hours</option>
                             <option value="1w">Past 7 Days</option>
@@ -720,27 +720,27 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 
                 <div class="checkbox-group" style="margin-bottom: 20px;">
                     <input type="checkbox" id="tune-seed" checked>
-                    <label for="tune-seed">Seed with current parameters (Additional Training)</label>
+                    <label for="tune-seed">Seed with current parameters (Additional Training)<span class="tooltip-icon" data-tooltip="Include current system parameters in initial genetic algorithm population as a starting baseline.">?</span></label>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="tune-generations">Generations Count</label>
+                        <label for="tune-generations">Generations Count<span class="tooltip-icon" data-tooltip="Number of evolutionary algorithm iterations run to optimize parameter fitness.">?</span></label>
                         <input type="number" id="tune-generations" value="300" min="10" max="10000">
                     </div>
                     <div class="form-group">
-                        <label for="tune-popsize">Population Size</label>
+                        <label for="tune-popsize">Population Size<span class="tooltip-icon" data-tooltip="Number of candidate parameter individuals evaluated in each generation pool.">?</span></label>
                         <input type="number" id="tune-popsize" value="40" min="10" max="200">
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="tune-penalty">Battery Cycle Penalty (cents/cycle)</label>
+                        <label for="tune-penalty">Battery Cycle Penalty (cents/cycle)<span class="tooltip-icon" data-tooltip="Economic degradation penalty cost per full equivalent battery cycle to prevent unnecessary shallow cycling.">?</span></label>
                         <input type="number" step="0.1" id="tune-penalty" value="35.0" min="0" max="1000">
                     </div>
                     <div class="form-group">
-                        <label for="tune-cores">CPU Core Limit</label>
+                        <label for="tune-cores">CPU Core Limit<span class="tooltip-icon" data-tooltip="Maximum parallel worker threads allocated for genetic algorithm simulation runs.">?</span></label>
                         <select id="tune-cores">
                             <option value="auto">Auto (All-1 Cores)</option>
                             <option value="1">Low CPU (1 Core)</option>
@@ -1027,7 +1027,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
         <div class="modal-content glass-card">
             <div class="card-title" style="margin-bottom: 15px;">Add New Driver</div>
             <div class="form-group">
-                <label for="new-driver-type">Driver Type</label>
+                <label for="new-driver-type">Driver Type<span class="tooltip-icon" data-tooltip="Select hardware module driver type to communicate with your inverter or meter.">?</span></label>
                 <select id="new-driver-type" style="width: 100%; margin-top: 5px;">
                     <option value="Solax-Wifi">SolaX Wi-Fi HTTP API</option>
                     <option value="Solax-Modbus">SolaX Modbus TCP (Standard)</option>
@@ -1647,6 +1647,7 @@ input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
     color: #fff !important;
     box-shadow: inset 0 0 0 2px var(--warning) !important;
     font-weight: 600;
+}
 .history-range-btn {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -1668,6 +1669,94 @@ input[type="range"]#instant-target-slider::-webkit-slider-thumb:hover {
     border-color: var(--accent);
     font-weight: 600;
     box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+}
+
+/* Tooltip styling */
+.tooltip-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--accent);
+    font-size: 10px;
+    font-weight: 700;
+    cursor: help;
+    margin-left: 6px;
+    position: relative;
+    vertical-align: middle;
+    transition: background 0.2s ease, color 0.2s ease;
+    user-select: none;
+}
+
+label:has(.tooltip-icon) {
+    cursor: help;
+}
+
+.tooltip-icon:hover,
+label:hover .tooltip-icon,
+.form-group:focus-within .tooltip-icon,
+.checkbox-group:focus-within .tooltip-icon {
+    background: var(--accent);
+    color: #0d1117;
+}
+
+/* Tooltip popup bubble */
+.tooltip-icon[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 130%;
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    background: #191c32;
+    color: #f0f2fd;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 0.76rem;
+    font-weight: 400;
+    white-space: normal;
+    width: max-content;
+    max-width: 280px;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    z-index: 1000;
+    text-transform: none;
+    line-height: 1.35;
+    text-align: left;
+}
+
+.tooltip-icon[data-tooltip]::before {
+    content: '';
+    position: absolute;
+    bottom: 115%;
+    left: 50%;
+    transform: translateX(-50%);
+    border-width: 5px;
+    border-style: solid;
+    border-color: #191c32 transparent transparent transparent;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s ease, visibility 0.2s;
+    z-index: 1001;
+}
+
+.tooltip-icon:hover::after,
+.tooltip-icon:hover::before,
+label:hover .tooltip-icon[data-tooltip]::after,
+label:hover .tooltip-icon[data-tooltip]::before,
+.form-group:focus-within .tooltip-icon[data-tooltip]::after,
+.form-group:focus-within .tooltip-icon[data-tooltip]::before,
+.checkbox-group:focus-within .tooltip-icon[data-tooltip]::after,
+.checkbox-group:focus-within .tooltip-icon[data-tooltip]::before {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
 }
 
 "###;
@@ -2238,15 +2327,15 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter IP / Hostname</label>
+                    <label>Inverter IP / Hostname<span class="tooltip-icon" data-tooltip="Network IP address or hostname of the SolaX Wi-Fi pocket dongle (e.g. 192.168.1.10).">?</span></label>
                     <input type="text" class="driver-wifi-host" value="${host}" placeholder="e.g. 192.168.1.10">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Interval in seconds between HTTP telemetry polling queries.">?</span></label>
                     <input type="number" class="driver-wifi-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Network HTTP connection and response timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-wifi-timeout" value="${timeout}">
                 </div>
             </div>
@@ -2265,29 +2354,29 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter Name (Identifier)</label>
+                    <label>Inverter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique name identifier assigned to this inverter instance.">?</span></label>
                     <input type="text" class="driver-modbus-name" value="${name}" placeholder="e.g. solax-modbus">
                 </div>
                 <div class="form-group">
-                    <label>Inverter Host / IP (with optional port)</label>
+                    <label>Inverter Host / IP (with optional port)<span class="tooltip-icon" data-tooltip="IP address and Modbus TCP port of the inverter gateway (e.g. 192.168.1.11:502).">?</span></label>
                     <input type="text" class="driver-modbus-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Modbus polling interval in seconds between register queries.">?</span></label>
                     <input type="number" class="driver-modbus-poll" value="${poll}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Modbus TCP socket request timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-modbus-timeout" value="${timeout}">
                 </div>
                 <div class="form-group">
-                    <label>Installer Password</label>
+                    <label>Installer Password<span class="tooltip-icon" data-tooltip="Numeric PIN/password required to unlock remote inverter control writes.">?</span></label>
                     <input type="number" class="driver-modbus-password" value="${pwd}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Power Budget Avg Samples</label>
+                    <label>Power Budget Avg Samples<span class="tooltip-icon" data-tooltip="Rolling sample count used for power budget smoothing filter.">?</span></label>
                     <input type="number" class="driver-modbus-avg" value="${avg}">
                 </div>
             </div>
@@ -2308,29 +2397,29 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter Name (Identifier)</label>
+                    <label>Inverter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique name identifier assigned to this Gen 3 / Gen 4 inverter.">?</span></label>
                     <input type="text" class="driver-g3g4-name" value="${name}" placeholder="e.g. ${defaultPrefix}">
                 </div>
                 <div class="form-group">
-                    <label>Inverter Host / IP (with optional port)</label>
+                    <label>Inverter Host / IP (with optional port)<span class="tooltip-icon" data-tooltip="IP address and Modbus TCP port (e.g. 192.168.1.11:502).">?</span></label>
                     <input type="text" class="driver-g3g4-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between telemetry register reads.">?</span></label>
                     <input type="number" class="driver-g3g4-poll" value="${poll}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Modbus socket connection and read timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-g3g4-timeout" value="${timeout}">
                 </div>
                 <div class="form-group">
-                    <label>Installer Password</label>
+                    <label>Installer Password<span class="tooltip-icon" data-tooltip="Numeric PIN required to unlock advanced mode write commands.">?</span></label>
                     <input type="number" class="driver-g3g4-password" value="${pwd}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Power Budget Avg Samples</label>
+                    <label>Power Budget Avg Samples<span class="tooltip-icon" data-tooltip="Rolling sample count for power budget smoothing filter.">?</span></label>
                     <input type="number" class="driver-g3g4-avg" value="${avg}">
                 </div>
             </div>
@@ -2349,25 +2438,25 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Serial Port Path</label>
+                    <label>Serial Port Path<span class="tooltip-icon" data-tooltip="Linux serial device path connected to RS485 adapter (e.g. /dev/ttyUSB0).">?</span></label>
                     <input type="text" class="driver-sdm-port" value="${port}" placeholder="e.g. /dev/ttyUSB0">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between SDM630 register queries.">?</span></label>
                     <input type="number" class="driver-sdm-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="RS485 serial read timeout in seconds per request.">?</span></label>
                     <input type="number" step="0.1" class="driver-sdm-timeout" value="${timeout}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Baud Rate</label>
+                    <label>Baud Rate<span class="tooltip-icon" data-tooltip="Serial port speed rate (e.g. 9600, 19200, 38400).">?</span></label>
                     <input type="number" class="driver-sdm-baud" value="${baud}">
                 </div>
                 <div class="form-group">
-                    <label>Parity</label>
+                    <label>Parity<span class="tooltip-icon" data-tooltip="Serial line parity bit framing (None, Even, or Odd).">?</span></label>
                     <select class="driver-sdm-parity">
                         <option value="N" ${parity === 'N' ? 'selected' : ''}>None</option>
                         <option value="E" ${parity === 'E' ? 'selected' : ''}>Even</option>
@@ -2375,11 +2464,11 @@ function renderDriverCard(type, data = {}) {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Stop Bits</label>
+                    <label>Stop Bits<span class="tooltip-icon" data-tooltip="Serial line stop bit count (1 or 2).">?</span></label>
                     <input type="number" class="driver-sdm-stop" value="${stop}">
                 </div>
                 <div class="form-group">
-                    <label>Watchdog Timeout (s)</label>
+                    <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Serial silence timeout in seconds before restarting connection.">?</span></label>
                     <input type="number" class="driver-sdm-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
@@ -2398,25 +2487,25 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Serial Port Path</label>
+                    <label>Serial Port Path<span class="tooltip-icon" data-tooltip="Linux serial device path connected to DTSU666 meter (e.g. /dev/ttyUSB0).">?</span></label>
                     <input type="text" class="driver-dtsu-port" value="${port}" placeholder="e.g. /dev/ttyUSB0">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between DTSU666 telemetry reads.">?</span></label>
                     <input type="number" class="driver-dtsu-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Serial request timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-dtsu-timeout" value="${timeout}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Baud Rate</label>
+                    <label>Baud Rate<span class="tooltip-icon" data-tooltip="Serial communication speed (typically 9600 for DTSU666).">?</span></label>
                     <input type="number" class="driver-dtsu-baud" value="${baud}">
                 </div>
                 <div class="form-group">
-                    <label>Parity</label>
+                    <label>Parity<span class="tooltip-icon" data-tooltip="Serial framing parity bit (None, Even, or Odd).">?</span></label>
                     <select class="driver-dtsu-parity">
                         <option value="N" ${parity === 'N' ? 'selected' : ''}>None</option>
                         <option value="E" ${parity === 'E' ? 'selected' : ''}>Even</option>
@@ -2424,11 +2513,11 @@ function renderDriverCard(type, data = {}) {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Stop Bits</label>
+                    <label>Stop Bits<span class="tooltip-icon" data-tooltip="Serial stop bit count (1 or 2).">?</span></label>
                     <input type="number" class="driver-dtsu-stop" value="${stop}">
                 </div>
                 <div class="form-group">
-                    <label>Watchdog Timeout (s)</label>
+                    <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Inactivity silence timeout before triggering connection reset.">?</span></label>
                     <input type="number" class="driver-dtsu-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
@@ -2451,33 +2540,33 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Meter Name (Identifier)</label>
+                    <label>Meter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique meter name matched by battery control as grid power source.">?</span></label>
                     <input type="text" class="driver-mqtt-meter-name" value="${name}" placeholder="e.g. MainsMeter">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Update evaluation frequency interval in seconds.">?</span></label>
                     <input type="number" class="driver-mqtt-meter-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Watchdog Timeout (s)</label>
+                    <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Topic update silence timeout before flagging meter failure.">?</span></label>
                     <input type="number" class="driver-mqtt-meter-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Broker Host / IP</label>
+                    <label>Broker Host / IP<span class="tooltip-icon" data-tooltip="MQTT broker IP address or hostname.">?</span></label>
                     <input type="text" class="driver-mqtt-meter-broker" value="${broker}" placeholder="e.g. 192.168.1.5">
                 </div>
                 <div class="form-group">
-                    <label>Broker Port</label>
+                    <label>Broker Port<span class="tooltip-icon" data-tooltip="MQTT broker connection TCP port.">?</span></label>
                     <input type="number" class="driver-mqtt-meter-port" value="${port}">
                 </div>
                 <div class="form-group">
-                    <label>Username</label>
+                    <label>Username<span class="tooltip-icon" data-tooltip="Broker authentication username.">?</span></label>
                     <input type="text" class="driver-mqtt-meter-user" value="${user}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Password</label>
+                    <label>Password<span class="tooltip-icon" data-tooltip="Broker authentication password.">?</span></label>
                     <input type="password" class="driver-mqtt-meter-pass" value="${pass}" placeholder="Optional">
                 </div>
             </div>
@@ -2529,25 +2618,25 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter Name (Identifier)</label>
+                    <label>Inverter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique inverter identifier name in system topology.">?</span></label>
                     <input type="text" class="driver-mqtt-inv-name" value="${name}" placeholder="e.g. aurora">
                 </div>
                 <div class="form-group">
-                    <label>Broker Host / IP (Optional)</label>
+                    <label>Broker Host / IP (Optional)<span class="tooltip-icon" data-tooltip="Dedicated MQTT broker IP address if different from main broker.">?</span></label>
                     <input type="text" class="driver-mqtt-inv-broker" value="${broker}" placeholder="e.g. 192.168.1.5">
                 </div>
                 <div class="form-group">
-                    <label>Broker Port</label>
+                    <label>Broker Port<span class="tooltip-icon" data-tooltip="MQTT broker TCP port for inverter topic subscription.">?</span></label>
                     <input type="number" class="driver-mqtt-inv-port" value="${port}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Username</label>
+                    <label>Username<span class="tooltip-icon" data-tooltip="Broker basic auth username.">?</span></label>
                     <input type="text" class="driver-mqtt-inv-user" value="${user}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Password</label>
+                    <label>Password<span class="tooltip-icon" data-tooltip="Broker basic auth password.">?</span></label>
                     <input type="password" class="driver-mqtt-inv-pass" value="${pass}" placeholder="Optional">
                 </div>
             </div>
@@ -3087,48 +3176,48 @@ function renderInverterConstraintCard(name, inv) {
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
                 <div class="form-group">
-                    <label>Wiring Phase</label>
+                    <label>Wiring Phase<span class="tooltip-icon" data-tooltip="AC phase connection (1 for Single-phase or Phase A, 2 for Phase B, 3 for Phase C).">?</span></label>
                     <input type="number" class="inv-phase" value="${inv.phase || 1}">
                 </div>
                 <div class="form-group">
-                    <label>Max Charge Rate (W)</label>
+                    <label>Max Charge Rate (W)<span class="tooltip-icon" data-tooltip="Maximum continuous battery charging power limit in Watts for this inverter.">?</span></label>
                     <input type="number" class="inv-max-charge" value="${inv["max-charge"] || 2000}">
                 </div>
                 <div class="form-group">
-                    <label>Max Discharge Rate (W)</label>
+                    <label>Max Discharge Rate (W)<span class="tooltip-icon" data-tooltip="Maximum continuous battery discharge power limit in Watts for this inverter.">?</span></label>
                     <input type="number" class="inv-max-discharge" value="${inv["max-discharge"] || 2000}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Battery Capacity (kWh)</label>
+                    <label>Battery Capacity (kWh)<span class="tooltip-icon" data-tooltip="Total nominal battery capacity attached to this inverter in kWh.">?</span></label>
                     <input type="number" step="0.1" class="inv-battery-capacity" value="${inv["battery-capacity"] || inv.battery_capacity || 0.0}">
                 </div>
                 <div class="form-group">
-                    <label>Calculated Battery Capacity</label>
+                    <label>Calculated Battery Capacity<span class="tooltip-icon" data-tooltip="Capacity estimated automatically from telemetry SOC state transitions over time.">?</span></label>
                     <input type="text" class="inv-calc-capacity" value="${calcCapText}" readonly style="background: rgba(255,255,255,0.05); color: #ccc;">
                 </div>
                 <div class="form-group">
-                    <label>Max Charge (%)</label>
+                    <label>Max Charge (%)<span class="tooltip-icon" data-tooltip="Maximum allowed battery State of Charge percentage cutoff limit.">?</span></label>
                     <input type="number" min="0" max="100" class="inv-max-charge-pct" value="${inv["max-charge-pct"] || inv.max_charge_pct || 100}">
                 </div>
                 <div class="form-group">
-                    <label>Min Charge (%)</label>
+                    <label>Min Charge (%)<span class="tooltip-icon" data-tooltip="Minimum allowed battery State of Charge percentage cutoff limit.">?</span></label>
                     <input type="number" min="0" max="100" class="inv-min-charge-pct" value="${inv["min-charge-pct"] || inv.min_charge_pct || 10}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="checkbox-group">
                     <input type="checkbox" class="inv-use-total" ${inv["use-total-power"] ? 'checked' : ''}>
-                    <label>Regulate Total Grid Power</label>
+                    <label>Regulate Total Grid Power<span class="tooltip-icon" data-tooltip="When checked, regulates three-phase total grid power instead of single phase.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="inv-grid-control" ${inv["control-grid-power"] ? 'checked' : ''}>
-                    <label>Grid Power Control mode</label>
+                    <label>Grid Power Control mode<span class="tooltip-icon" data-tooltip="Enables active power command regulation for this inverter.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="inv-no-pv" ${inv["no-pv"] || inv.no_pv ? 'checked' : ''}>
-                    <label>Battery only (No PV)</label>
+                    <label>Battery only (No PV)<span class="tooltip-icon" data-tooltip="Check if this inverter has no solar panels attached and operates purely as battery storage.">?</span></label>
                 </div>
             </div>
         </div>
@@ -3144,46 +3233,46 @@ function renderPeriodCard(pName, per) {
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
                 <div class="form-group">
-                    <label>Period Identifier</label>
+                    <label>Period Identifier<span class="tooltip-icon" data-tooltip="Custom label for this control period window (e.g. Peak, Demand, Off-Peak).">?</span></label>
                     <input type="text" class="period-name" value="${pName}">
                 </div>
                 <div class="form-group">
-                    <label>Start Time</label>
+                    <label>Start Time<span class="tooltip-icon" data-tooltip="Start time of the period in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="period-start" value="${per.start || '00:00:00'}">
                 </div>
                 <div class="form-group">
-                    <label>End Time</label>
+                    <label>End Time<span class="tooltip-icon" data-tooltip="End time of the period in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="period-end" value="${per.end || '23:59:59'}">
                 </div>
                 <div class="form-group">
-                    <label>Min SOC (%)</label>
+                    <label>Min SOC (%)<span class="tooltip-icon" data-tooltip="Target minimum battery State of Charge percentage during this period.">?</span></label>
                     <input type="number" class="period-min-charge" value="${per["min-charge"] || 20}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Force Discharge Rate (W)</label>
+                    <label>Force Discharge Rate (W)<span class="tooltip-icon" data-tooltip="Optional fixed discharge power override in Watts for this period. Leave blank for auto regulation.">?</span></label>
                     <input type="number" class="period-force-discharge" value="${per["force-discharge"] || ''}" placeholder="None">
                 </div>
                 <div class="form-group">
-                    <label>Hysteresis (%)</label>
+                    <label>Hysteresis (%)<span class="tooltip-icon" data-tooltip="Period-specific min charge deadband percentage. Leave blank to use global setting.">?</span></label>
                     <input type="number" class="period-min-charge-hysteresis" value="${per["min-charge-hysteresis"] !== undefined ? per["min-charge-hysteresis"] : ''}" placeholder="e.g. 3">
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-grid-charge" ${per["grid-charge"] ? 'checked' : ''}>
-                    <label>Allow Charging from Grid</label>
+                    <label>Allow Charging from Grid<span class="tooltip-icon" data-tooltip="Allows batteries to charge from grid if SOC falls below minimum during this period.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-grace" ${per.grace ? 'checked' : ''}>
-                    <label>Enable Grace Capacity early stops</label>
+                    <label>Enable Grace Capacity early stops<span class="tooltip-icon" data-tooltip="Provides temporary battery discharge grace buffer when exiting charge period.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-prefer-battery" ${per["prefer-battery"] ? 'checked' : ''}>
-                    <label>Prioritize Battery Charge</label>
+                    <label>Prioritize Battery Charge<span class="tooltip-icon" data-tooltip="Prioritizes charging battery from solar PV before supplying home load.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-ignore-cost-margin" ${per["ignore-cost-margin"] ? 'checked' : ''}>
-                    <label>Ignore Cost Margin (Discharge regardless of price)</label>
+                    <label>Ignore Cost Margin (Discharge regardless of price)<span class="tooltip-icon" data-tooltip="Permits battery discharging to meet load/feed-in targets regardless of electricity spot price vs unit cost.">?</span></label>
                 </div>
             </div>
         </div>
@@ -3223,23 +3312,23 @@ function renderTariffTOUPeriodCard(pName, per) {
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
                 <div class="form-group">
-                    <label>Period Name</label>
+                    <label>Period Name<span class="tooltip-icon" data-tooltip="Label for this tariff pricing window (e.g. Peak, Shoulder, Off-Peak).">?</span></label>
                     <input type="text" class="tariff-period-name" value="${pName}">
                 </div>
                 <div class="form-group">
-                    <label>Start Time</label>
+                    <label>Start Time<span class="tooltip-icon" data-tooltip="Start time of tariff rate in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="tariff-period-start" value="${per.start || '00:00:00'}">
                 </div>
                 <div class="form-group">
-                    <label>End Time</label>
+                    <label>End Time<span class="tooltip-icon" data-tooltip="End time of tariff rate in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="tariff-period-end" value="${per.end || '23:59:59'}">
                 </div>
                 <div class="form-group">
-                    <label>Import Rate (c/kWh)</label>
+                    <label>Import Rate (c/kWh)<span class="tooltip-icon" data-tooltip="Grid import purchase cost rate in cents per kWh during this period.">?</span></label>
                     <input type="number" step="0.01" class="tariff-period-import" value="${per.import_rate || 0.0}">
                 </div>
                 <div class="form-group">
-                    <label>Export Rate (c/kWh)</label>
+                    <label>Export Rate (c/kWh)<span class="tooltip-icon" data-tooltip="Feed-in export sell rate in cents per kWh during this period.">?</span></label>
                     <input type="number" step="0.01" class="tariff-period-export" value="${per.export_rate || 0.0}">
                 </div>
             </div>
@@ -3312,11 +3401,11 @@ function renderPvArrayCard(array) {
                     <input type="number" step="1" class="array-capacity" value="${initialCapacity}" readonly style="background: rgba(255,255,255,0.05); color: var(--text-muted);">
                 </div>
                 <div class="form-group">
-                    <label>Tilt (°)</label>
+                    <label>Tilt (°)<span class="tooltip-icon" data-tooltip="Panel tilt angle relative to horizontal (0° flat, 90° vertical roof/wall).">?</span></label>
                     <input type="number" step="0.1" class="array-tilt" value="${array.tilt !== undefined ? array.tilt : 20.0}">
                 </div>
                 <div class="form-group">
-                    <label>Azimuth (°)</label>
+                    <label>Azimuth (°)<span class="tooltip-icon" data-tooltip="Panel compass orientation heading (0° North, 90° East, 180° South, 270° West).">?</span></label>
                     <input type="number" step="0.1" class="array-azimuth" value="${array.azimuth !== undefined ? array.azimuth : 0.0}">
                 </div>
             </div>
@@ -3327,19 +3416,19 @@ function renderPvArrayCard(array) {
             <div style="font-weight: 600; font-size: 0.95em; color: var(--accent); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">2. Panel & Installation Details</div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div class="form-group">
-                    <label>Panel Brand</label>
+                    <label>Panel Brand<span class="tooltip-icon" data-tooltip="Solar panel manufacturer or brand name (e.g. JinkoSolar, Trina, Canadian Solar).">?</span></label>
                     <input type="text" class="array-brand" value="${array.brand || ''}" placeholder="e.g. JinkoSolar">
                 </div>
                 <div class="form-group">
-                    <label>Panel Model</label>
+                    <label>Panel Model<span class="tooltip-icon" data-tooltip="Solar panel model designation string (e.g. Tiger Neo 440W).">?</span></label>
                     <input type="text" class="array-model" value="${array.model || ''}" placeholder="e.g. Tiger Neo">
                 </div>
                 <div class="form-group">
-                    <label>Installation Date</label>
+                    <label>Installation Date<span class="tooltip-icon" data-tooltip="Commissioning or installation date for tracking panel age degradation.">?</span></label>
                     <input type="date" class="array-install-date" value="${array["installation-date"] || array.installation_date || ''}">
                 </div>
                 <div class="form-group">
-                    <label>Panel Quantity</label>
+                    <label>Panel Quantity<span class="tooltip-icon" data-tooltip="Total panel count computed from Series Modules × Parallel Strings.">?</span></label>
                     <input type="number" class="array-quantity" value="${initialQuantity}" placeholder="Calculated" readonly style="background: rgba(255,255,255,0.05); color: var(--text-muted);">
                 </div>
             </div>
@@ -3350,39 +3439,39 @@ function renderPvArrayCard(array) {
             <div style="font-weight: 600; font-size: 0.95em; color: var(--accent); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">3. Electrical Specifications & Temperature Coefficients</div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div class="form-group">
-                    <label>Series Modules (Qty)</label>
+                    <label>Series Modules (Qty)<span class="tooltip-icon" data-tooltip="Number of solar panels wired in series on this string.">?</span></label>
                     <input type="number" class="array-series" value="${array["series-modules"] || array.series_modules || ''}" placeholder="e.g. 10" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Parallel Strings (Qty)</label>
+                    <label>Parallel Strings (Qty)<span class="tooltip-icon" data-tooltip="Number of parallel string branches connected to this MPPT input.">?</span></label>
                     <input type="number" class="array-parallel" value="${array["parallel-strings"] || array.parallel_strings || ''}" placeholder="e.g. 1" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Open Circuit Voltage Voc (V)</label>
+                    <label>Open Circuit Voltage Voc (V)<span class="tooltip-icon" data-tooltip="Single panel open circuit voltage rating (Voc) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-voc" value="${array.voc || ''}" placeholder="e.g. 39.38">
                 </div>
                 <div class="form-group">
-                    <label>Short Circuit Current Isc (A)</label>
+                    <label>Short Circuit Current Isc (A)<span class="tooltip-icon" data-tooltip="Single panel short circuit current rating (Isc) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-isc" value="${array.isc || ''}" placeholder="e.g. 13.86">
                 </div>
                 <div class="form-group">
-                    <label>Max Power Voltage Vmp (V)</label>
+                    <label>Max Power Voltage Vmp (V)<span class="tooltip-icon" data-tooltip="Single panel maximum power point voltage rating (Vmp) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-vmp" value="${array.vmp || ''}" placeholder="e.g. 32.81" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Max Power Current Imp (A)</label>
+                    <label>Max Power Current Imp (A)<span class="tooltip-icon" data-tooltip="Single panel maximum power point current rating (Imp) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-imp" value="${array.imp || ''}" placeholder="e.g. 13.41" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Temp Coeff Voc (%/°C)</label>
+                    <label>Temp Coeff Voc (%/°C)<span class="tooltip-icon" data-tooltip="Temperature coefficient of open circuit voltage in % per degree Celsius.">?</span></label>
                     <input type="number" step="0.001" class="array-coeff-voc" value="${array["temp-coeff-voc"] || array.temp_coeff_voc || ''}" placeholder="e.g. -0.25">
                 </div>
                 <div class="form-group">
-                    <label>Temp Coeff Isc (%/°C)</label>
+                    <label>Temp Coeff Isc (%/°C)<span class="tooltip-icon" data-tooltip="Temperature coefficient of short circuit current in % per degree Celsius.">?</span></label>
                     <input type="number" step="0.001" class="array-coeff-isc" value="${array["temp-coeff-isc"] || array.temp_coeff_isc || ''}" placeholder="e.g. 0.045">
                 </div>
                 <div class="form-group">
-                    <label>Temp Coeff Pmax (%/°C)</label>
+                    <label>Temp Coeff Pmax (%/°C)<span class="tooltip-icon" data-tooltip="Temperature coefficient of maximum power in % per degree Celsius.">?</span></label>
                     <input type="number" step="0.001" class="array-coeff-pmax" value="${array["temp-coeff-pmax"] || array.temp_coeff_pmax || ''}" placeholder="e.g. -0.30">
                 </div>
                 <div class="form-group" style="visibility: hidden; pointer-events: none;">

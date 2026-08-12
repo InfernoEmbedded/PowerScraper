@@ -23,7 +23,7 @@ fi
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VERSION=$(grep '^version' "$PROJECT_ROOT/Cargo.toml" | head -n1 | cut -d '"' -f2)
 PKG_NAME="powerscraper"
-BUILD_DIR="$PROJECT_ROOT/target/debian_build_${ARCH}"
+BUILD_DIR="$PROJECT_ROOT/target/debian_build_${ARCH}_$$"
 OUT_DIR="$PROJECT_ROOT/dist"
 
 echo "Creating Debian package structure in $BUILD_DIR..."

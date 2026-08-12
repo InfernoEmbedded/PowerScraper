@@ -565,15 +565,15 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter IP / Hostname</label>
+                    <label>Inverter IP / Hostname<span class="tooltip-icon" data-tooltip="Network IP address or hostname of the SolaX Wi-Fi pocket dongle (e.g. 192.168.1.10).">?</span></label>
                     <input type="text" class="driver-wifi-host" value="${host}" placeholder="e.g. 192.168.1.10">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Interval in seconds between HTTP telemetry polling queries.">?</span></label>
                     <input type="number" class="driver-wifi-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Network HTTP connection and response timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-wifi-timeout" value="${timeout}">
                 </div>
             </div>
@@ -592,29 +592,29 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter Name (Identifier)</label>
+                    <label>Inverter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique name identifier assigned to this inverter instance.">?</span></label>
                     <input type="text" class="driver-modbus-name" value="${name}" placeholder="e.g. solax-modbus">
                 </div>
                 <div class="form-group">
-                    <label>Inverter Host / IP (with optional port)</label>
+                    <label>Inverter Host / IP (with optional port)<span class="tooltip-icon" data-tooltip="IP address and Modbus TCP port of the inverter gateway (e.g. 192.168.1.11:502).">?</span></label>
                     <input type="text" class="driver-modbus-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Modbus polling interval in seconds between register queries.">?</span></label>
                     <input type="number" class="driver-modbus-poll" value="${poll}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Modbus TCP socket request timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-modbus-timeout" value="${timeout}">
                 </div>
                 <div class="form-group">
-                    <label>Installer Password</label>
+                    <label>Installer Password<span class="tooltip-icon" data-tooltip="Numeric PIN/password required to unlock remote inverter control writes.">?</span></label>
                     <input type="number" class="driver-modbus-password" value="${pwd}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Power Budget Avg Samples</label>
+                    <label>Power Budget Avg Samples<span class="tooltip-icon" data-tooltip="Rolling sample count used for power budget smoothing filter.">?</span></label>
                     <input type="number" class="driver-modbus-avg" value="${avg}">
                 </div>
             </div>
@@ -635,29 +635,29 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter Name (Identifier)</label>
+                    <label>Inverter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique name identifier assigned to this Gen 3 / Gen 4 inverter.">?</span></label>
                     <input type="text" class="driver-g3g4-name" value="${name}" placeholder="e.g. ${defaultPrefix}">
                 </div>
                 <div class="form-group">
-                    <label>Inverter Host / IP (with optional port)</label>
+                    <label>Inverter Host / IP (with optional port)<span class="tooltip-icon" data-tooltip="IP address and Modbus TCP port (e.g. 192.168.1.11:502).">?</span></label>
                     <input type="text" class="driver-g3g4-host" value="${host}" placeholder="e.g. 192.168.1.11:502">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between telemetry register reads.">?</span></label>
                     <input type="number" class="driver-g3g4-poll" value="${poll}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Modbus socket connection and read timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-g3g4-timeout" value="${timeout}">
                 </div>
                 <div class="form-group">
-                    <label>Installer Password</label>
+                    <label>Installer Password<span class="tooltip-icon" data-tooltip="Numeric PIN required to unlock advanced mode write commands.">?</span></label>
                     <input type="number" class="driver-g3g4-password" value="${pwd}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Power Budget Avg Samples</label>
+                    <label>Power Budget Avg Samples<span class="tooltip-icon" data-tooltip="Rolling sample count for power budget smoothing filter.">?</span></label>
                     <input type="number" class="driver-g3g4-avg" value="${avg}">
                 </div>
             </div>
@@ -676,25 +676,25 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Serial Port Path</label>
+                    <label>Serial Port Path<span class="tooltip-icon" data-tooltip="Linux serial device path connected to RS485 adapter (e.g. /dev/ttyUSB0).">?</span></label>
                     <input type="text" class="driver-sdm-port" value="${port}" placeholder="e.g. /dev/ttyUSB0">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between SDM630 register queries.">?</span></label>
                     <input type="number" class="driver-sdm-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="RS485 serial read timeout in seconds per request.">?</span></label>
                     <input type="number" step="0.1" class="driver-sdm-timeout" value="${timeout}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Baud Rate</label>
+                    <label>Baud Rate<span class="tooltip-icon" data-tooltip="Serial port speed rate (e.g. 9600, 19200, 38400).">?</span></label>
                     <input type="number" class="driver-sdm-baud" value="${baud}">
                 </div>
                 <div class="form-group">
-                    <label>Parity</label>
+                    <label>Parity<span class="tooltip-icon" data-tooltip="Serial line parity bit framing (None, Even, or Odd).">?</span></label>
                     <select class="driver-sdm-parity">
                         <option value="N" ${parity === 'N' ? 'selected' : ''}>None</option>
                         <option value="E" ${parity === 'E' ? 'selected' : ''}>Even</option>
@@ -702,11 +702,11 @@ function renderDriverCard(type, data = {}) {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Stop Bits</label>
+                    <label>Stop Bits<span class="tooltip-icon" data-tooltip="Serial line stop bit count (1 or 2).">?</span></label>
                     <input type="number" class="driver-sdm-stop" value="${stop}">
                 </div>
                 <div class="form-group">
-                    <label>Watchdog Timeout (s)</label>
+                    <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Serial silence timeout in seconds before restarting connection.">?</span></label>
                     <input type="number" class="driver-sdm-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
@@ -725,25 +725,25 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Serial Port Path</label>
+                    <label>Serial Port Path<span class="tooltip-icon" data-tooltip="Linux serial device path connected to DTSU666 meter (e.g. /dev/ttyUSB0).">?</span></label>
                     <input type="text" class="driver-dtsu-port" value="${port}" placeholder="e.g. /dev/ttyUSB0">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Polling interval in seconds between DTSU666 telemetry reads.">?</span></label>
                     <input type="number" class="driver-dtsu-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Timeout (s)</label>
+                    <label>Timeout (s)<span class="tooltip-icon" data-tooltip="Serial request timeout limit in seconds.">?</span></label>
                     <input type="number" step="0.1" class="driver-dtsu-timeout" value="${timeout}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Baud Rate</label>
+                    <label>Baud Rate<span class="tooltip-icon" data-tooltip="Serial communication speed (typically 9600 for DTSU666).">?</span></label>
                     <input type="number" class="driver-dtsu-baud" value="${baud}">
                 </div>
                 <div class="form-group">
-                    <label>Parity</label>
+                    <label>Parity<span class="tooltip-icon" data-tooltip="Serial framing parity bit (None, Even, or Odd).">?</span></label>
                     <select class="driver-dtsu-parity">
                         <option value="N" ${parity === 'N' ? 'selected' : ''}>None</option>
                         <option value="E" ${parity === 'E' ? 'selected' : ''}>Even</option>
@@ -751,11 +751,11 @@ function renderDriverCard(type, data = {}) {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Stop Bits</label>
+                    <label>Stop Bits<span class="tooltip-icon" data-tooltip="Serial stop bit count (1 or 2).">?</span></label>
                     <input type="number" class="driver-dtsu-stop" value="${stop}">
                 </div>
                 <div class="form-group">
-                    <label>Watchdog Timeout (s)</label>
+                    <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Inactivity silence timeout before triggering connection reset.">?</span></label>
                     <input type="number" class="driver-dtsu-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
@@ -778,33 +778,33 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Meter Name (Identifier)</label>
+                    <label>Meter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique meter name matched by battery control as grid power source.">?</span></label>
                     <input type="text" class="driver-mqtt-meter-name" value="${name}" placeholder="e.g. MainsMeter">
                 </div>
                 <div class="form-group">
-                    <label>Poll Period (s)</label>
+                    <label>Poll Period (s)<span class="tooltip-icon" data-tooltip="Update evaluation frequency interval in seconds.">?</span></label>
                     <input type="number" class="driver-mqtt-meter-poll" value="${poll}">
                 </div>
                 <div class="form-group">
-                    <label>Watchdog Timeout (s)</label>
+                    <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Topic update silence timeout before flagging meter failure.">?</span></label>
                     <input type="number" class="driver-mqtt-meter-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Broker Host / IP</label>
+                    <label>Broker Host / IP<span class="tooltip-icon" data-tooltip="MQTT broker IP address or hostname.">?</span></label>
                     <input type="text" class="driver-mqtt-meter-broker" value="${broker}" placeholder="e.g. 192.168.1.5">
                 </div>
                 <div class="form-group">
-                    <label>Broker Port</label>
+                    <label>Broker Port<span class="tooltip-icon" data-tooltip="MQTT broker connection TCP port.">?</span></label>
                     <input type="number" class="driver-mqtt-meter-port" value="${port}">
                 </div>
                 <div class="form-group">
-                    <label>Username</label>
+                    <label>Username<span class="tooltip-icon" data-tooltip="Broker authentication username.">?</span></label>
                     <input type="text" class="driver-mqtt-meter-user" value="${user}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Password</label>
+                    <label>Password<span class="tooltip-icon" data-tooltip="Broker authentication password.">?</span></label>
                     <input type="password" class="driver-mqtt-meter-pass" value="${pass}" placeholder="Optional">
                 </div>
             </div>
@@ -856,25 +856,25 @@ function renderDriverCard(type, data = {}) {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Inverter Name (Identifier)</label>
+                    <label>Inverter Name (Identifier)<span class="tooltip-icon" data-tooltip="Unique inverter identifier name in system topology.">?</span></label>
                     <input type="text" class="driver-mqtt-inv-name" value="${name}" placeholder="e.g. aurora">
                 </div>
                 <div class="form-group">
-                    <label>Broker Host / IP (Optional)</label>
+                    <label>Broker Host / IP (Optional)<span class="tooltip-icon" data-tooltip="Dedicated MQTT broker IP address if different from main broker.">?</span></label>
                     <input type="text" class="driver-mqtt-inv-broker" value="${broker}" placeholder="e.g. 192.168.1.5">
                 </div>
                 <div class="form-group">
-                    <label>Broker Port</label>
+                    <label>Broker Port<span class="tooltip-icon" data-tooltip="MQTT broker TCP port for inverter topic subscription.">?</span></label>
                     <input type="number" class="driver-mqtt-inv-port" value="${port}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Username</label>
+                    <label>Username<span class="tooltip-icon" data-tooltip="Broker basic auth username.">?</span></label>
                     <input type="text" class="driver-mqtt-inv-user" value="${user}" placeholder="Optional">
                 </div>
                 <div class="form-group">
-                    <label>Password</label>
+                    <label>Password<span class="tooltip-icon" data-tooltip="Broker basic auth password.">?</span></label>
                     <input type="password" class="driver-mqtt-inv-pass" value="${pass}" placeholder="Optional">
                 </div>
             </div>
@@ -1414,48 +1414,48 @@ function renderInverterConstraintCard(name, inv) {
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
                 <div class="form-group">
-                    <label>Wiring Phase</label>
+                    <label>Wiring Phase<span class="tooltip-icon" data-tooltip="AC phase connection (1 for Single-phase or Phase A, 2 for Phase B, 3 for Phase C).">?</span></label>
                     <input type="number" class="inv-phase" value="${inv.phase || 1}">
                 </div>
                 <div class="form-group">
-                    <label>Max Charge Rate (W)</label>
+                    <label>Max Charge Rate (W)<span class="tooltip-icon" data-tooltip="Maximum continuous battery charging power limit in Watts for this inverter.">?</span></label>
                     <input type="number" class="inv-max-charge" value="${inv["max-charge"] || 2000}">
                 </div>
                 <div class="form-group">
-                    <label>Max Discharge Rate (W)</label>
+                    <label>Max Discharge Rate (W)<span class="tooltip-icon" data-tooltip="Maximum continuous battery discharge power limit in Watts for this inverter.">?</span></label>
                     <input type="number" class="inv-max-discharge" value="${inv["max-discharge"] || 2000}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Battery Capacity (kWh)</label>
+                    <label>Battery Capacity (kWh)<span class="tooltip-icon" data-tooltip="Total nominal battery capacity attached to this inverter in kWh.">?</span></label>
                     <input type="number" step="0.1" class="inv-battery-capacity" value="${inv["battery-capacity"] || inv.battery_capacity || 0.0}">
                 </div>
                 <div class="form-group">
-                    <label>Calculated Battery Capacity</label>
+                    <label>Calculated Battery Capacity<span class="tooltip-icon" data-tooltip="Capacity estimated automatically from telemetry SOC state transitions over time.">?</span></label>
                     <input type="text" class="inv-calc-capacity" value="${calcCapText}" readonly style="background: rgba(255,255,255,0.05); color: #ccc;">
                 </div>
                 <div class="form-group">
-                    <label>Max Charge (%)</label>
+                    <label>Max Charge (%)<span class="tooltip-icon" data-tooltip="Maximum allowed battery State of Charge percentage cutoff limit.">?</span></label>
                     <input type="number" min="0" max="100" class="inv-max-charge-pct" value="${inv["max-charge-pct"] || inv.max_charge_pct || 100}">
                 </div>
                 <div class="form-group">
-                    <label>Min Charge (%)</label>
+                    <label>Min Charge (%)<span class="tooltip-icon" data-tooltip="Minimum allowed battery State of Charge percentage cutoff limit.">?</span></label>
                     <input type="number" min="0" max="100" class="inv-min-charge-pct" value="${inv["min-charge-pct"] || inv.min_charge_pct || 10}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="checkbox-group">
                     <input type="checkbox" class="inv-use-total" ${inv["use-total-power"] ? 'checked' : ''}>
-                    <label>Regulate Total Grid Power</label>
+                    <label>Regulate Total Grid Power<span class="tooltip-icon" data-tooltip="When checked, regulates three-phase total grid power instead of single phase.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="inv-grid-control" ${inv["control-grid-power"] ? 'checked' : ''}>
-                    <label>Grid Power Control mode</label>
+                    <label>Grid Power Control mode<span class="tooltip-icon" data-tooltip="Enables active power command regulation for this inverter.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="inv-no-pv" ${inv["no-pv"] || inv.no_pv ? 'checked' : ''}>
-                    <label>Battery only (No PV)</label>
+                    <label>Battery only (No PV)<span class="tooltip-icon" data-tooltip="Check if this inverter has no solar panels attached and operates purely as battery storage.">?</span></label>
                 </div>
             </div>
         </div>
@@ -1471,46 +1471,46 @@ function renderPeriodCard(pName, per) {
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
                 <div class="form-group">
-                    <label>Period Identifier</label>
+                    <label>Period Identifier<span class="tooltip-icon" data-tooltip="Custom label for this control period window (e.g. Peak, Demand, Off-Peak).">?</span></label>
                     <input type="text" class="period-name" value="${pName}">
                 </div>
                 <div class="form-group">
-                    <label>Start Time</label>
+                    <label>Start Time<span class="tooltip-icon" data-tooltip="Start time of the period in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="period-start" value="${per.start || '00:00:00'}">
                 </div>
                 <div class="form-group">
-                    <label>End Time</label>
+                    <label>End Time<span class="tooltip-icon" data-tooltip="End time of the period in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="period-end" value="${per.end || '23:59:59'}">
                 </div>
                 <div class="form-group">
-                    <label>Min SOC (%)</label>
+                    <label>Min SOC (%)<span class="tooltip-icon" data-tooltip="Target minimum battery State of Charge percentage during this period.">?</span></label>
                     <input type="number" class="period-min-charge" value="${per["min-charge"] || 20}">
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label>Force Discharge Rate (W)</label>
+                    <label>Force Discharge Rate (W)<span class="tooltip-icon" data-tooltip="Optional fixed discharge power override in Watts for this period. Leave blank for auto regulation.">?</span></label>
                     <input type="number" class="period-force-discharge" value="${per["force-discharge"] || ''}" placeholder="None">
                 </div>
                 <div class="form-group">
-                    <label>Hysteresis (%)</label>
+                    <label>Hysteresis (%)<span class="tooltip-icon" data-tooltip="Period-specific min charge deadband percentage. Leave blank to use global setting.">?</span></label>
                     <input type="number" class="period-min-charge-hysteresis" value="${per["min-charge-hysteresis"] !== undefined ? per["min-charge-hysteresis"] : ''}" placeholder="e.g. 3">
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-grid-charge" ${per["grid-charge"] ? 'checked' : ''}>
-                    <label>Allow Charging from Grid</label>
+                    <label>Allow Charging from Grid<span class="tooltip-icon" data-tooltip="Allows batteries to charge from grid if SOC falls below minimum during this period.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-grace" ${per.grace ? 'checked' : ''}>
-                    <label>Enable Grace Capacity early stops</label>
+                    <label>Enable Grace Capacity early stops<span class="tooltip-icon" data-tooltip="Provides temporary battery discharge grace buffer when exiting charge period.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-prefer-battery" ${per["prefer-battery"] ? 'checked' : ''}>
-                    <label>Prioritize Battery Charge</label>
+                    <label>Prioritize Battery Charge<span class="tooltip-icon" data-tooltip="Prioritizes charging battery from solar PV before supplying home load.">?</span></label>
                 </div>
                 <div class="checkbox-group">
                     <input type="checkbox" class="period-ignore-cost-margin" ${per["ignore-cost-margin"] ? 'checked' : ''}>
-                    <label>Ignore Cost Margin (Discharge regardless of price)</label>
+                    <label>Ignore Cost Margin (Discharge regardless of price)<span class="tooltip-icon" data-tooltip="Permits battery discharging to meet load/feed-in targets regardless of electricity spot price vs unit cost.">?</span></label>
                 </div>
             </div>
         </div>
@@ -1550,23 +1550,23 @@ function renderTariffTOUPeriodCard(pName, per) {
         <div style="flex: 1; display: flex; flex-direction: column; gap: 10px;">
             <div class="form-row">
                 <div class="form-group">
-                    <label>Period Name</label>
+                    <label>Period Name<span class="tooltip-icon" data-tooltip="Label for this tariff pricing window (e.g. Peak, Shoulder, Off-Peak).">?</span></label>
                     <input type="text" class="tariff-period-name" value="${pName}">
                 </div>
                 <div class="form-group">
-                    <label>Start Time</label>
+                    <label>Start Time<span class="tooltip-icon" data-tooltip="Start time of tariff rate in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="tariff-period-start" value="${per.start || '00:00:00'}">
                 </div>
                 <div class="form-group">
-                    <label>End Time</label>
+                    <label>End Time<span class="tooltip-icon" data-tooltip="End time of tariff rate in HH:MM:SS 24-hour format.">?</span></label>
                     <input type="text" class="tariff-period-end" value="${per.end || '23:59:59'}">
                 </div>
                 <div class="form-group">
-                    <label>Import Rate (c/kWh)</label>
+                    <label>Import Rate (c/kWh)<span class="tooltip-icon" data-tooltip="Grid import purchase cost rate in cents per kWh during this period.">?</span></label>
                     <input type="number" step="0.01" class="tariff-period-import" value="${per.import_rate || 0.0}">
                 </div>
                 <div class="form-group">
-                    <label>Export Rate (c/kWh)</label>
+                    <label>Export Rate (c/kWh)<span class="tooltip-icon" data-tooltip="Feed-in export sell rate in cents per kWh during this period.">?</span></label>
                     <input type="number" step="0.01" class="tariff-period-export" value="${per.export_rate || 0.0}">
                 </div>
             </div>
@@ -1639,11 +1639,11 @@ function renderPvArrayCard(array) {
                     <input type="number" step="1" class="array-capacity" value="${initialCapacity}" readonly style="background: rgba(255,255,255,0.05); color: var(--text-muted);">
                 </div>
                 <div class="form-group">
-                    <label>Tilt (°)</label>
+                    <label>Tilt (°)<span class="tooltip-icon" data-tooltip="Panel tilt angle relative to horizontal (0° flat, 90° vertical roof/wall).">?</span></label>
                     <input type="number" step="0.1" class="array-tilt" value="${array.tilt !== undefined ? array.tilt : 20.0}">
                 </div>
                 <div class="form-group">
-                    <label>Azimuth (°)</label>
+                    <label>Azimuth (°)<span class="tooltip-icon" data-tooltip="Panel compass orientation heading (0° North, 90° East, 180° South, 270° West).">?</span></label>
                     <input type="number" step="0.1" class="array-azimuth" value="${array.azimuth !== undefined ? array.azimuth : 0.0}">
                 </div>
             </div>
@@ -1654,19 +1654,19 @@ function renderPvArrayCard(array) {
             <div style="font-weight: 600; font-size: 0.95em; color: var(--accent); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">2. Panel & Installation Details</div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div class="form-group">
-                    <label>Panel Brand</label>
+                    <label>Panel Brand<span class="tooltip-icon" data-tooltip="Solar panel manufacturer or brand name (e.g. JinkoSolar, Trina, Canadian Solar).">?</span></label>
                     <input type="text" class="array-brand" value="${array.brand || ''}" placeholder="e.g. JinkoSolar">
                 </div>
                 <div class="form-group">
-                    <label>Panel Model</label>
+                    <label>Panel Model<span class="tooltip-icon" data-tooltip="Solar panel model designation string (e.g. Tiger Neo 440W).">?</span></label>
                     <input type="text" class="array-model" value="${array.model || ''}" placeholder="e.g. Tiger Neo">
                 </div>
                 <div class="form-group">
-                    <label>Installation Date</label>
+                    <label>Installation Date<span class="tooltip-icon" data-tooltip="Commissioning or installation date for tracking panel age degradation.">?</span></label>
                     <input type="date" class="array-install-date" value="${array["installation-date"] || array.installation_date || ''}">
                 </div>
                 <div class="form-group">
-                    <label>Panel Quantity</label>
+                    <label>Panel Quantity<span class="tooltip-icon" data-tooltip="Total panel count computed from Series Modules × Parallel Strings.">?</span></label>
                     <input type="number" class="array-quantity" value="${initialQuantity}" placeholder="Calculated" readonly style="background: rgba(255,255,255,0.05); color: var(--text-muted);">
                 </div>
             </div>
@@ -1677,39 +1677,39 @@ function renderPvArrayCard(array) {
             <div style="font-weight: 600; font-size: 0.95em; color: var(--accent); margin-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); padding-bottom: 6px;">3. Electrical Specifications & Temperature Coefficients</div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
                 <div class="form-group">
-                    <label>Series Modules (Qty)</label>
+                    <label>Series Modules (Qty)<span class="tooltip-icon" data-tooltip="Number of solar panels wired in series on this string.">?</span></label>
                     <input type="number" class="array-series" value="${array["series-modules"] || array.series_modules || ''}" placeholder="e.g. 10" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Parallel Strings (Qty)</label>
+                    <label>Parallel Strings (Qty)<span class="tooltip-icon" data-tooltip="Number of parallel string branches connected to this MPPT input.">?</span></label>
                     <input type="number" class="array-parallel" value="${array["parallel-strings"] || array.parallel_strings || ''}" placeholder="e.g. 1" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Open Circuit Voltage Voc (V)</label>
+                    <label>Open Circuit Voltage Voc (V)<span class="tooltip-icon" data-tooltip="Single panel open circuit voltage rating (Voc) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-voc" value="${array.voc || ''}" placeholder="e.g. 39.38">
                 </div>
                 <div class="form-group">
-                    <label>Short Circuit Current Isc (A)</label>
+                    <label>Short Circuit Current Isc (A)<span class="tooltip-icon" data-tooltip="Single panel short circuit current rating (Isc) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-isc" value="${array.isc || ''}" placeholder="e.g. 13.86">
                 </div>
                 <div class="form-group">
-                    <label>Max Power Voltage Vmp (V)</label>
+                    <label>Max Power Voltage Vmp (V)<span class="tooltip-icon" data-tooltip="Single panel maximum power point voltage rating (Vmp) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-vmp" value="${array.vmp || ''}" placeholder="e.g. 32.81" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Max Power Current Imp (A)</label>
+                    <label>Max Power Current Imp (A)<span class="tooltip-icon" data-tooltip="Single panel maximum power point current rating (Imp) at STC.">?</span></label>
                     <input type="number" step="0.01" class="array-imp" value="${array.imp || ''}" placeholder="e.g. 13.41" oninput="updateCalculatedCapacityFromCard(this.closest('.pv-array-card'))">
                 </div>
                 <div class="form-group">
-                    <label>Temp Coeff Voc (%/°C)</label>
+                    <label>Temp Coeff Voc (%/°C)<span class="tooltip-icon" data-tooltip="Temperature coefficient of open circuit voltage in % per degree Celsius.">?</span></label>
                     <input type="number" step="0.001" class="array-coeff-voc" value="${array["temp-coeff-voc"] || array.temp_coeff_voc || ''}" placeholder="e.g. -0.25">
                 </div>
                 <div class="form-group">
-                    <label>Temp Coeff Isc (%/°C)</label>
+                    <label>Temp Coeff Isc (%/°C)<span class="tooltip-icon" data-tooltip="Temperature coefficient of short circuit current in % per degree Celsius.">?</span></label>
                     <input type="number" step="0.001" class="array-coeff-isc" value="${array["temp-coeff-isc"] || array.temp_coeff_isc || ''}" placeholder="e.g. 0.045">
                 </div>
                 <div class="form-group">
-                    <label>Temp Coeff Pmax (%/°C)</label>
+                    <label>Temp Coeff Pmax (%/°C)<span class="tooltip-icon" data-tooltip="Temperature coefficient of maximum power in % per degree Celsius.">?</span></label>
                     <input type="number" step="0.001" class="array-coeff-pmax" value="${array["temp-coeff-pmax"] || array.temp_coeff_pmax || ''}" placeholder="e.g. -0.30">
                 </div>
                 <div class="form-group" style="visibility: hidden; pointer-events: none;">

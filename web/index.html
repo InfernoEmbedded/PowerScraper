@@ -178,7 +178,7 @@
                     </div>
                 </div>
                 <div class="form-group" style="margin-top: 10px;">
-                    <label for="instant-target">Change Grid Target (W)</label>
+                    <label for="instant-target">Change Grid Target (W)<span class="tooltip-icon" data-tooltip="Target active grid power in Watts. Positive values target import; negative values target export. Set to 0 to zero out house usage.">?</span></label>
                     <div style="display: flex; gap: 15px; align-items: center;">
                         <input type="range" id="instant-target-slider" min="-5000" max="5000" step="50" style="flex: 1; accent-color: var(--primary);" oninput="updateTargetText(this.value)">
                         <input type="number" id="instant-target-val" style="width: 100px;" onchange="updateTargetText(this.value)">
@@ -222,21 +222,21 @@
                 <div id="battery-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="battery-source">Grid Power Source (Meter Name)</label>
+                            <label for="battery-source">Grid Power Source (Meter Name)<span class="tooltip-icon" data-tooltip="Name of the main grid meter device providing real-time grid active power telemetry (e.g. MainsMeter or custom-meter).">?</span></label>
                             <input type="text" id="battery-source" placeholder="e.g. MainsMeter">
                         </div>
                         <div class="form-group">
-                            <label for="battery-tz">Grid Timezone</label>
+                            <label for="battery-tz">Grid Timezone<span class="tooltip-icon" data-tooltip="Local timezone identifier used for matching Time-of-Use schedule periods and peak demand windows.">?</span></label>
                             <input type="text" id="battery-tz" placeholder="e.g. AEST-10">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="battery-grid-target">Grid Regulate Target (W)</label>
+                            <label for="battery-grid-target">Grid Regulate Target (W)<span class="tooltip-icon" data-tooltip="Global default grid active power target in Watts. Inverters adjust charge/discharge output continuously to balance house load against this target.">?</span></label>
                             <input type="number" id="battery-grid-target">
                         </div>
                         <div class="form-group">
-                            <label for="battery-init-mode">Initial Mode</label>
+                            <label for="battery-init-mode">Initial Mode<span class="tooltip-icon" data-tooltip="Operating mode loaded on startup: Auto (dynamic regulation), ChargeBatteries (force grid charge), or MaximumFeedin (force max discharge).">?</span></label>
                             <select id="battery-init-mode">
                                 <option value="Auto">Auto</option>
                                 <option value="ChargeBatteries">Charge Batteries</option>
@@ -251,17 +251,17 @@
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="battery-hysteresis">Min Charge Hysteresis (%)</label>
+                            <label for="battery-hysteresis">Min Charge Hysteresis (%)<span class="tooltip-icon" data-tooltip="Deadband percentage added to period minimum SOC limits before exiting grid charge mode, preventing rapid toggling near threshold.">?</span></label>
                             <input type="number" id="battery-hysteresis" min="0" max="50" placeholder="e.g. 3">
                         </div>
                         <div class="form-group">
-                            <label for="battery-auto-margin">Auto Discharge Margin (c/kWh)</label>
+                            <label for="battery-auto-margin">Auto Discharge Margin (c/kWh)<span class="tooltip-icon" data-tooltip="Minimum required spot price margin in cents/kWh above stored battery energy unit cost before automatic discharge is permitted.">?</span></label>
                             <input type="number" step="0.1" id="battery-auto-margin" placeholder="e.g. 2.0 (empty to disable)">
                         </div>
                     </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="battery-linked">
-                        <label for="battery-linked">Enable Linked Batteries (balances charge rates proportionately)</label>
+                        <label for="battery-linked">Enable Linked Batteries (balances charge rates proportionately)<span class="tooltip-icon" data-tooltip="When enabled, coordinates multiple inverters to share discharge and charge targets proportionately based on their active capacity.">?</span></label>
                     </div>
 
                     <div style="margin-top: 30px;">
@@ -301,37 +301,37 @@
                 <div id="mqtt-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="mqtt-broker">Broker Hostname / IP</label>
+                            <label for="mqtt-broker">Broker Hostname / IP<span class="tooltip-icon" data-tooltip="Hostname or IP address of the target MQTT broker (e.g. localhost or 192.168.1.50).">?</span></label>
                             <input type="text" id="mqtt-broker" placeholder="mqtt.example.com">
                         </div>
                         <div class="form-group">
-                            <label for="mqtt-port">Broker Port</label>
+                            <label for="mqtt-port">Broker Port<span class="tooltip-icon" data-tooltip="TCP port for MQTT connection (default 1883 for unencrypted, 8883 for TLS).">?</span></label>
                             <input type="number" id="mqtt-port" placeholder="1883">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="mqtt-username">Username</label>
+                            <label for="mqtt-username">Username<span class="tooltip-icon" data-tooltip="Username credential for logging into the MQTT broker.">?</span></label>
                             <input type="text" id="mqtt-username" placeholder="Optional">
                         </div>
                         <div class="form-group">
-                            <label for="mqtt-password">Password</label>
+                            <label for="mqtt-password">Password<span class="tooltip-icon" data-tooltip="Password credential for logging into the MQTT broker.">?</span></label>
                             <input type="password" id="mqtt-password" placeholder="Optional">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="mqtt-base">Base Topic Path</label>
+                            <label for="mqtt-base">Base Topic Path<span class="tooltip-icon" data-tooltip="Prefix topic path under which all telemetry metrics are published (e.g. sensors or powerscraper).">?</span></label>
                             <input type="text" id="mqtt-base" placeholder="sensors">
                         </div>
                     </div>
                     <div class="checkbox-group">
                         <input type="checkbox" id="mqtt-ha-discovery">
-                        <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery</label>
+                        <label for="mqtt-ha-discovery">Enable Home Assistant MQTT Auto-Discovery<span class="tooltip-icon" data-tooltip="Automatically publishes Home Assistant discovery payloads so all sensors and controls appear in Home Assistant.">?</span></label>
                     </div>
                     <div class="form-row" style="margin-top: 15px;">
                         <div class="form-group" id="mqtt-ha-prefix-group">
-                            <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix</label>
+                            <label for="mqtt-ha-prefix">Home Assistant Auto-Discovery Prefix<span class="tooltip-icon" data-tooltip="Discovery topic prefix monitored by Home Assistant (default homeassistant).">?</span></label>
                             <input type="text" id="mqtt-ha-prefix" placeholder="homeassistant">
                         </div>
                     </div>
@@ -354,16 +354,16 @@
                 <div id="emon-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="emon-server">EmonCMS Server URL</label>
+                            <label for="emon-server">EmonCMS Server URL<span class="tooltip-icon" data-tooltip="Base HTTP URL of your local or remote EmonCMS server (e.g. http://emoncms or http://emoncms.org).">?</span></label>
                             <input type="text" id="emon-server" placeholder="http://emoncms">
                         </div>
                         <div class="form-group">
-                            <label for="emon-timeout">Timeout (seconds)</label>
+                            <label for="emon-timeout">Timeout (seconds)<span class="tooltip-icon" data-tooltip="HTTP connection and request timeout in seconds for EmonCMS posts.">?</span></label>
                             <input type="number" id="emon-timeout">
                         </div>
                     </div>
                     <div class="form-group">
-                        <label for="emon-api">Write API Key</label>
+                        <label for="emon-api">Write API Key<span class="tooltip-icon" data-tooltip="Write API key generated in EmonCMS account settings for posting inputs.">?</span></label>
                         <input type="password" id="emon-api">
                     </div>
                 </div>
@@ -381,31 +381,31 @@
                 <div id="influx-section">
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="influx-url">InfluxDB Server URL</label>
+                            <label for="influx-url">InfluxDB Server URL<span class="tooltip-icon" data-tooltip="HTTP URL of your InfluxDB database instance (e.g. http://localhost:8086).">?</span></label>
                             <input type="text" id="influx-url" placeholder="http://localhost:8086">
                         </div>
                         <div class="form-group">
-                            <label for="influx-db">Target Database Name</label>
+                            <label for="influx-db">Target Database Name<span class="tooltip-icon" data-tooltip="Name of the target InfluxDB database (v1.x) or bucket (v2.x) to write measurement points into.">?</span></label>
                             <input type="text" id="influx-db">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="influx-measurement">Measurement / Table Name</label>
+                            <label for="influx-measurement">Measurement / Table Name<span class="tooltip-icon" data-tooltip="Measurement series name for stored metrics (default powerscraper).">?</span></label>
                             <input type="text" id="influx-measurement">
                         </div>
                         <div class="form-group">
-                            <label for="influx-rp">Retention Policy</label>
+                            <label for="influx-rp">Retention Policy<span class="tooltip-icon" data-tooltip="Retention policy name for controlling data lifespan in InfluxDB 1.x (default autogen).">?</span></label>
                             <input type="text" id="influx-rp" placeholder="autogen">
                         </div>
                     </div>
                     <div class="form-row">
                         <div class="form-group">
-                            <label for="influx-user">Username</label>
+                            <label for="influx-user">Username<span class="tooltip-icon" data-tooltip="Username for InfluxDB basic authentication.">?</span></label>
                             <input type="text" id="influx-user" placeholder="Optional">
                         </div>
                         <div class="form-group">
-                            <label for="influx-pass">Password</label>
+                            <label for="influx-pass">Password<span class="tooltip-icon" data-tooltip="Password for InfluxDB basic authentication.">?</span></label>
                             <input type="password" id="influx-pass" placeholder="Optional">
                         </div>
                     </div>
@@ -418,7 +418,7 @@
             <div class="glass-card">
                 <div class="card-title">Electricity Tariff Settings</div>
                 <div class="form-group">
-                    <label for="tariff-type">Tariff Structure / API Mode</label>
+                    <label for="tariff-type">Tariff Structure / API Mode<span class="tooltip-icon" data-tooltip="Select flat rates, custom Time-of-Use schedule, or dynamic live spot prices via Amber Electric API.">?</span></label>
                     <select id="tariff-type" onchange="toggleTariffType(this.value)">
                         <option value="none">Disabled (No pricing optimization)</option>
                         <option value="flat">Flat Rate (Fixed import/export pricing)</option>
@@ -433,11 +433,11 @@
                 <div class="card-title">Flat Rate Pricing</div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="flat-import-rate">Grid Import Rate (cents/kWh)</label>
+                        <label for="flat-import-rate">Grid Import Rate (cents/kWh)<span class="tooltip-icon" data-tooltip="Fixed electricity grid import purchase cost in cents per kilowatt-hour.">?</span></label>
                         <input type="number" step="0.01" id="flat-import-rate" placeholder="e.g. 30.5">
                     </div>
                     <div class="form-group">
-                        <label for="flat-export-rate">Feed-in Export Rate (cents/kWh)</label>
+                        <label for="flat-export-rate">Feed-in Export Rate (cents/kWh)<span class="tooltip-icon" data-tooltip="Fixed feed-in solar/battery export rate in cents per kilowatt-hour.">?</span></label>
                         <input type="number" step="0.01" id="flat-export-rate" placeholder="e.g. 8.5">
                     </div>
                 </div>
@@ -459,17 +459,17 @@
                 <div class="card-title">Amber Electric API Integration</div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="amber-api-key">Amber API Key / Token</label>
+                        <label for="amber-api-key">Amber API Key / Token<span class="tooltip-icon" data-tooltip="Personal API token generated from your Amber Electric account dashboard.">?</span></label>
                         <input type="password" id="amber-api-key" placeholder="e.g. psk_...">
                     </div>
                     <div class="form-group">
-                        <label for="amber-site-id">Site ID</label>
+                        <label for="amber-site-id">Site ID<span class="tooltip-icon" data-tooltip="Unique NMI site identifier returned by Amber API for your account.">?</span></label>
                         <input type="text" id="amber-site-id" placeholder="e.g. 01H...">
                     </div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="amber-api-url">API Base URL Override</label>
+                        <label for="amber-api-url">API Base URL Override<span class="tooltip-icon" data-tooltip="Optional base URL override for custom or mock Amber API proxy servers.">?</span></label>
                         <input type="text" id="amber-api-url" placeholder="https://api.amber.com.au (Optional)">
                     </div>
                 </div>
@@ -478,17 +478,17 @@
                 
                 <div class="checkbox-group">
                     <input type="checkbox" id="amber-neg-export-prevent">
-                    <label for="amber-neg-export-prevent">Enable Negative Export Prevention (stop exporting or charge when feed-in rate is negative)</label>
+                    <label for="amber-neg-export-prevent">Enable Negative Export Prevention (stop exporting or charge when feed-in rate is negative)<span class="tooltip-icon" data-tooltip="Stops battery/solar export or forces charging when feed-in prices fall below zero.">?</span></label>
                 </div>
 
                 <div style="margin-top: 20px;">
                     <div class="checkbox-group">
                         <input type="checkbox" id="amber-low-price-charge" onchange="toggleFormSection('amber-low-price-group', this.checked)">
-                        <label for="amber-low-price-charge">Enable Low-Price Forced Charging (charge battery from grid when import rate is low)</label>
+                        <label for="amber-low-price-charge">Enable Low-Price Forced Charging (charge battery from grid when import rate is low)<span class="tooltip-icon" data-tooltip="Forces grid charging when import price drops below the specified threshold.">?</span></label>
                     </div>
                     <div id="amber-low-price-group" style="margin-top: 10px; margin-left: 25px;">
                         <div class="form-group" style="max-width: 300px;">
-                            <label for="amber-low-price-threshold">Low-Price Threshold (cents/kWh)</label>
+                            <label for="amber-low-price-threshold">Low-Price Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Import price threshold in c/kWh below which forced grid charging triggers.">?</span></label>
                             <input type="number" step="0.01" id="amber-low-price-threshold" placeholder="e.g. 10.0">
                         </div>
                     </div>
@@ -497,11 +497,11 @@
                 <div style="margin-top: 20px;">
                     <div class="checkbox-group">
                         <input type="checkbox" id="amber-high-price-discharge" onchange="toggleFormSection('amber-high-price-group', this.checked)">
-                        <label for="amber-high-price-discharge">Enable High-Price Forced Discharging (force feed-in when export rate is premium)</label>
+                        <label for="amber-high-price-discharge">Enable High-Price Forced Discharging (force feed-in when export rate is premium)<span class="tooltip-icon" data-tooltip="Forces maximum battery discharge to grid when export spot price exceeds threshold.">?</span></label>
                     </div>
                     <div id="amber-high-price-group" style="margin-top: 10px; margin-left: 25px;">
                         <div class="form-group" style="max-width: 300px;">
-                            <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)</label>
+                            <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Export spot price threshold in c/kWh above which forced grid discharging triggers.">?</span></label>
                             <input type="number" step="0.01" id="amber-high-price-threshold" placeholder="e.g. 60.0">
                         </div>
                     </div>
@@ -521,15 +521,15 @@
                 </div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="demand-start">Demand Period Start Time</label>
+                        <label for="demand-start">Demand Period Start Time<span class="tooltip-icon" data-tooltip="Start time of daily peak demand billing window (e.g. 17:00:00).">?</span></label>
                         <input type="time" id="demand-start">
                     </div>
                     <div class="form-group">
-                        <label for="demand-end">Demand Period End Time</label>
+                        <label for="demand-end">Demand Period End Time<span class="tooltip-icon" data-tooltip="End time of daily peak demand billing window (e.g. 20:00:00).">?</span></label>
                         <input type="time" id="demand-end">
                     </div>
                     <div class="form-group">
-                        <label for="demand-rate">Daily Demand Rate ($/kW/day)</label>
+                        <label for="demand-rate">Daily Demand Rate ($/kW/day)<span class="tooltip-icon" data-tooltip="Network demand charge penalty rate per peak kW per day during demand window.">?</span></label>
                         <input type="number" step="0.0001" id="demand-rate" placeholder="e.g. 0.155">
                     </div>
                 </div>
@@ -545,11 +545,11 @@
                 </p>
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="location-lat">Latitude</label>
+                        <label for="location-lat">Latitude<span class="tooltip-icon" data-tooltip="Geographic latitude coordinate (decimal degrees) used for solar position and forecast modeling.">?</span></label>
                         <input type="number" step="0.000001" id="location-lat" placeholder="e.g. -33.8688">
                     </div>
                     <div class="form-group">
-                        <label for="location-lon">Longitude</label>
+                        <label for="location-lon">Longitude<span class="tooltip-icon" data-tooltip="Geographic longitude coordinate (decimal degrees) used for solar position and forecast modeling.">?</span></label>
                         <input type="number" step="0.000001" id="location-lon" placeholder="e.g. 151.2093">
                     </div>
                 </div>
@@ -574,7 +574,7 @@
                 </p>
                 <div class="form-row" style="align-items: flex-end;">
                     <div class="form-group" style="max-width: 250px;">
-                        <label for="sim-range">Telemetry Historical Range</label>
+                        <label for="sim-range">Telemetry Historical Range<span class="tooltip-icon" data-tooltip="Historical telemetry timeframe loaded from local database for model simulation.">?</span></label>
                         <select id="sim-range" style="width: 100%;">
                             <option value="1d">Past 24 Hours</option>
                             <option value="1w">Past 7 Days</option>
@@ -717,27 +717,27 @@
                 
                 <div class="checkbox-group" style="margin-bottom: 20px;">
                     <input type="checkbox" id="tune-seed" checked>
-                    <label for="tune-seed">Seed with current parameters (Additional Training)</label>
+                    <label for="tune-seed">Seed with current parameters (Additional Training)<span class="tooltip-icon" data-tooltip="Include current system parameters in initial genetic algorithm population as a starting baseline.">?</span></label>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="tune-generations">Generations Count</label>
+                        <label for="tune-generations">Generations Count<span class="tooltip-icon" data-tooltip="Number of evolutionary algorithm iterations run to optimize parameter fitness.">?</span></label>
                         <input type="number" id="tune-generations" value="300" min="10" max="10000">
                     </div>
                     <div class="form-group">
-                        <label for="tune-popsize">Population Size</label>
+                        <label for="tune-popsize">Population Size<span class="tooltip-icon" data-tooltip="Number of candidate parameter individuals evaluated in each generation pool.">?</span></label>
                         <input type="number" id="tune-popsize" value="40" min="10" max="200">
                     </div>
                 </div>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="tune-penalty">Battery Cycle Penalty (cents/cycle)</label>
+                        <label for="tune-penalty">Battery Cycle Penalty (cents/cycle)<span class="tooltip-icon" data-tooltip="Economic degradation penalty cost per full equivalent battery cycle to prevent unnecessary shallow cycling.">?</span></label>
                         <input type="number" step="0.1" id="tune-penalty" value="35.0" min="0" max="1000">
                     </div>
                     <div class="form-group">
-                        <label for="tune-cores">CPU Core Limit</label>
+                        <label for="tune-cores">CPU Core Limit<span class="tooltip-icon" data-tooltip="Maximum parallel worker threads allocated for genetic algorithm simulation runs.">?</span></label>
                         <select id="tune-cores">
                             <option value="auto">Auto (All-1 Cores)</option>
                             <option value="1">Low CPU (1 Core)</option>
@@ -1024,7 +1024,7 @@
         <div class="modal-content glass-card">
             <div class="card-title" style="margin-bottom: 15px;">Add New Driver</div>
             <div class="form-group">
-                <label for="new-driver-type">Driver Type</label>
+                <label for="new-driver-type">Driver Type<span class="tooltip-icon" data-tooltip="Select hardware module driver type to communicate with your inverter or meter.">?</span></label>
                 <select id="new-driver-type" style="width: 100%; margin-top: 5px;">
                     <option value="Solax-Wifi">SolaX Wi-Fi HTTP API</option>
                     <option value="Solax-Modbus">SolaX Modbus TCP (Standard)</option>
