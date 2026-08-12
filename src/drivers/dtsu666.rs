@@ -132,10 +132,6 @@ pub async fn run_dtsu666_driver(
 
         let ctx = ctx_opt.as_mut().unwrap();
         let timeout_dur = Duration::from_secs_f64(config.timeout);
-
-        println!("DTSU666 [{}] Polling register blocks...", device_name);
-        let poll_start = tokio::time::Instant::now();
-
         let read_res = tokio::time::timeout(timeout_dur, async {
             // Split into <= 60 register chunks to comply with Modbus RTU transaction limits
             let part1 = ctx.read_input_registers(0x2000, 40).await?;
@@ -149,10 +145,6 @@ pub async fn run_dtsu666_driver(
 
         match read_res {
             Ok(Ok((reg1, reg2))) => {
-                println!(
-                    "DTSU666 [{}] Register blocks read OK (reg1: {}, reg2: {} in {:.1}ms)",
-                    device_name, reg1.len(), reg2.len(), poll_start.elapsed().as_secs_f64() * 1000.0
-                );
                 let mut vals = HashMap::new();
                 vals.insert("name".to_string(), device_name.clone());
 
@@ -277,10 +269,6 @@ pub async fn run_dtsu666_driver(
                         Ok(_) => {
                             last_success_ts.store(chrono::Utc::now().timestamp() as u64, std::sync::atomic::Ordering::Relaxed);
                             last_successful_read = tokio::time::Instant::now();
-                            println!(
-                                "DTSU666 [{}] Dispatched {} telemetry metrics successfully.",
-                                device_name, metric_count
-                            );
                         }
                         Err(e) => {
                             println!(
@@ -293,8 +281,8 @@ pub async fn run_dtsu666_driver(
             }
             Ok(Err(e)) => {
                 println!(
-                    "DTSU666 [{}] read error: {}, resetting connection (after {:.1}ms)",
-                    device_name, e, poll_start.elapsed().as_secs_f64() * 1000.0
+                    "DTSU666 [{}] read error: {}, resetting connection",
+                    device_name, e
                 );
                 ctx_opt = None;
             }

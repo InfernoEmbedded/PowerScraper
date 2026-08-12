@@ -1097,6 +1097,13 @@ pub fn get_monthly_peak_draw(db_path: &str, topic: &str, since_timestamp: i64) -
 }
 
 pub fn delete_and_save_solar_forecast_with_conn(conn: &mut Connection, predictions: &[(i64, f64)]) -> Result<(), String> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS solar_forecast (
+            timestamp INTEGER PRIMARY KEY,
+            predicted_solar_w REAL NOT NULL
+        )",
+        [],
+    ).map_err(|e| e.to_string())?;
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM solar_forecast", []).map_err(|e| e.to_string())?;
     {

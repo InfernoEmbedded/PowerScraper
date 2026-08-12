@@ -1,7 +1,10 @@
 use crate::config::MqttBrokerConfig;
 use rumqttc::{AsyncClient, EventLoop, MqttOptions, QoS};
 use serde_json::json;
+use std::collections::{HashMap, VecDeque};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::sync::Notify;
 
 pub fn create_mqtt_client(client_id: &str, config: &MqttBrokerConfig) -> (AsyncClient, EventLoop) {
     let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")
@@ -323,6 +326,122 @@ pub async fn publish_home_assistant_discovery(
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnqueuedMqttMessage {
+    pub topic: String,
+    pub qos: QoS,
+    pub retain: bool,
+    pub payload: Vec<u8>,
+}
+
+/// Thread-safe deduplicating queue wrapper for MQTT publishes.
+/// When enqueueing a message whose topic matches an existing queued topic,
+/// the older message payload/qos/retain is replaced with the new parameters,
+/// dropping the older message to prevent MQTT broker flooding.
+#[derive(Clone)]
+pub struct MqttEnqueueWrapper {
+    inner: Arc<Mutex<MqttQueueState>>,
+    notify: Arc<Notify>,
+}
+
+#[derive(Default)]
+struct MqttQueueState {
+    order: VecDeque<String>,
+    messages: HashMap<String, EnqueuedMqttMessage>,
+}
+
+impl Default for MqttEnqueueWrapper {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MqttEnqueueWrapper {
+    pub fn new() -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(MqttQueueState::default())),
+            notify: Arc::new(Notify::new()),
+        }
+    }
+
+    /// Enqueues an MQTT publish message.
+    /// If `topic` is already present in the queue, the older queued message for that topic
+    /// is dropped and replaced with the new payload and settings.
+    pub fn enqueue<T, P>(&self, topic: T, qos: QoS, retain: bool, payload: P)
+    where
+        T: Into<String>,
+        P: Into<Vec<u8>>,
+    {
+        let topic = topic.into();
+        let payload = payload.into();
+        let msg = EnqueuedMqttMessage {
+            topic: topic.clone(),
+            qos,
+            retain,
+            payload,
+        };
+
+        let mut state = self.inner.lock().unwrap();
+        if state.messages.insert(topic.clone(), msg).is_none() {
+            // Topic was not previously queued; add topic to FIFO ordering queue
+            state.order.push_back(topic);
+        }
+        self.notify.notify_one();
+    }
+
+    /// Pops the next queued message for sending.
+    pub fn pop(&self) -> Option<EnqueuedMqttMessage> {
+        let mut state = self.inner.lock().unwrap();
+        while let Some(topic) = state.order.pop_front() {
+            if let Some(msg) = state.messages.remove(&topic) {
+                return Some(msg);
+            }
+        }
+        None
+    }
+
+    /// Asynchronously waits until a message is queued and pops it.
+    pub async fn dequeue_async(&self) -> EnqueuedMqttMessage {
+        loop {
+            if let Some(msg) = self.pop() {
+                return msg;
+            }
+            self.notify.notified().await;
+        }
+    }
+
+    /// Returns the number of unique topics currently queued.
+    pub fn len(&self) -> usize {
+        let state = self.inner.lock().unwrap();
+        state.messages.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Clears all pending messages from the queue.
+    pub fn clear(&self) {
+        let mut state = self.inner.lock().unwrap();
+        state.order.clear();
+        state.messages.clear();
+    }
+
+    /// Spawns a Tokio background task that continuously dequeues messages
+    /// and publishes them via the provided `rumqttc::AsyncClient`.
+    pub fn spawn_worker(&self, client: AsyncClient) -> tokio::task::JoinHandle<()> {
+        let wrapper = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let msg = wrapper.dequeue_async().await;
+                if let Err(e) = client.publish(&msg.topic, msg.qos, msg.retain, msg.payload).await {
+                    eprintln!("MqttEnqueueWrapper worker publish error on {}: {}", msg.topic, e);
+                }
+            }
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -519,5 +638,57 @@ mod tests {
         let (client, _eventloop) = create_mqtt_client("test_id", &config);
         // Clean cleanup - we don't start the loop, just verify instantiation
         drop(client);
+    }
+
+    #[tokio::test]
+    async fn test_mqtt_enqueue_wrapper_deduplication() {
+        let wrapper = MqttEnqueueWrapper::new();
+        assert!(wrapper.is_empty());
+        assert_eq!(wrapper.len(), 0);
+
+        // Enqueue topic 1 twice with different payloads
+        wrapper.enqueue("sensors/solax1/power", QoS::AtLeastOnce, false, "100.0");
+        assert_eq!(wrapper.len(), 1);
+
+        wrapper.enqueue("sensors/solax1/power", QoS::AtLeastOnce, false, "250.5");
+        // Length should still be 1 (older topic payload dropped)
+        assert_eq!(wrapper.len(), 1);
+
+        // Enqueue a second topic
+        wrapper.enqueue("sensors/solax1/voltage", QoS::AtLeastOnce, false, "230.1");
+        assert_eq!(wrapper.len(), 2);
+
+        // Dequeue first message -> should be updated payload "250.5"
+        let msg1 = wrapper.pop().unwrap();
+        assert_eq!(msg1.topic, "sensors/solax1/power");
+        assert_eq!(msg1.payload, b"250.5");
+
+        // Dequeue second message -> voltage
+        let msg2 = wrapper.pop().unwrap();
+        assert_eq!(msg2.topic, "sensors/solax1/voltage");
+        assert_eq!(msg2.payload, b"230.1");
+
+        assert!(wrapper.is_empty());
+        assert!(wrapper.pop().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mqtt_enqueue_wrapper_async_dequeue_and_clear() {
+        let wrapper = MqttEnqueueWrapper::default();
+        wrapper.enqueue("sensors/test", QoS::AtMostOnce, true, "hello");
+        assert_eq!(wrapper.len(), 1);
+
+        let wrapper_clone = wrapper.clone();
+        let handle = tokio::spawn(async move {
+            wrapper_clone.dequeue_async().await
+        });
+
+        let msg = handle.await.unwrap();
+        assert_eq!(msg.topic, "sensors/test");
+        assert_eq!(msg.payload, b"hello");
+
+        wrapper.enqueue("sensors/test2", QoS::AtLeastOnce, false, "data");
+        wrapper.clear();
+        assert!(wrapper.is_empty());
     }
 }

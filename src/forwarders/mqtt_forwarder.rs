@@ -79,6 +79,8 @@ impl MQTTForwarder {
 
         let announced_metrics: Arc<Mutex<HashSet<(String, String)>>> = Arc::new(Mutex::new(HashSet::new()));
         let mut currently_connected = false;
+        let enqueue_wrapper = crate::mqtt_helper::MqttEnqueueWrapper::new();
+        let _worker = enqueue_wrapper.spawn_worker(client.clone());
 
         loop {
             tokio::select! {
@@ -93,7 +95,7 @@ impl MQTTForwarder {
                     for (metric_name, val) in batch.metrics {
                         let topic = format!("{}/{}/{}", base_topic, batch.device_name, metric_name);
                         let payload_str = val.to_string();
-                        let _ = client.publish(&topic, QoS::AtLeastOnce, false, payload_str).await;
+                        enqueue_wrapper.enqueue(&topic, QoS::AtLeastOnce, false, payload_str);
 
                         if discovery_enabled {
                             let key = (batch.device_name.clone(), metric_name.clone());
