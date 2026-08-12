@@ -64,8 +64,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Starting PowerScraper (v{})...", env!("CARGO_PKG_VERSION"));
 
-    #[cfg(unix)]
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+
 
     let db_path = "config.db".to_string();
 
@@ -96,10 +95,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Create channel for reload trigger
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(1);
 
+    // Create top-level cancellation token for web server
+    let web_cancel_token = tokio_util::sync::CancellationToken::new();
+
     // Spawn Web server on dedicated thread
     let db_path_clone = db_path.clone();
+    let web_cancel_clone = web_cancel_token.clone();
     tokio::spawn(async move {
-        PowerScraper::web_server::run_web_server(reload_tx, db_path_clone).await;
+        PowerScraper::web_server::run_web_server(reload_tx, db_path_clone, web_cancel_clone).await;
     });
 
     // Spawn watchdog task to detect MainsMeter freezes and restart process
@@ -528,6 +531,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ = signal::ctrl_c() => {
                 println!("Shutdown signal (Ctrl-C) received. Exiting...");
                 systemd_notify("STOPPING=1");
+                web_cancel_token.cancel();
                 cancel_token.cancel();
                 PowerScraper::database::flush_pending_history_to_db(&db_path, None);
                 std::process::exit(0);
@@ -546,6 +550,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 println!("Shutdown signal (SIGTERM) received. Exiting...");
                 systemd_notify("STOPPING=1");
+                web_cancel_token.cancel();
                 cancel_token.cancel();
                 PowerScraper::database::flush_pending_history_to_db(&db_path, None);
                 std::process::exit(0);

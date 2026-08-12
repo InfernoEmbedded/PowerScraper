@@ -140,6 +140,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     println!("Starting Web UI Test Server on port 3000...");
-    PowerScraper::web_server::run_web_server(reload_tx, db_path).await;
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+    PowerScraper::web_server::run_web_server(reload_tx, db_path, cancel_token).await;
     Ok(())
 }

@@ -550,7 +550,7 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                                 .ok()
                                 .and_then(|c| c.history)
                                 .and_then(|h| h.retention_days);
-                            let flushed_count = crate::database::flush_pending_history_to_db(&path, retention_days);
+                            let flushed_count = crate::database::flush_pending_history_to_db(&path, None);
                             let flush_dur = t_flush.elapsed().as_secs_f64() * 1000.0;
 
                             let (records, raw_count, topic_dur, query_decimate_dur) =
@@ -912,9 +912,18 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
         .layer(CorsLayer::permissive())
 }
 
-pub async fn run_web_server_with_listener(reload_tx: Sender<()>, db_path: String, listener: tokio::net::TcpListener) {
+pub async fn run_web_server_with_listener(
+    reload_tx: Sender<()>,
+    db_path: String,
+    listener: tokio::net::TcpListener,
+    cancel_token: tokio_util::sync::CancellationToken,
+) {
     let app = build_web_app(reload_tx, db_path);
-    axum::serve(listener, app).await.unwrap();
+    let _ = axum::serve(listener, app)
+        .with_graceful_shutdown(async move {
+            cancel_token.cancelled().await;
+        })
+        .await;
 }
 
 #[derive(serde::Serialize, Clone, Debug, Default)]
@@ -1246,20 +1255,30 @@ pub async fn handle_training_progress() -> impl IntoResponse {
         .keep_alive(axum::response::sse::KeepAlive::default())
 }
 
-pub async fn run_web_server(reload_tx: Sender<()>, db_path: String) {
+pub async fn run_web_server(
+    reload_tx: Sender<()>,
+    db_path: String,
+    cancel_token: tokio_util::sync::CancellationToken,
+) {
     let mut retries = 0;
     let listener = loop {
+        if cancel_token.is_cancelled() {
+            return;
+        }
         match tokio::net::TcpListener::bind("0.0.0.0:3000").await {
             Ok(l) => break l,
             Err(e) => {
                 retries += 1;
                 eprintln!("[Web Server] Failed to bind 0.0.0.0:3000 (attempt {}): {}. Retrying in 1s...", retries, e);
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                tokio::select! {
+                    _ = cancel_token.cancelled() => return,
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
+                }
             }
         }
     };
     println!("Web UI and REST API running at http://localhost:3000");
-    run_web_server_with_listener(reload_tx, db_path, listener).await;
+    run_web_server_with_listener(reload_tx, db_path, listener, cancel_token).await;
 }
 
 async fn serve_dashboard() -> Html<&'static str> {
