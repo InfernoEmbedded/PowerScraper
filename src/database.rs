@@ -81,13 +81,13 @@ where
                 }).unwrap_or(false);
 
                 let recv_res = if is_in_tokio {
-                    tokio::task::block_in_place(|| resp_rx.recv())
+                    tokio::task::block_in_place(|| resp_rx.recv_timeout(std::time::Duration::from_secs(3)))
                 } else {
-                    resp_rx.recv()
+                    resp_rx.recv_timeout(std::time::Duration::from_secs(3))
                 };
                 match recv_res {
                     Ok(res) => return res,
-                    Err(e) => return Err(format!("DB writer channel dropped: {}", e)),
+                    Err(e) => return Err(format!("DB writer response timeout/dropped: {}", e)),
                 }
             }
             return Err("DB writer channel send failed".to_string());
