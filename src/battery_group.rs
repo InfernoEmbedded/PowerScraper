@@ -273,12 +273,24 @@ impl BatteryGroup {
                 }
                 assist_needed.insert(name.clone(), assist);
 
+                // Store command
+                let command_power = if inv_cfg.control_grid_power {
+                    let pv_power = state.pv1_power + state.pv2_power;
+                    if pv_power > 0.0 {
+                        let house_load = (pv_power + state.measured_power + state.battery_power).max(0.0);
+                        let grid_cmd = pv_power - house_load + p;
+                        -grid_cmd as i32
+                    } else {
+                        -p as i32
+                    }
+                } else {
+                    -p as i32
+                };
+
                 // Save the calculated discharge_power back into the inverter state!
                 state.discharge_power = p;
                 inverters_state.insert(name.clone(), state);
 
-                // Store command
-                let command_power = -p as i32;
                 commanded_powers.insert(name.clone(), command_power);
 
                 // Update web status
@@ -528,5 +540,58 @@ mod tests {
         // Efficiency 0.0 or negative should default to 1.0
         group.step(&allocations, 1.0, -0.5);
         assert_eq!(group.batteries[0].current_soc_pct, 60.0);
+    }
+
+    #[test]
+    fn test_control_grid_power_moderation() {
+        let mut bat = make_test_battery("A", 50.0, 10000.0);
+        bat.max_charge_power_w = 5000.0;
+        let group = BatteryGroup::new(vec![bat]);
+
+        let mut inv_cfg = crate::config::BatteryControlInverter::default();
+        inv_cfg.max_charge = 5000.0;
+        inv_cfg.max_discharge = 5000.0;
+        inv_cfg.control_grid_power = true;
+
+        let mut configs = HashMap::new();
+        configs.insert("A".to_string(), inv_cfg);
+
+        let mut states = HashMap::new();
+        let mut inv_state = crate::power_manager::InverterState::default();
+        inv_state.has_telemetry = true;
+        inv_state.battery_capacity = 50;
+        inv_state.pv1_power = 8000.0;
+        inv_state.measured_power = -2000.0; // exporting 2000W
+        inv_state.battery_power = -5000.0; // charging 5000W
+        states.insert("A".to_string(), inv_state);
+
+        let mut assist = HashMap::new();
+        let mut commanded = HashMap::new();
+        let period = crate::config::BatteryControlPeriod {
+            start: "00:00:00".to_string(),
+            end: "23:59:59".to_string(),
+            min_charge: 10,
+            grid_charge: false,
+            force_discharge: None,
+            grace: false,
+            prefer_battery: false,
+            min_charge_hysteresis: None,
+        };
+
+        // Target: -5000W (charge 5000W).
+        // House load = (8000 + (-2000) + (-5000)).max(0.0) = 1000W.
+        // grid_cmd = 8000 - 1000 + (-5000) = 2000W export.
+        let cmds = group.calculate_and_constrain(
+            -5000.0,
+            &configs,
+            &mut states,
+            &mut assist,
+            &mut commanded,
+            crate::power_manager::PowerManagerMode::Auto,
+            &period,
+            1.0,
+        );
+
+        assert_eq!(*cmds.get("A").unwrap(), -2000);
     }
 }
