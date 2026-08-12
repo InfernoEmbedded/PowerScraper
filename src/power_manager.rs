@@ -509,6 +509,8 @@ pub struct PowerManager {
     pub battery_total_cost: f64,
     pub battery_energy_kwh: f64,
     pub inferred_battery_capacities: HashMap<String, f64>,
+    last_mode: Option<PowerManagerMode>,
+    last_period_name: Option<String>,
 }
 
 impl PowerManager {
@@ -609,6 +611,8 @@ impl PowerManager {
             battery_total_cost: 0.0,
             battery_energy_kwh: 0.0,
             inferred_battery_capacities: HashMap::new(),
+            last_mode: None,
+            last_period_name: None,
         }
     }
 
@@ -873,27 +877,41 @@ impl PowerManager {
 
             let any_low_capacity = self.check_low_capacity(&global_group.batteries, &period);
 
+            let current_period_key = format!("{}-{}", period.start, period.end);
+            if self.last_mode != Some(self.mode) || self.last_period_name.as_ref() != Some(&current_period_key) {
+                self.total_discharge_power = 0.0;
+                self.last_mode = Some(self.mode);
+                self.last_period_name = Some(current_period_key);
+            }
+
             let target_power = match self.mode {
-                PowerManagerMode::ChargeBatteries => -max_total_charge,
-                PowerManagerMode::MaximumFeedin => max_total_discharge,
+                PowerManagerMode::ChargeBatteries => {
+                    self.total_discharge_power = 0.0;
+                    -max_total_charge
+                }
+                PowerManagerMode::MaximumFeedin => {
+                    self.total_discharge_power = 0.0;
+                    max_total_discharge
+                }
                 PowerManagerMode::Auto => {
-                    let total_error = self.total_power - self.grid_target;
-                    let now = std::time::Instant::now();
-                    if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
-                        self.total_discharge_power += total_error * 0.1;
-                    }
-                    self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
-
-                    let rates = self.tariff_manager.get_current_rates();
-                    if !self.allow_auto_discharge(&rates) {
-                        self.total_discharge_power = self.total_discharge_power.min(0.0);
-                    }
-
                     if period.grid_charge && any_low_capacity {
+                        self.total_discharge_power = 0.0;
                         -max_total_charge
                     } else if any_low_capacity && period.prefer_battery {
+                        self.total_discharge_power = 0.0;
                         (-total_pv).max(-max_total_charge)
                     } else {
+                        let total_error = self.total_power - self.grid_target;
+                        let now = std::time::Instant::now();
+                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                            self.total_discharge_power += total_error * 0.1;
+                        }
+                        self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
+
+                        let rates = self.tariff_manager.get_current_rates();
+                        if !self.allow_auto_discharge(&rates) {
+                            self.total_discharge_power = self.total_discharge_power.min(0.0);
+                        }
                         self.total_discharge_power
                     }
                 }
@@ -4219,6 +4237,7 @@ mod tests {
             discharge_power: 100.0, // > 0
             ..Default::default()
         };
+        pm.linked_batteries = false;
         pm.inverters.insert("solax1".to_string(), state_low_cap);
         // phase power is positive, so it tries to discharge
         pm.total_power = 200.0;
@@ -4455,16 +4474,16 @@ mod tests {
         let cmd = pm.evaluate_and_command("solax1");
         assert_eq!(cmd, Some(-3000));
 
-        // 4. Transition back to Auto: should continue Auto regulation from last total_discharge_power (40W)
-        pm.mode = PowerManagerMode::Auto;
+        // 4. Transition back to Auto: total_discharge_power resets to 0.0 on mode transition.
         // set grid power to -200W (feed in 200W).
         // error = -200 - 0 = -200.
-        // total_discharge_power += -200 * 0.1 = -20W -> 40 - 20 = 20W.
-        // returns -20.
+        // total_discharge_power = 0 + (-200 * 0.1) = -20W.
+        // returns 20 (charge 20W).
+        pm.mode = PowerManagerMode::Auto;
         pm.total_power = -200.0;
         pm.last_regulation_update = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let cmd = pm.evaluate_and_command("solax1");
-        assert_eq!(cmd, Some(-20));
+        assert_eq!(cmd, Some(20));
     }
 
     #[test]
@@ -4527,19 +4546,19 @@ mod tests {
         assert_eq!(cmd2, Some(-1500));
 
         // 4. Transition back to Auto (linked)
-        // should continue Auto regulation from last total_discharge_power (60W).
+        // total_discharge_power resets to 0.0 on mode transition.
         // Let's set grid power to -300W (feed in 300W).
         // error = -300.
-        // total_discharge_power += -300 * 0.1 = -30W -> 60 - 30 = 30W.
-        // inv_state.discharge_power = 30 / 2 = 15W.
-        // returns -15 for both.
+        // total_discharge_power = 0 + (-300 * 0.1) = -30W.
+        // inv_state.discharge_power = -30 / 2 = -15W.
+        // returns 15 (charge 15W) for both.
         pm.mode = PowerManagerMode::Auto;
         pm.total_power = -300.0;
         pm.last_regulation_update = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let cmd1 = pm.evaluate_and_command("solax1");
         let cmd2 = pm.evaluate_and_command("solax2");
-        assert_eq!(cmd1, Some(-15));
-        assert_eq!(cmd2, Some(-15));
+        assert_eq!(cmd1, Some(15));
+        assert_eq!(cmd2, Some(15));
 
         // Let's test with linked_batteries = false
         let config_unlinked = SolaxBatteryControlConfig {
