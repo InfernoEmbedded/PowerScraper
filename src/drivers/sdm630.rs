@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::time::{Duration, sleep};
 use tokio_modbus::client::{Context, Reader, rtu};
 use tokio_modbus::prelude::Slave;
-use tokio_serial::{Parity, SerialStream, StopBits};
+use tokio_serial::{ClearBuffer, Parity, SerialPort, SerialStream, StopBits};
 use tokio_util::sync::CancellationToken;
 
 fn float32(registers: &[u16], base: usize, addr: usize) -> f32 {
@@ -39,7 +39,8 @@ async fn connect_serial_meter(
         .stop_bits(serial_stopbits)
         .timeout(Duration::from_secs_f64(config.timeout));
 
-    let port = SerialStream::open(&builder)?;
+    let mut port = SerialStream::open(&builder)?;
+    let _ = port.clear(ClearBuffer::All);
     let ctx = rtu::attach_slave(port, Slave(1));
     Ok(ctx)
 }
@@ -79,34 +80,79 @@ pub async fn run_sdm630_driver(
         }
 
         let ctx = ctx_opt.as_mut().unwrap();
-        let timeout_dur = Duration::from_secs_f64(config.timeout);
+        let timeout_dur = Duration::from_secs_f64(config.timeout.max(1.0));
         let should_poll_extended = match last_extended_poll {
             None => true,
             Some(last) => last.elapsed() >= extended_poll_interval,
         };
 
-        let read_res = tokio::time::timeout(timeout_dur, async {
-            let reg1 = ctx.read_input_registers(0x0000, 60).await?;
-            let reg2 = ctx.read_input_registers(0x003C, 48).await?;
-            let (reg3_opt, reg4_opt, reg5_opt) = if should_poll_extended {
-                let r3 = ctx.read_input_registers(0x00C8, 8).await?;
-                let r4 = ctx.read_input_registers(0x00E0, 46).await?;
-                let r5 = ctx.read_input_registers(0x014E, 48).await?;
-                (Some(r3), Some(r4), Some(r5))
-            } else {
-                (None, None, None)
-            };
-            Ok::<_, std::io::Error>((reg1, reg2, reg3_opt, reg4_opt, reg5_opt))
-        })
-        .await;
+        // Query critical register block 1 (voltages, currents, phase powers, total active power)
+        let reg1_res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x0000, 60)).await;
+        let reg1 = match reg1_res {
+            Ok(Ok(data)) => data,
+            Ok(Err(e)) => {
+                println!(
+                    "SDM630 [{}] reg1 read error: {}, resetting connection",
+                    device_name, e
+                );
+                ctx_opt = None;
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            Err(_) => {
+                println!(
+                    "SDM630 [{}] reg1 timeout, resetting connection",
+                    device_name
+                );
+                ctx_opt = None;
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
 
-        match read_res {
-            Ok(Ok((reg1, reg2, reg3_opt, reg4_opt, reg5_opt))) => {
-                if should_poll_extended {
-                    last_extended_poll = Some(tokio::time::Instant::now());
-                }
-                let mut vals = HashMap::new();
-                vals.insert("name".to_string(), device_name.clone());
+        // Query critical register block 2 (total PF, frequency, import/export kWh)
+        let reg2_res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x003C, 48)).await;
+        let reg2 = match reg2_res {
+            Ok(Ok(data)) => data,
+            Ok(Err(e)) => {
+                println!(
+                    "SDM630 [{}] reg2 read error: {}, resetting connection",
+                    device_name, e
+                );
+                ctx_opt = None;
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+            Err(_) => {
+                println!(
+                    "SDM630 [{}] reg2 timeout, resetting connection",
+                    device_name
+                );
+                ctx_opt = None;
+                sleep(Duration::from_millis(100)).await;
+                continue;
+            }
+        };
+
+        let mut reg3_opt = None;
+        let mut reg4_opt = None;
+        let mut reg5_opt = None;
+
+        if should_poll_extended {
+            if let Ok(Ok(data)) = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00C8, 8)).await {
+                reg3_opt = Some(data);
+            }
+            if let Ok(Ok(data)) = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00E0, 46)).await {
+                reg4_opt = Some(data);
+            }
+            if let Ok(Ok(data)) = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x014E, 48)).await {
+                reg5_opt = Some(data);
+            }
+            last_extended_poll = Some(tokio::time::Instant::now());
+        }
+
+        let mut vals = HashMap::new();
+        vals.insert("name".to_string(), device_name.clone());
 
                 if reg1.len() >= 60 {
                     let base = 0x0000;
@@ -488,22 +534,6 @@ pub async fn run_sdm630_driver(
                     };
                     let _ = tx_telemetry.try_send(batch);
                 }
-            }
-            Ok(Err(e)) => {
-                println!(
-                    "SDM630 [{}] read error: {}, resetting connection",
-                    device_name, e
-                );
-                ctx_opt = None;
-            }
-            Err(_) => {
-                println!(
-                    "SDM630 [{}] read timeout, resetting connection",
-                    device_name
-                );
-                ctx_opt = None;
-            }
-        }
 
         tokio::select! {
             _ = cancel_token.cancelled() => break,

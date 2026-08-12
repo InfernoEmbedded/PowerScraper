@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tokio::time::{Duration, sleep};
 use tokio_modbus::client::{Context, Reader, rtu};
 use tokio_modbus::prelude::Slave;
-use tokio_serial::{Parity, SerialStream, StopBits};
+use tokio_serial::{ClearBuffer, Parity, SerialPort, SerialStream, StopBits};
 use tokio_util::sync::CancellationToken;
 
 fn float32(registers: &[u16], base: usize, addr: usize) -> f32 {
@@ -39,7 +39,8 @@ async fn connect_serial_meter(
         .stop_bits(serial_stopbits)
         .timeout(Duration::from_secs_f64(config.timeout));
 
-    let port = SerialStream::open(&builder)?;
+    let mut port = SerialStream::open(&builder)?;
+    let _ = port.clear(ClearBuffer::All);
     let ctx = rtu::attach_slave(port, Slave(1));
     Ok(ctx)
 }
