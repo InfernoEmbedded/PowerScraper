@@ -77,7 +77,11 @@ where
                 responder: Some(resp_tx),
             };
             if writer.tx.send(msg).is_ok() {
-                let recv_res = if tokio::runtime::Handle::try_current().is_ok() {
+                let is_in_tokio = std::panic::catch_unwind(|| {
+                    tokio::runtime::Handle::try_current().is_ok()
+                }).unwrap_or(false);
+
+                let recv_res = if is_in_tokio {
                     tokio::task::block_in_place(|| resp_rx.blocking_recv())
                 } else {
                     resp_rx.blocking_recv()

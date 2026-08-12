@@ -50,8 +50,10 @@ fn systemd_notify(_state: &str) {
 }
 
 extern "C" fn flush_on_exit() {
-    println!("Process exit triggered. Flushing pending telemetry to SQLite...");
-    PowerScraper::database::flush_pending_history_to_db("config.db", None);
+    let _ = std::panic::catch_unwind(|| {
+        println!("Process exit triggered. Flushing pending telemetry to SQLite...");
+        PowerScraper::database::flush_pending_history_to_db("config.db", None);
+    });
 }
 
 #[tokio::main]
