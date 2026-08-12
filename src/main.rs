@@ -62,7 +62,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         libc::atexit(flush_on_exit);
     }
 
-    println!("Starting PowerScraper (Rust Next Branch)...");
+    println!("Starting PowerScraper (v{})...", env!("CARGO_PKG_VERSION"));
 
     #[cfg(unix)]
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
