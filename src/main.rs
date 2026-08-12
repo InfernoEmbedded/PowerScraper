@@ -517,32 +517,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             _ = signal::ctrl_c() => {
-                println!("Shutdown signal (Ctrl-C) received. Cleaning up and exiting...");
+                println!("Shutdown signal (Ctrl-C) received. Exiting...");
                 systemd_notify("STOPPING=1");
                 cancel_token.cancel();
-                let db_p = db_path.clone();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
-                    PowerScraper::database::flush_pending_history_to_db(&db_p, None);
-                }).await;
                 std::process::exit(0);
             }
             _ = async {
                 #[cfg(unix)]
                 {
-                    sigterm.recv().await;
+                    if let Some(mut sig) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok() {
+                        sig.recv().await;
+                    }
                 }
                 #[cfg(not(unix))]
                 {
                     tokio::time::sleep(std::time::Duration::from_secs(999999)).await;
                 }
             } => {
-                println!("Shutdown signal (SIGTERM) received. Cleaning up and exiting...");
+                println!("Shutdown signal (SIGTERM) received. Exiting...");
                 systemd_notify("STOPPING=1");
                 cancel_token.cancel();
-                let db_p = db_path.clone();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(2), async move {
-                    PowerScraper::database::flush_pending_history_to_db(&db_p, None);
-                }).await;
                 std::process::exit(0);
             }
         }

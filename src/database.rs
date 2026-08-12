@@ -139,23 +139,32 @@ pub fn load_config_from_db(db_path: &str) -> Result<Config, Box<dyn std::error::
         .unwrap_or(false);
 
     if has_settings_table {
-        let json_str: Option<String> = {
-            let mut stmt = conn.prepare("SELECT config_json FROM settings WHERE id = 1")?;
-            let mut rows = stmt.query([])?;
-            if let Some(row) = rows.next()? {
-                Some(row.get(0)?)
-            } else {
-                None
-            }
-        };
+        let has_config_json: bool = conn
+            .prepare("SELECT config_json FROM settings LIMIT 1")
+            .is_ok();
 
-        if let Some(ref json) = json_str {
-            if let Ok(config) = serde_json::from_str::<Config>(json) {
-                println!("Migrating legacy settings table to hierarchical config_kv key-value store...");
-                save_config_to_db(db_path, &config)?;
-                let _ = conn.execute_batch("DROP TABLE settings;");
-                return Ok(config);
+        if has_config_json {
+            let json_str: Option<String> = {
+                let mut stmt = conn.prepare("SELECT config_json FROM settings WHERE id = 1")?;
+                let mut rows = stmt.query([])?;
+                if let Some(row) = rows.next()? {
+                    Some(row.get(0)?)
+                } else {
+                    None
+                }
+            };
+
+            if let Some(ref json) = json_str {
+                if let Ok(config) = serde_json::from_str::<Config>(json) {
+                    println!("Migrating legacy settings table to hierarchical config_kv key-value store...");
+                    save_config_to_db(db_path, &config)?;
+                    let _ = conn.execute_batch("DROP TABLE settings;");
+                    return Ok(config);
+                }
             }
+        } else {
+            println!("Dropping obsolete legacy settings table without config_json column...");
+            let _ = conn.execute_batch("DROP TABLE settings;");
         }
     }
 
