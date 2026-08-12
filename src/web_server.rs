@@ -1247,7 +1247,17 @@ pub async fn handle_training_progress() -> impl IntoResponse {
 }
 
 pub async fn run_web_server(reload_tx: Sender<()>, db_path: String) {
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000").await.unwrap();
+    let mut retries = 0;
+    let listener = loop {
+        match tokio::net::TcpListener::bind("0.0.0.0:3000").await {
+            Ok(l) => break l,
+            Err(e) => {
+                retries += 1;
+                eprintln!("[Web Server] Failed to bind 0.0.0.0:3000 (attempt {}): {}. Retrying in 1s...", retries, e);
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+        }
+    };
     println!("Web UI and REST API running at http://localhost:3000");
     run_web_server_with_listener(reload_tx, db_path, listener).await;
 }
