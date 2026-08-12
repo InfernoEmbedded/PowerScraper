@@ -54,13 +54,30 @@ pub async fn run_dtsu666_driver(
     let device_name = port_path.replace("/dev/tty", "");
     let poll_interval = Duration::from_secs_f64(config.poll_period);
     let mut ctx_opt: Option<Context> = None;
-
-
+    let mut last_successful_read = tokio::time::Instant::now();
+    let watchdog_timeout = Duration::from_secs(180); // 3 minutes watchdog
 
     loop {
         if cancel_token.is_cancelled() {
             break;
         }
+
+        // Stale Meter Watchdog: If no valid telemetry update has been received for 3 minutes,
+        // force a connection reset to flush TTY serial buffers and restart polling clean.
+        if last_successful_read.elapsed() >= watchdog_timeout {
+            println!(
+                "DTSU666 [{}] Stale meter detected (no telemetry update for 3 mins). Flushing serial buffers & restarting connection...",
+                device_name
+            );
+            ctx_opt = None;
+            last_successful_read = tokio::time::Instant::now();
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                _ = sleep(Duration::from_millis(100)) => {}
+            }
+            continue;
+        }
+
         if ctx_opt.is_none() {
             match connect_serial_meter(&port_path, &config).await {
                 Ok(ctx) => ctx_opt = Some(ctx),
@@ -81,7 +98,11 @@ pub async fn run_dtsu666_driver(
         let ctx = ctx_opt.as_mut().unwrap();
         let timeout_dur = Duration::from_secs_f64(config.timeout);
         let read_res = tokio::time::timeout(timeout_dur, async {
-            let reg1 = ctx.read_input_registers(0x2000, 0x52).await?;
+            // Split into <= 60 register chunks to comply with Modbus RTU transaction limits
+            let part1 = ctx.read_input_registers(0x2000, 40).await?;
+            let part2 = ctx.read_input_registers(0x2028, 42).await?;
+            let mut reg1 = part1;
+            reg1.extend(part2);
             let reg2 = ctx.read_input_registers(0x401E, 52).await?;
             Ok::<_, std::io::Error>((reg1, reg2))
         })
@@ -228,7 +249,9 @@ pub async fn run_dtsu666_driver(
                         timestamp: chrono::Utc::now().timestamp(),
                         metrics: numeric_metrics,
                     };
-                    let _ = tx_telemetry.try_send(batch);
+                    if tx_telemetry.try_send(batch).is_ok() {
+                        last_successful_read = tokio::time::Instant::now();
+                    }
                 }
             }
             Ok(Err(e)) => {

@@ -58,11 +58,31 @@ pub async fn run_sdm630_driver(
     let mut last_extended_poll: Option<tokio::time::Instant> = None;
     let mut extended_poll_step: usize = 0;
     let mut ctx_opt: Option<Context> = None;
+    let mut last_successful_read = tokio::time::Instant::now();
+    let watchdog_timeout = Duration::from_secs(180); // 3 minutes watchdog
 
     loop {
         if cancel_token.is_cancelled() {
             break;
         }
+
+        // Stale Meter Watchdog: If no valid telemetry update has been received for 3 minutes,
+        // force a connection reset to flush TTY serial buffers and restart polling clean.
+        if last_successful_read.elapsed() >= watchdog_timeout {
+            println!(
+                "SDM630 [{}] Stale meter detected (no telemetry update for 3 mins). Flushing serial buffers & restarting connection...",
+                device_name
+            );
+            ctx_opt = None;
+            extended_poll_step = 0;
+            last_successful_read = tokio::time::Instant::now();
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                _ = sleep(Duration::from_millis(100)) => {}
+            }
+            continue;
+        }
+
         if ctx_opt.is_none() {
             match connect_serial_meter(&port_path, &config).await {
                 Ok(ctx) => ctx_opt = Some(ctx),
@@ -87,7 +107,7 @@ pub async fn run_sdm630_driver(
             Some(last) => last.elapsed() >= extended_poll_interval,
         };
 
-        // Query critical register block 1 (voltages, currents, phase powers, total active power)
+        // Query critical register block 1 (voltages, currents, phase powers, total active power) - 60 registers (30 params max)
         let reg1_res = tokio::select! {
             _ = cancel_token.cancelled() => break,
             res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x0000, 60)) => res,
@@ -122,7 +142,7 @@ pub async fn run_sdm630_driver(
             }
         };
 
-        // Query critical register block 2 (total PF, frequency, import/export kWh)
+        // Query critical register block 2 (total PF, frequency, import/export kWh) - 48 registers (24 params)
         let reg2_res = tokio::select! {
             _ = cancel_token.cancelled() => break,
             res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x003C, 48)) => res,
@@ -169,7 +189,13 @@ pub async fn run_sdm630_driver(
                     tokio::select! {
                         _ = cancel_token.cancelled() => break,
                         res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00C8, 8)) => {
-                            if let Ok(Ok(data)) = res { reg3_opt = Some(data); }
+                            match res {
+                                Ok(Ok(data)) => reg3_opt = Some(data),
+                                _ => {
+                                    println!("SDM630 [{}] extended reg3 error/timeout, resetting connection", device_name);
+                                    ctx_opt = None;
+                                }
+                            }
                         }
                     }
                     extended_poll_step = 1;
@@ -178,7 +204,13 @@ pub async fn run_sdm630_driver(
                     tokio::select! {
                         _ = cancel_token.cancelled() => break,
                         res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00E0, 46)) => {
-                            if let Ok(Ok(data)) = res { reg4_opt = Some(data); }
+                            match res {
+                                Ok(Ok(data)) => reg4_opt = Some(data),
+                                _ => {
+                                    println!("SDM630 [{}] extended reg4 error/timeout, resetting connection", device_name);
+                                    ctx_opt = None;
+                                }
+                            }
                         }
                     }
                     extended_poll_step = 2;
@@ -187,7 +219,13 @@ pub async fn run_sdm630_driver(
                     tokio::select! {
                         _ = cancel_token.cancelled() => break,
                         res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x014E, 48)) => {
-                            if let Ok(Ok(data)) = res { reg5_opt = Some(data); }
+                            match res {
+                                Ok(Ok(data)) => reg5_opt = Some(data),
+                                _ => {
+                                    println!("SDM630 [{}] extended reg5 error/timeout, resetting connection", device_name);
+                                    ctx_opt = None;
+                                }
+                            }
                         }
                     }
                     extended_poll_step = 0;
@@ -577,7 +615,9 @@ pub async fn run_sdm630_driver(
                         timestamp: chrono::Utc::now().timestamp(),
                         metrics: numeric_metrics,
                     };
-                    let _ = tx_telemetry.try_send(batch);
+                    if tx_telemetry.try_send(batch).is_ok() {
+                        last_successful_read = tokio::time::Instant::now();
+                    }
                 }
 
         tokio::select! {
