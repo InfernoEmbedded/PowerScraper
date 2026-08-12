@@ -3,13 +3,12 @@ use crate::power_manager::HistoryRecord;
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::{Mutex, LazyLock, mpsc as std_mpsc};
-use tokio::sync::oneshot;
 
 pub type DbWriteTask = Box<dyn FnOnce(&mut rusqlite::Connection) -> Result<(), String> + Send>;
 
 pub struct DbWriteMessage {
     pub task: DbWriteTask,
-    pub responder: Option<oneshot::Sender<Result<(), String>>>,
+    pub responder: Option<std_mpsc::Sender<Result<(), String>>>,
 }
 
 #[derive(Clone)]
@@ -71,7 +70,7 @@ where
     let writer_opt = DB_WRITER.lock().ok().and_then(|guard| guard.clone());
     if let Some(ref writer) = writer_opt {
         if writer.db_path == db_path {
-            let (resp_tx, resp_rx) = oneshot::channel();
+            let (resp_tx, resp_rx) = std_mpsc::channel();
             let msg = DbWriteMessage {
                 task: Box::new(task),
                 responder: Some(resp_tx),
@@ -82,9 +81,9 @@ where
                 }).unwrap_or(false);
 
                 let recv_res = if is_in_tokio {
-                    tokio::task::block_in_place(|| resp_rx.blocking_recv())
+                    tokio::task::block_in_place(|| resp_rx.recv())
                 } else {
-                    resp_rx.blocking_recv()
+                    resp_rx.recv()
                 };
                 match recv_res {
                     Ok(res) => return res,
@@ -349,14 +348,17 @@ pub async fn save_config_to_db_async(db_path: &str, config: Config) -> Result<()
     let writer_opt = DB_WRITER.lock().ok().and_then(|guard| guard.clone());
     if let Some(ref writer) = writer_opt {
         if writer.db_path == db_path {
-            let (resp_tx, resp_rx) = oneshot::channel();
+            let (resp_tx, resp_rx) = std_mpsc::channel();
             let config_clone = config.clone();
             let msg = DbWriteMessage {
                 task: Box::new(move |conn| save_config_with_conn(conn, &config_clone)),
                 responder: Some(resp_tx),
             };
             if writer.tx.send(msg).is_ok() {
-                let res = resp_rx.await.map_err(|e| format!("DB writer channel dropped: {}", e))?;
+                let res = tokio::task::spawn_blocking(move || resp_rx.recv())
+                    .await
+                    .map_err(|e| format!("DB writer task join error: {}", e))?
+                    .map_err(|e| format!("DB writer channel dropped: {}", e))?;
                 return res.map_err(|e| e.into());
             }
         }
