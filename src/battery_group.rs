@@ -576,6 +576,7 @@ mod tests {
             grace: false,
             prefer_battery: false,
             min_charge_hysteresis: None,
+            ignore_cost_margin: false,
         };
 
         // Target: -5000W (charge 5000W).

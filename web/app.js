@@ -2,14 +2,34 @@ let currentConfig = {};
 let lastStatusData = null;
 
 // Tab Switching
-function switchTab(tabId, el) {
+function switchTab(tabId, el, updateUrl = true) {
+    if (!tabId) return;
+
+    if (!tabId.startsWith('tab-')) {
+        tabId = 'tab-' + tabId;
+    }
+
+    const targetTab = document.getElementById(tabId);
+    if (!targetTab) return;
+
+    if (!el) {
+        el = document.querySelector(`.nav-btn[onclick*="${tabId}"]`);
+    }
+
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById(tabId).classList.add('active');
-    el.classList.add('active');
 
-    const pageTitle = el.innerText.trim();
-    document.getElementById('page-title').innerText = pageTitle === "Dashboard" ? "System Dashboard" : pageTitle;
+    targetTab.classList.add('active');
+    if (el) {
+        el.classList.add('active');
+        const pageTitle = el.innerText.trim();
+        document.getElementById('page-title').innerText = pageTitle === "Dashboard" ? "System Dashboard" : pageTitle;
+    }
+
+    const cleanName = tabId.replace(/^tab-/, '');
+    if (updateUrl && window.location.hash !== '#' + cleanName) {
+        history.pushState(null, '', '#' + cleanName);
+    }
 
     // Show/hide 'Apply Changes' button based on tabId
     const applyBtn = document.querySelector('.btn-apply');
@@ -22,12 +42,28 @@ function switchTab(tabId, el) {
     }
 
     if (tabId === 'tab-simulation') {
-        if (simChartInstance) simChartInstance.resize();
-        if (simDetailChartInstance) simDetailChartInstance.resize();
+        if (typeof simChartInstance !== 'undefined' && simChartInstance) simChartInstance.resize();
+        if (typeof simDetailChartInstance !== 'undefined' && simDetailChartInstance) simDetailChartInstance.resize();
     }
     if (tabId === 'tab-history') {
-        fetchAndRenderHistoryCharts();
+        if (typeof fetchAndRenderHistoryCharts === 'function') fetchAndRenderHistoryCharts();
     }
+}
+
+function restoreTabFromUrl() {
+    const rawHash = window.location.hash.replace(/^#/, '').trim();
+    if (rawHash) {
+        switchTab(rawHash, null, false);
+    }
+}
+
+window.addEventListener('hashchange', restoreTabFromUrl);
+window.addEventListener('popstate', restoreTabFromUrl);
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', restoreTabFromUrl);
+} else {
+    restoreTabFromUrl();
 }
 
 function toggleFormSection(sectionId, enabled) {
@@ -1415,6 +1451,10 @@ function renderPeriodCard(pName, per) {
                     <input type="checkbox" class="period-prefer-battery" ${per["prefer-battery"] ? 'checked' : ''}>
                     <label>Prioritize Battery Charge</label>
                 </div>
+                <div class="checkbox-group">
+                    <input type="checkbox" class="period-ignore-cost-margin" ${per["ignore-cost-margin"] ? 'checked' : ''}>
+                    <label>Ignore Cost Margin (Discharge regardless of price)</label>
+                </div>
             </div>
         </div>
         <button class="sub-btn danger" style="margin-left: 20px;" onclick="this.parentElement.remove()">Remove</button>
@@ -1429,7 +1469,8 @@ function addTOUPeriod() {
         "min-charge": 20,
         "grid-charge": false,
         grace: false,
-        "prefer-battery": false
+        "prefer-battery": false,
+        "ignore-cost-margin": false
     });
 }
 
@@ -2196,6 +2237,7 @@ async function saveConfiguration() {
                     "force-discharge": isNaN(forceVal) ? null : forceVal,
                     grace: card.querySelector('.period-grace').checked,
                     "prefer-battery": card.querySelector('.period-prefer-battery').checked,
+                    "ignore-cost-margin": card.querySelector('.period-ignore-cost-margin') ? card.querySelector('.period-ignore-cost-margin').checked : false,
                     "min-charge-hysteresis": isNaN(periodHystVal) ? null : periodHystVal
                 };
             }

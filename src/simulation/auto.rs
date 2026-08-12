@@ -181,6 +181,7 @@ mod tests {
             grace: false,
             prefer_battery: false,
             min_charge_hysteresis: None,
+            ignore_cost_margin: false,
         }];
 
         let records = vec![SimRecord {
@@ -257,6 +258,7 @@ mod tests {
                 grace: false,
                 prefer_battery: false,
                 min_charge_hysteresis: Some(10),
+                ignore_cost_margin: false,
             }],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
@@ -357,6 +359,7 @@ mod tests {
                 grace: false,
                 prefer_battery: false,
                 min_charge_hysteresis: None,
+                ignore_cost_margin: false,
             }],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,
@@ -408,6 +411,7 @@ mod tests {
                 grace: false,
                 prefer_battery: false,
                 min_charge_hysteresis: None,
+                ignore_cost_margin: false,
             }],
             evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
             evolved_heuristic_monthly: None,

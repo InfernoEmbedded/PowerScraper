@@ -265,6 +265,8 @@ pub struct BatteryControlPeriod {
     pub prefer_battery: bool,
     #[serde(default, alias = "min-charge-hysteresis", alias = "min_charge_hysteresis")]
     pub min_charge_hysteresis: Option<u8>,
+    #[serde(default, alias = "ignore-cost-margin", alias = "ignore_cost_margin")]
+    pub ignore_cost_margin: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

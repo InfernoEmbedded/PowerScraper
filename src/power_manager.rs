@@ -804,6 +804,7 @@ impl PowerManager {
             grace: false,
             prefer_battery: false,
             min_charge_hysteresis: None,
+            ignore_cost_margin: false,
         };
         let period = period_opt.unwrap_or(default_period);
 
@@ -909,7 +910,7 @@ impl PowerManager {
                         self.total_discharge_power = self.total_discharge_power.clamp(-max_total_charge, max_total_discharge);
 
                         let rates = self.tariff_manager.get_current_rates();
-                        if !self.allow_auto_discharge(&rates) {
+                        if !period.ignore_cost_margin && !self.allow_auto_discharge(&rates) {
                             self.total_discharge_power = self.total_discharge_power.min(0.0);
                         }
                         self.total_discharge_power
@@ -1236,7 +1237,7 @@ impl PowerManager {
                         self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
 
                         let rates = self.tariff_manager.get_current_rates();
-                        if !self.allow_auto_discharge(&rates) {
+                        if !period.ignore_cost_margin && !self.allow_auto_discharge(&rates) {
                             self.phase_discharge_power[p] = self.phase_discharge_power[p].min(0.0);
                         }
 
@@ -1569,6 +1570,7 @@ impl PowerManager {
             grace: false,
             prefer_battery: false,
             min_charge_hysteresis: None,
+            ignore_cost_margin: false,
         };
         let period = period_opt.unwrap_or(default_period);
 
@@ -3445,6 +3447,7 @@ mod tests {
             grace: false,
             prefer_battery: false,
             min_charge_hysteresis: None, // use global
+            ignore_cost_margin: false,
         };
 
         // Battery 1 at 21% (not low, was not low)
@@ -3617,6 +3620,7 @@ mod tests {
             grace: false,
             prefer_battery,
             min_charge_hysteresis: None,
+            ignore_cost_margin: false,
         }
     }
 
@@ -5404,6 +5408,72 @@ mod tests {
             export_rate: 8.0,
         };
         assert!(pm.allow_auto_discharge(&rates_high));
+    }
+
+    #[test]
+    fn test_ignore_cost_margin_per_period() {
+        let mut cfg = SolaxBatteryControlConfig::default();
+        let mut inv = BatteryControlInverter::default();
+        inv.max_charge = 10000.0;
+        inv.max_discharge = 10000.0;
+        inv.battery_capacity = Some(15.0);
+        cfg.inverter.insert("solax-1".to_string(), inv);
+
+        let mut demand_period = crate::config::BatteryControlPeriod {
+            start: "00:00:00".to_string(),
+            end: "23:59:59".to_string(),
+            min_charge: 10,
+            grid_charge: false,
+            force_discharge: None,
+            grace: false,
+            prefer_battery: false,
+            min_charge_hysteresis: None,
+            ignore_cost_margin: true,
+        };
+
+        cfg.period.insert("Demand".to_string(), demand_period.clone());
+        cfg.auto_cost_margin = Some(5.0);
+
+        let mut pm = PowerManager::new(cfg, "sensors".to_string());
+        pm.battery_energy_kwh = 10.0;
+        pm.battery_total_cost = 200.0; // 20 c/kWh unit cost
+
+        let rates_low = crate::tariff_manager::CurrentTariffRates {
+            import_rate: 22.0, // 22 < 20 + 5
+            export_rate: 8.0,
+        };
+
+        // allow_auto_discharge evaluates false due to margin
+        assert!(!pm.allow_auto_discharge(&rates_low));
+
+        // But when ignore_cost_margin is true for the period, discharge is permitted
+        pm.total_power = 2000.0; // 2000W load
+        pm.grid_target = 0.0;
+        
+        let mut battery_map = std::collections::HashMap::new();
+        let b = crate::battery_group::Battery {
+            name: "solax-1".to_string(),
+            capacity_wh: 15000.0,
+            max_charge_power_w: 10000.0,
+            max_discharge_power_w: 10000.0,
+            current_soc_pct: 80.0,
+            min_soc_pct: 10.0,
+            max_soc_pct: 100.0,
+        };
+        battery_map.insert("solax-1".to_string(), b);
+
+        let target_power = match pm.mode {
+            PowerManagerMode::Auto => {
+                let rates = rates_low.clone();
+                if !demand_period.ignore_cost_margin && !pm.allow_auto_discharge(&rates) {
+                    0.0
+                } else {
+                    2000.0
+                }
+            }
+            _ => 0.0,
+        };
+        assert_eq!(target_power, 2000.0);
     }
 
     #[test]
