@@ -57,17 +57,48 @@ pub async fn run_dtsu666_driver(
     let mut last_successful_read = tokio::time::Instant::now();
     let watchdog_timeout = Duration::from_secs(180); // 3 minutes watchdog
 
+    let last_success_ts = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+        chrono::Utc::now().timestamp() as u64,
+    ));
+
+    // Independent background watchdog task to detect if polling loop freezes or hangs
+    let watchdog_last_success = last_success_ts.clone();
+    let watchdog_cancel = cancel_token.clone();
+    let watchdog_device = device_name.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = watchdog_cancel.cancelled() => break,
+                _ = sleep(Duration::from_secs(30)) => {}
+            }
+            let now = chrono::Utc::now().timestamp() as u64;
+            let last = watchdog_last_success.load(std::sync::atomic::Ordering::Relaxed);
+            let elapsed = now.saturating_sub(last);
+            if elapsed >= 180 {
+                println!(
+                    "DTSU666 [{}] WATCHDOG ALERT: Stale meter! No telemetry update for {}s (> 3 mins). Polling loop or serial port may be hung.",
+                    watchdog_device, elapsed
+                );
+            }
+        }
+    });
+
+    println!(
+        "DTSU666 [{}] Driver starting (port: {}, baud: {}, poll_period: {}s, timeout: {}s)...",
+        device_name, port_path, config.baud, config.poll_period, config.timeout
+    );
+
     loop {
         if cancel_token.is_cancelled() {
+            println!("DTSU666 [{}] Cancelled. Exiting driver loop.", device_name);
             break;
         }
 
-        // Stale Meter Watchdog: If no valid telemetry update has been received for 3 minutes,
-        // force a connection reset to flush TTY serial buffers and restart polling clean.
-        if last_successful_read.elapsed() >= watchdog_timeout {
+        let elapsed_since_success = last_successful_read.elapsed();
+        if elapsed_since_success >= watchdog_timeout {
             println!(
-                "DTSU666 [{}] Stale meter detected (no telemetry update for 3 mins). Flushing serial buffers & restarting connection...",
-                device_name
+                "DTSU666 [{}] Stale meter detected ({:.1}s without valid telemetry update). Resetting serial connection...",
+                device_name, elapsed_since_success.as_secs_f64()
             );
             ctx_opt = None;
             last_successful_read = tokio::time::Instant::now();
@@ -79,12 +110,16 @@ pub async fn run_dtsu666_driver(
         }
 
         if ctx_opt.is_none() {
+            println!("DTSU666 [{}] Connecting to serial port {}...", device_name, port_path);
             match connect_serial_meter(&port_path, &config).await {
-                Ok(ctx) => ctx_opt = Some(ctx),
+                Ok(ctx) => {
+                    println!("DTSU666 [{}] Serial port {} opened successfully.", device_name, port_path);
+                    ctx_opt = Some(ctx);
+                }
                 Err(e) => {
                     println!(
-                        "DTSU666 [{}] failed to connect to serial port: {}",
-                        device_name, e
+                        "DTSU666 [{}] Failed to connect to serial port {}: {}",
+                        device_name, port_path, e
                     );
                     tokio::select! {
                         _ = cancel_token.cancelled() => break,
@@ -97,6 +132,10 @@ pub async fn run_dtsu666_driver(
 
         let ctx = ctx_opt.as_mut().unwrap();
         let timeout_dur = Duration::from_secs_f64(config.timeout);
+
+        println!("DTSU666 [{}] Polling register blocks...", device_name);
+        let poll_start = tokio::time::Instant::now();
+
         let read_res = tokio::time::timeout(timeout_dur, async {
             // Split into <= 60 register chunks to comply with Modbus RTU transaction limits
             let part1 = ctx.read_input_registers(0x2000, 40).await?;
@@ -110,35 +149,15 @@ pub async fn run_dtsu666_driver(
 
         match read_res {
             Ok(Ok((reg1, reg2))) => {
+                println!(
+                    "DTSU666 [{}] Register blocks read OK (reg1: {}, reg2: {} in {:.1}ms)",
+                    device_name, reg1.len(), reg2.len(), poll_start.elapsed().as_secs_f64() * 1000.0
+                );
                 let mut vals = HashMap::new();
                 vals.insert("name".to_string(), device_name.clone());
 
                 if reg1.len() >= 0x52 {
                     let base = 0x2000;
-                    vals.insert(
-                        "Line 1 to Line 2 volts".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2000) / 10.0),
-                    );
-                    vals.insert(
-                        "Line 2 to Line 3 volts".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2002) / 10.0),
-                    );
-                    vals.insert(
-                        "Line 3 to Line 1 volts".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2004) / 10.0),
-                    );
-                    vals.insert(
-                        "Phase 1 line to neutral volts".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2006) / 10.0),
-                    );
-                    vals.insert(
-                        "Phase 2 line to neutral volts".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2008) / 10.0),
-                    );
-                    vals.insert(
-                        "Phase 3 line to neutral volts".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x200A) / 10.0),
-                    );
                     vals.insert(
                         "Phase 1 current".to_string(),
                         format!("{:.3}", float32(&reg1, base, 0x200C) / 1000.0),
@@ -153,87 +172,91 @@ pub async fn run_dtsu666_driver(
                     );
                     vals.insert(
                         "Phase 1 power".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2014) / 10.0),
+                        format!("{:.3}", float32(&reg1, base, 0x2012)),
                     );
                     vals.insert(
                         "Phase 2 power".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2016) / 10.0),
+                        format!("{:.3}", float32(&reg1, base, 0x2014)),
                     );
                     vals.insert(
                         "Phase 3 power".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2018) / 10.0),
+                        format!("{:.3}", float32(&reg1, base, 0x2016)),
                     );
                     vals.insert(
-                        "Phase 1 volt amps reactive".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x201C) / 10.0),
+                        "Total power".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x2018)),
                     );
                     vals.insert(
-                        "Phase 2 volt amps reactive".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x201E) / 10.0),
+                        "Phase 1 reactive power".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x201A)),
                     );
                     vals.insert(
-                        "Phase 3 volt amps reactive".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2020) / 10.0),
+                        "Phase 2 reactive power".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x201C)),
+                    );
+                    vals.insert(
+                        "Phase 3 reactive power".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x201E)),
+                    );
+                    vals.insert(
+                        "Total reactive power".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x2020)),
                     );
                     vals.insert(
                         "Phase 1 power factor".to_string(),
-                        format!("{:.3}", float32(&reg1, base, 0x202C) / 1000.0),
-                    );
-                    vals.insert(
-                        "Phase 2 power factor".to_string(),
-                        format!("{:.3}", float32(&reg1, base, 0x202E) / 1000.0),
-                    );
-                    vals.insert(
-                        "Phase 3 power factor".to_string(),
-                        format!("{:.3}", float32(&reg1, base, 0x2030) / 1000.0),
-                    );
-                    vals.insert(
-                        "Total system power".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2012) / 10.0),
-                    );
-                    vals.insert(
-                        "Total system VAr".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x201A) / 10.0),
-                    );
-                    vals.insert(
-                        "Total system power factor".to_string(),
                         format!("{:.3}", float32(&reg1, base, 0x202A) / 1000.0),
                     );
                     vals.insert(
-                        "Frequency Of supply voltages".to_string(),
-                        format!("{:.2}", float32(&reg1, base, 0x2044) / 100.0),
+                        "Phase 2 power factor".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x202C) / 1000.0),
                     );
                     vals.insert(
-                        "Total system power demand".to_string(),
-                        format!("{:.1}", float32(&reg1, base, 0x2044) / 10.0),
+                        "Phase 3 power factor".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x202E) / 1000.0),
+                    );
+                    vals.insert(
+                        "Total power factor".to_string(),
+                        format!("{:.3}", float32(&reg1, base, 0x2030) / 1000.0),
+                    );
+                    vals.insert(
+                        "Frequency".to_string(),
+                        format!("{:.2}", float32(&reg1, base, 0x2036) / 100.0),
+                    );
+                    vals.insert(
+                        "Import kWh".to_string(),
+                        format!("{:.2}", float32(&reg1, base, 0x2038) / 100.0),
+                    );
+                    vals.insert(
+                        "Export kWh".to_string(),
+                        format!("{:.2}", float32(&reg1, base, 0x203A) / 100.0),
                     );
                 }
 
-                if reg2.len() >= 52 {
+                if reg2.len() >= 0x34 {
                     let base = 0x401E;
                     vals.insert(
-                        "Total import kWh".to_string(),
-                        format!("{:.1}", float32(&reg2, base, 0x401E) * 1000.0),
+                        "Phase 1 import kWh".to_string(),
+                        format!("{:.2}", float32(&reg2, base, 0x401E) / 100.0),
                     );
                     vals.insert(
-                        "Total export kWh".to_string(),
-                        format!("{:.1}", float32(&reg2, base, 0x4028) * 1000.0),
+                        "Phase 2 import kWh".to_string(),
+                        format!("{:.2}", float32(&reg2, base, 0x4020) / 100.0),
                     );
                     vals.insert(
-                        "Total Q1 kvarh".to_string(),
-                        format!("{:.1}", float32(&reg2, base, 0x4032) * 1000.0),
+                        "Phase 3 import kWh".to_string(),
+                        format!("{:.2}", float32(&reg2, base, 0x4022) / 100.0),
                     );
                     vals.insert(
-                        "Total Q2 kvarh".to_string(),
-                        format!("{:.1}", float32(&reg2, base, 0x403C) * 1000.0),
+                        "Phase 1 export kWh".to_string(),
+                        format!("{:.2}", float32(&reg2, base, 0x4024) / 100.0),
                     );
                     vals.insert(
-                        "Total Q3 kvarh".to_string(),
-                        format!("{:.1}", float32(&reg2, base, 0x4046) * 1000.0),
+                        "Phase 2 export kWh".to_string(),
+                        format!("{:.2}", float32(&reg2, base, 0x4026) / 100.0),
                     );
                     vals.insert(
-                        "Total Q4 kvarh".to_string(),
-                        format!("{:.1}", float32(&reg2, base, 0x4050) * 1000.0),
+                        "Phase 3 export kWh".to_string(),
+                        format!("{:.2}", float32(&reg2, base, 0x4028) / 100.0),
                     );
                 }
 
@@ -244,27 +267,41 @@ pub async fn run_dtsu666_driver(
                     }
                 }
                 if !numeric_metrics.is_empty() {
+                    let metric_count = numeric_metrics.len();
                     let batch = crate::dispatch_manager::TelemetryBatch {
                         device_name: device_name.clone(),
                         timestamp: chrono::Utc::now().timestamp(),
                         metrics: numeric_metrics,
                     };
-                    if tx_telemetry.try_send(batch).is_ok() {
-                        last_successful_read = tokio::time::Instant::now();
+                    match tx_telemetry.try_send(batch) {
+                        Ok(_) => {
+                            last_success_ts.store(chrono::Utc::now().timestamp() as u64, std::sync::atomic::Ordering::Relaxed);
+                            last_successful_read = tokio::time::Instant::now();
+                            println!(
+                                "DTSU666 [{}] Dispatched {} telemetry metrics successfully.",
+                                device_name, metric_count
+                            );
+                        }
+                        Err(e) => {
+                            println!(
+                                "DTSU666 [{}] ERROR: Telemetry queue full / failed to send: {}",
+                                device_name, e
+                            );
+                        }
                     }
                 }
             }
             Ok(Err(e)) => {
                 println!(
-                    "DTSU666 [{}] read error: {}, resetting connection",
-                    device_name, e
+                    "DTSU666 [{}] read error: {}, resetting connection (after {:.1}ms)",
+                    device_name, e, poll_start.elapsed().as_secs_f64() * 1000.0
                 );
                 ctx_opt = None;
             }
             Err(_) => {
                 println!(
-                    "DTSU666 [{}] read timeout, resetting connection",
-                    device_name
+                    "DTSU666 [{}] read TIMEOUT ({}s limit reached), resetting connection",
+                    device_name, timeout_dur.as_secs_f64()
                 );
                 ctx_opt = None;
             }

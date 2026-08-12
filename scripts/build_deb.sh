@@ -126,9 +126,14 @@ chmod 755 "$BUILD_DIR/DEBIAN/postrm"
 
 # Build package
 mkdir -p "$OUT_DIR"
+chmod 775 "$OUT_DIR" || true
 DEB_FILE="$OUT_DIR/${PKG_NAME}_${VERSION}_${ARCH}.deb"
+TMP_DEB="/tmp/${PKG_NAME}_${VERSION}_${ARCH}_$$.deb"
 echo "Building package using dpkg-deb..."
-dpkg-deb --build "$BUILD_DIR" "$DEB_FILE"
+dpkg-deb --build "$BUILD_DIR" "$TMP_DEB"
+rm -f "$DEB_FILE" || true
+cp "$TMP_DEB" "$DEB_FILE"
+rm -f "$TMP_DEB"
 
 # Clean up
 rm -rf "$BUILD_DIR"

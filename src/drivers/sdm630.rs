@@ -61,17 +61,48 @@ pub async fn run_sdm630_driver(
     let mut last_successful_read = tokio::time::Instant::now();
     let watchdog_timeout = Duration::from_secs(180); // 3 minutes watchdog
 
+    let last_success_ts = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+        chrono::Utc::now().timestamp() as u64,
+    ));
+
+    // Independent background watchdog task to detect if polling loop freezes or hangs
+    let watchdog_last_success = last_success_ts.clone();
+    let watchdog_cancel = cancel_token.clone();
+    let watchdog_device = device_name.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = watchdog_cancel.cancelled() => break,
+                _ = sleep(Duration::from_secs(30)) => {}
+            }
+            let now = chrono::Utc::now().timestamp() as u64;
+            let last = watchdog_last_success.load(std::sync::atomic::Ordering::Relaxed);
+            let elapsed = now.saturating_sub(last);
+            if elapsed >= 180 {
+                println!(
+                    "SDM630 [{}] WATCHDOG ALERT: Stale meter! No telemetry update for {}s (> 3 mins). Polling loop or serial port may be hung.",
+                    watchdog_device, elapsed
+                );
+            }
+        }
+    });
+
+    println!(
+        "SDM630 [{}] Driver starting (port: {}, baud: {}, poll_period: {}s, timeout: {}s)...",
+        device_name, port_path, config.baud, config.poll_period, config.timeout
+    );
+
     loop {
         if cancel_token.is_cancelled() {
+            println!("SDM630 [{}] Cancelled. Exiting driver loop.", device_name);
             break;
         }
 
-        // Stale Meter Watchdog: If no valid telemetry update has been received for 3 minutes,
-        // force a connection reset to flush TTY serial buffers and restart polling clean.
-        if last_successful_read.elapsed() >= watchdog_timeout {
+        let elapsed_since_success = last_successful_read.elapsed();
+        if elapsed_since_success >= watchdog_timeout {
             println!(
-                "SDM630 [{}] Stale meter detected (no telemetry update for 3 mins). Flushing serial buffers & restarting connection...",
-                device_name
+                "SDM630 [{}] Stale meter detected ({:.1}s without valid telemetry update). Resetting serial connection...",
+                device_name, elapsed_since_success.as_secs_f64()
             );
             ctx_opt = None;
             extended_poll_step = 0;
@@ -84,12 +115,16 @@ pub async fn run_sdm630_driver(
         }
 
         if ctx_opt.is_none() {
+            println!("SDM630 [{}] Connecting to serial port {}...", device_name, port_path);
             match connect_serial_meter(&port_path, &config).await {
-                Ok(ctx) => ctx_opt = Some(ctx),
+                Ok(ctx) => {
+                    println!("SDM630 [{}] Serial port {} opened successfully.", device_name, port_path);
+                    ctx_opt = Some(ctx);
+                }
                 Err(e) => {
                     println!(
-                        "SDM630 [{}] failed to connect to serial port: {}",
-                        device_name, e
+                        "SDM630 [{}] Failed to connect to serial port {}: {}",
+                        device_name, port_path, e
                     );
                     tokio::select! {
                         _ = cancel_token.cancelled() => break,
@@ -107,17 +142,29 @@ pub async fn run_sdm630_driver(
             Some(last) => last.elapsed() >= extended_poll_interval,
         };
 
+        println!(
+            "SDM630 [{}] Polling reg1 (0x0000, 60 regs)...",
+            device_name
+        );
+        let reg1_start = tokio::time::Instant::now();
+
         // Query critical register block 1 (voltages, currents, phase powers, total active power) - 60 registers (30 params max)
         let reg1_res = tokio::select! {
             _ = cancel_token.cancelled() => break,
             res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x0000, 60)) => res,
         };
         let reg1 = match reg1_res {
-            Ok(Ok(data)) => data,
+            Ok(Ok(data)) => {
+                println!(
+                    "SDM630 [{}] reg1 read OK ({} u16 regs in {:.1}ms)",
+                    device_name, data.len(), reg1_start.elapsed().as_secs_f64() * 1000.0
+                );
+                data
+            }
             Ok(Err(e)) => {
                 println!(
-                    "SDM630 [{}] reg1 read error: {}, resetting connection",
-                    device_name, e
+                    "SDM630 [{}] reg1 read error: {}, resetting connection (after {:.1}ms)",
+                    device_name, e, reg1_start.elapsed().as_secs_f64() * 1000.0
                 );
                 ctx_opt = None;
                 extended_poll_step = 0;
@@ -129,8 +176,8 @@ pub async fn run_sdm630_driver(
             }
             Err(_) => {
                 println!(
-                    "SDM630 [{}] reg1 timeout, resetting connection",
-                    device_name
+                    "SDM630 [{}] reg1 read TIMEOUT ({}s limit reached), resetting connection",
+                    device_name, timeout_dur.as_secs_f64()
                 );
                 ctx_opt = None;
                 extended_poll_step = 0;
@@ -142,17 +189,29 @@ pub async fn run_sdm630_driver(
             }
         };
 
+        println!(
+            "SDM630 [{}] Polling reg2 (0x003C, 48 regs)...",
+            device_name
+        );
+        let reg2_start = tokio::time::Instant::now();
+
         // Query critical register block 2 (total PF, frequency, import/export kWh) - 48 registers (24 params)
         let reg2_res = tokio::select! {
             _ = cancel_token.cancelled() => break,
             res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x003C, 48)) => res,
         };
         let reg2 = match reg2_res {
-            Ok(Ok(data)) => data,
+            Ok(Ok(data)) => {
+                println!(
+                    "SDM630 [{}] reg2 read OK ({} u16 regs in {:.1}ms)",
+                    device_name, data.len(), reg2_start.elapsed().as_secs_f64() * 1000.0
+                );
+                data
+            }
             Ok(Err(e)) => {
                 println!(
-                    "SDM630 [{}] reg2 read error: {}, resetting connection",
-                    device_name, e
+                    "SDM630 [{}] reg2 read error: {}, resetting connection (after {:.1}ms)",
+                    device_name, e, reg2_start.elapsed().as_secs_f64() * 1000.0
                 );
                 ctx_opt = None;
                 extended_poll_step = 0;
@@ -164,8 +223,8 @@ pub async fn run_sdm630_driver(
             }
             Err(_) => {
                 println!(
-                    "SDM630 [{}] reg2 timeout, resetting connection",
-                    device_name
+                    "SDM630 [{}] reg2 read TIMEOUT ({}s limit reached), resetting connection",
+                    device_name, timeout_dur.as_secs_f64()
                 );
                 ctx_opt = None;
                 extended_poll_step = 0;
@@ -184,15 +243,26 @@ pub async fn run_sdm630_driver(
         // Interleave extended register queries across consecutive poll iterations
         // so no single iteration attempts all 3 extended reads back-to-back.
         if should_poll_extended || extended_poll_step > 0 {
+            println!(
+                "SDM630 [{}] Extended poll step {} active...",
+                device_name, extended_poll_step
+            );
             match extended_poll_step {
                 0 => {
                     tokio::select! {
                         _ = cancel_token.cancelled() => break,
                         res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00C8, 8)) => {
                             match res {
-                                Ok(Ok(data)) => reg3_opt = Some(data),
-                                _ => {
-                                    println!("SDM630 [{}] extended reg3 error/timeout, resetting connection", device_name);
+                                Ok(Ok(data)) => {
+                                    println!("SDM630 [{}] extended reg3 read OK", device_name);
+                                    reg3_opt = Some(data);
+                                }
+                                Ok(Err(e)) => {
+                                    println!("SDM630 [{}] extended reg3 error: {}, resetting connection", device_name, e);
+                                    ctx_opt = None;
+                                }
+                                Err(_) => {
+                                    println!("SDM630 [{}] extended reg3 timeout, resetting connection", device_name);
                                     ctx_opt = None;
                                 }
                             }
@@ -205,9 +275,16 @@ pub async fn run_sdm630_driver(
                         _ = cancel_token.cancelled() => break,
                         res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00E0, 46)) => {
                             match res {
-                                Ok(Ok(data)) => reg4_opt = Some(data),
-                                _ => {
-                                    println!("SDM630 [{}] extended reg4 error/timeout, resetting connection", device_name);
+                                Ok(Ok(data)) => {
+                                    println!("SDM630 [{}] extended reg4 read OK", device_name);
+                                    reg4_opt = Some(data);
+                                }
+                                Ok(Err(e)) => {
+                                    println!("SDM630 [{}] extended reg4 error: {}, resetting connection", device_name, e);
+                                    ctx_opt = None;
+                                }
+                                Err(_) => {
+                                    println!("SDM630 [{}] extended reg4 timeout, resetting connection", device_name);
                                     ctx_opt = None;
                                 }
                             }
@@ -220,9 +297,16 @@ pub async fn run_sdm630_driver(
                         _ = cancel_token.cancelled() => break,
                         res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x014E, 48)) => {
                             match res {
-                                Ok(Ok(data)) => reg5_opt = Some(data),
-                                _ => {
-                                    println!("SDM630 [{}] extended reg5 error/timeout, resetting connection", device_name);
+                                Ok(Ok(data)) => {
+                                    println!("SDM630 [{}] extended reg5 read OK", device_name);
+                                    reg5_opt = Some(data);
+                                }
+                                Ok(Err(e)) => {
+                                    println!("SDM630 [{}] extended reg5 error: {}, resetting connection", device_name, e);
+                                    ctx_opt = None;
+                                }
+                                Err(_) => {
+                                    println!("SDM630 [{}] extended reg5 timeout, resetting connection", device_name);
                                     ctx_opt = None;
                                 }
                             }
@@ -610,13 +694,27 @@ pub async fn run_sdm630_driver(
                     }
                 }
                 if !numeric_metrics.is_empty() {
+                    let metric_count = numeric_metrics.len();
                     let batch = crate::dispatch_manager::TelemetryBatch {
                         device_name: device_name.clone(),
                         timestamp: chrono::Utc::now().timestamp(),
                         metrics: numeric_metrics,
                     };
-                    if tx_telemetry.try_send(batch).is_ok() {
-                        last_successful_read = tokio::time::Instant::now();
+                    match tx_telemetry.try_send(batch) {
+                        Ok(_) => {
+                            last_success_ts.store(chrono::Utc::now().timestamp() as u64, std::sync::atomic::Ordering::Relaxed);
+                            last_successful_read = tokio::time::Instant::now();
+                            println!(
+                                "SDM630 [{}] Dispatched {} telemetry metrics successfully.",
+                                device_name, metric_count
+                            );
+                        }
+                        Err(e) => {
+                            println!(
+                                "SDM630 [{}] ERROR: Telemetry queue full / failed to send: {}",
+                                device_name, e
+                            );
+                        }
                     }
                 }
 
