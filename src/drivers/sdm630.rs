@@ -56,6 +56,7 @@ pub async fn run_sdm630_driver(
     let extended_poll_interval =
         Duration::from_secs_f64(config.extended_poll_period.unwrap_or(60.0));
     let mut last_extended_poll: Option<tokio::time::Instant> = None;
+    let mut extended_poll_step: usize = 0;
     let mut ctx_opt: Option<Context> = None;
 
     loop {
@@ -99,6 +100,7 @@ pub async fn run_sdm630_driver(
                     device_name, e
                 );
                 ctx_opt = None;
+                extended_poll_step = 0;
                 tokio::select! {
                     _ = cancel_token.cancelled() => break,
                     _ = sleep(Duration::from_millis(100)) => {}
@@ -111,6 +113,7 @@ pub async fn run_sdm630_driver(
                     device_name
                 );
                 ctx_opt = None;
+                extended_poll_step = 0;
                 tokio::select! {
                     _ = cancel_token.cancelled() => break,
                     _ = sleep(Duration::from_millis(100)) => {}
@@ -132,6 +135,7 @@ pub async fn run_sdm630_driver(
                     device_name, e
                 );
                 ctx_opt = None;
+                extended_poll_step = 0;
                 tokio::select! {
                     _ = cancel_token.cancelled() => break,
                     _ = sleep(Duration::from_millis(100)) => {}
@@ -144,6 +148,7 @@ pub async fn run_sdm630_driver(
                     device_name
                 );
                 ctx_opt = None;
+                extended_poll_step = 0;
                 tokio::select! {
                     _ = cancel_token.cancelled() => break,
                     _ = sleep(Duration::from_millis(100)) => {}
@@ -156,26 +161,39 @@ pub async fn run_sdm630_driver(
         let mut reg4_opt = None;
         let mut reg5_opt = None;
 
-        if should_poll_extended {
-            tokio::select! {
-                _ = cancel_token.cancelled() => break,
-                res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00C8, 8)) => {
-                    if let Ok(Ok(data)) = res { reg3_opt = Some(data); }
+        // Interleave extended register queries across consecutive poll iterations
+        // so no single iteration attempts all 3 extended reads back-to-back.
+        if should_poll_extended || extended_poll_step > 0 {
+            match extended_poll_step {
+                0 => {
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => break,
+                        res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00C8, 8)) => {
+                            if let Ok(Ok(data)) = res { reg3_opt = Some(data); }
+                        }
+                    }
+                    extended_poll_step = 1;
+                }
+                1 => {
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => break,
+                        res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00E0, 46)) => {
+                            if let Ok(Ok(data)) = res { reg4_opt = Some(data); }
+                        }
+                    }
+                    extended_poll_step = 2;
+                }
+                _ => {
+                    tokio::select! {
+                        _ = cancel_token.cancelled() => break,
+                        res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x014E, 48)) => {
+                            if let Ok(Ok(data)) = res { reg5_opt = Some(data); }
+                        }
+                    }
+                    extended_poll_step = 0;
+                    last_extended_poll = Some(tokio::time::Instant::now());
                 }
             }
-            tokio::select! {
-                _ = cancel_token.cancelled() => break,
-                res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00E0, 46)) => {
-                    if let Ok(Ok(data)) = res { reg4_opt = Some(data); }
-                }
-            }
-            tokio::select! {
-                _ = cancel_token.cancelled() => break,
-                res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x014E, 48)) => {
-                    if let Ok(Ok(data)) = res { reg5_opt = Some(data); }
-                }
-            }
-            last_extended_poll = Some(tokio::time::Instant::now());
         }
 
         let mut vals = HashMap::new();
