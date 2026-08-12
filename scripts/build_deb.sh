@@ -129,10 +129,14 @@ mkdir -p "$OUT_DIR"
 chmod 775 "$OUT_DIR" || true
 DEB_FILE="$OUT_DIR/${PKG_NAME}_${VERSION}_${ARCH}.deb"
 TMP_DEB="/tmp/${PKG_NAME}_${VERSION}_${ARCH}_$$.deb"
+rm -f "$DEB_FILE" || true
+
 echo "Building package using dpkg-deb..."
 dpkg-deb --build "$BUILD_DIR" "$TMP_DEB"
-rm -f "$DEB_FILE" || true
-cp "$TMP_DEB" "$DEB_FILE"
+if ! cp -f "$TMP_DEB" "$DEB_FILE"; then
+    echo "ERROR: Failed to copy $TMP_DEB to $DEB_FILE"
+    exit 1
+fi
 rm -f "$TMP_DEB"
 
 # Clean up
