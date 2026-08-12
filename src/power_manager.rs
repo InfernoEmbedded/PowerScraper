@@ -497,6 +497,12 @@ pub struct PowerManager {
     pub db_path: String,
     cached_metrics: Option<(f64, f64, f64, f64, f64)>,
     last_metrics_update: Option<std::time::Instant>,
+    cached_solar_forecast: Option<f64>,
+    last_solar_forecast_update: Option<std::time::Instant>,
+    cached_solar_forecast_date: Option<chrono::NaiveDate>,
+    cached_monthly_peak: Option<f64>,
+    last_monthly_peak_update: Option<std::time::Instant>,
+    cached_monthly_peak_month: Option<(i32, u32)>,
     phase_discharge_power: [f64; 16],
     commanded_powers: HashMap<String, i32>,
     pub low_capacity_state: HashMap<String, bool>,
@@ -506,11 +512,23 @@ pub struct PowerManager {
 }
 
 impl PowerManager {
-    pub fn get_today_solar_forecast_kwh(&self) -> f64 {
+    pub fn get_today_solar_forecast_kwh(&mut self) -> f64 {
         let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
         let now = chrono::Utc::now().with_timezone(&tz_offset);
-        let start_dt = now.date_naive().and_hms_opt(0, 0, 0).unwrap().and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(0);
-        let end_dt = now.date_naive().and_hms_opt(23, 59, 59).unwrap().and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(0);
+        let today_date = now.date_naive();
+
+        if let (Some(last_update), Some(cached_date), Some(val)) = (
+            self.last_solar_forecast_update,
+            self.cached_solar_forecast_date,
+            self.cached_solar_forecast,
+        ) {
+            if last_update.elapsed() < std::time::Duration::from_secs(300) && cached_date == today_date {
+                return val;
+            }
+        }
+
+        let start_dt = today_date.and_hms_opt(0, 0, 0).unwrap().and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(0);
+        let end_dt = today_date.and_hms_opt(23, 59, 59).unwrap().and_local_timezone(tz_offset).single().map(|dt| dt.timestamp()).unwrap_or(0);
         
         let mut expected_solar_kwh = 0.0;
         if let Ok(records) = crate::database::load_solar_forecast_range(&self.db_path, start_dt, end_dt) {
@@ -527,6 +545,10 @@ impl PowerManager {
             }
             expected_solar_kwh = sum_kwh;
         }
+
+        self.cached_solar_forecast = Some(expected_solar_kwh);
+        self.last_solar_forecast_update = Some(std::time::Instant::now());
+        self.cached_solar_forecast_date = Some(today_date);
         expected_solar_kwh
     }
 
@@ -575,6 +597,12 @@ impl PowerManager {
             db_path: "config.db".to_string(),
             cached_metrics: None,
             last_metrics_update: None,
+            cached_solar_forecast: None,
+            last_solar_forecast_update: None,
+            cached_solar_forecast_date: None,
+            cached_monthly_peak: None,
+            last_monthly_peak_update: None,
+            cached_monthly_peak_month: None,
             phase_discharge_power: [0.0; 16],
             commanded_powers: HashMap::new(),
             low_capacity_state: HashMap::new(),
@@ -1770,7 +1798,21 @@ impl PowerManager {
         aggregates
     }
 
-    fn get_monthly_peak_draw(&self) -> f64 {
+    fn get_monthly_peak_draw(&mut self) -> f64 {
+        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+        let now = chrono::Utc::now().with_timezone(&tz_offset);
+        let current_month = (now.year(), now.month());
+
+        if let (Some(last_update), Some(cached_month), Some(val)) = (
+            self.last_monthly_peak_update,
+            self.cached_monthly_peak_month,
+            self.cached_monthly_peak,
+        ) {
+            if last_update.elapsed() < std::time::Duration::from_secs(600) && cached_month == current_month {
+                return val;
+            }
+        }
+
         let demand_window = get_demand_window(Some(&self.config));
         if demand_window.is_none() {
             return 0.0;
@@ -1778,8 +1820,6 @@ impl PowerManager {
         let (demand_start, demand_end) = demand_window.unwrap();
         let mains_source = self.config.source.as_deref().unwrap_or("MainsMeter");
 
-        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
-        let now = chrono::Utc::now().with_timezone(&tz_offset);
         let start_of_month = match tz_offset.with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0) {
             chrono::LocalResult::Single(t) => t,
             _ => return 0.0,
@@ -1804,12 +1844,22 @@ impl PowerManager {
                 peak = val;
             }
         }
+
+        self.cached_monthly_peak = Some(peak);
+        self.last_monthly_peak_update = Some(std::time::Instant::now());
+        self.cached_monthly_peak_month = Some(current_month);
         peak
     }
 
     pub fn clear_metrics_cache(&mut self) {
         self.cached_metrics = None;
         self.last_metrics_update = None;
+        self.cached_solar_forecast = None;
+        self.last_solar_forecast_update = None;
+        self.cached_solar_forecast_date = None;
+        self.cached_monthly_peak = None;
+        self.last_monthly_peak_update = None;
+        self.cached_monthly_peak_month = None;
     }
 
     fn get_persistence_metrics(&mut self) -> (f64, f64, f64, f64, f64) {
@@ -5382,6 +5432,36 @@ mod tests {
         assert_eq!(pm.battery_energy_kwh, 2.5);
         assert_eq!(pm.battery_total_cost, 45.0); // 90c - 45c = 45 cents
         assert!((pm.get_battery_unit_cost(10.0) - 18.0).abs() < 1e-6); // Unit cost remains 18 c/kWh!
+    }
+
+    #[test]
+    fn test_caching_solar_forecast_and_monthly_peak() {
+        let temp_db = "test_pm_caching.db";
+        let _ = std::fs::remove_file(temp_db);
+        init_history_db(temp_db).unwrap();
+
+        let cfg = SolaxBatteryControlConfig::default();
+        let mut pm = PowerManager::new(cfg, "sensors".to_string());
+        pm.db_path = temp_db.to_string();
+
+        // Save a forecast prediction
+        let now_ts = chrono::Utc::now().timestamp();
+        crate::database::delete_and_save_solar_forecast(temp_db, &[(now_ts, 2000.0)]).unwrap();
+
+        // Initial call should calculate and cache
+        let first_call = pm.get_today_solar_forecast_kwh();
+        assert!(pm.cached_solar_forecast.is_some());
+        assert_eq!(pm.cached_solar_forecast.unwrap(), first_call);
+
+        // Second call should return cached value without error even if db file is removed
+        let _ = std::fs::remove_file(temp_db);
+        let cached_call = pm.get_today_solar_forecast_kwh();
+        assert_eq!(cached_call, first_call);
+
+        // Clearing cache clears cached values
+        pm.clear_metrics_cache();
+        assert!(pm.cached_solar_forecast.is_none());
+        assert!(pm.cached_monthly_peak.is_none());
     }
 }
 
