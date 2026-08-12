@@ -81,9 +81,9 @@ where
                 }).unwrap_or(false);
 
                 let recv_res = if is_in_tokio {
-                    tokio::task::block_in_place(|| resp_rx.recv_timeout(std::time::Duration::from_secs(3)))
+                    tokio::task::block_in_place(|| resp_rx.recv_timeout(std::time::Duration::from_secs(15)))
                 } else {
-                    resp_rx.recv_timeout(std::time::Duration::from_secs(3))
+                    resp_rx.recv_timeout(std::time::Duration::from_secs(15))
                 };
                 match recv_res {
                     Ok(res) => return res,
@@ -586,21 +586,21 @@ pub fn flush_history_with_conn(
     }
     let tx = conn.transaction().map_err(|e| e.to_string())?;
     {
+        let mut stmt = match tx.prepare_cached(
+            "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to prepare telemetry flush statement: {}", e);
+                return Err(e.to_string());
+            }
+        };
         for rec in records.iter() {
             let topic_id = match get_or_create_topic_id(&tx, &rec.topic) {
                 Ok(id) => id,
                 Err(e) => {
                     eprintln!("Failed to resolve topic id for {}: {}", rec.topic, e);
                     continue;
-                }
-            };
-            let mut stmt = match tx.prepare_cached(
-                "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
-            ) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("Failed to prepare telemetry flush statement: {}", e);
-                    return Err(e.to_string());
                 }
             };
             if let Err(e) = stmt.execute(params![rec.timestamp, topic_id, rec.value]) {
