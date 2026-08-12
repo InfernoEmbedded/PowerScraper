@@ -61,7 +61,9 @@ User=root
 WorkingDirectory=/var/lib/powerscraper
 ExecStart=/usr/bin/powerscraper
 Restart=always
-RestartSec=5
+RestartSec=3
+TimeoutStopSec=10s
+KillMode=mixed
 LimitRTPRIO=99
 
 [Install]

@@ -529,6 +529,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Shutdown signal (Ctrl-C) received. Exiting...");
                 systemd_notify("STOPPING=1");
                 cancel_token.cancel();
+                PowerScraper::database::flush_pending_history_to_db(&db_path, None);
                 std::process::exit(0);
             }
             _ = async {
@@ -546,6 +547,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Shutdown signal (SIGTERM) received. Exiting...");
                 systemd_notify("STOPPING=1");
                 cancel_token.cancel();
+                PowerScraper::database::flush_pending_history_to_db(&db_path, None);
                 std::process::exit(0);
             }
         }
