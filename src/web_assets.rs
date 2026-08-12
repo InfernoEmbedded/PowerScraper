@@ -1699,9 +1699,15 @@ function switchTab(tabId, el, updateUrl = true) {
         document.getElementById('page-title').innerText = pageTitle === "Dashboard" ? "System Dashboard" : pageTitle;
     }
 
-    const cleanName = tabId.replace(/^tab-/, '');
-    if (updateUrl && window.location.hash !== '#' + cleanName) {
-        history.pushState(null, '', '#' + cleanName);
+    if (updateUrl) {
+        if (tabId === 'tab-history') {
+            updateHistoryUrlHash();
+        } else {
+            const cleanName = tabId.replace(/^tab-/, '');
+            if (window.location.hash !== '#' + cleanName) {
+                history.pushState(null, '', '#' + cleanName);
+            }
+        }
     }
 
     // Show/hide 'Apply Changes' button based on tabId
@@ -1723,11 +1729,62 @@ function switchTab(tabId, el, updateUrl = true) {
     }
 }
 
+function updateHistoryUrlHash() {
+    let newHash = '#history';
+    if (currentHistoryRange === 'custom' && customHistoryStart && customHistoryEnd) {
+        newHash = `#history/custom?start=${customHistoryStart}&end=${customHistoryEnd}`;
+    } else if (currentHistoryRange) {
+        newHash = `#history/${currentHistoryRange}`;
+    }
+    if (window.location.hash !== newHash) {
+        history.pushState(null, '', newHash);
+    }
+}
+
 function restoreTabFromUrl() {
     const rawHash = window.location.hash.replace(/^#/, '').trim();
-    if (rawHash) {
-        switchTab(rawHash, null, false);
+    if (!rawHash) return;
+
+    let [mainPart, queryPart] = rawHash.split('?');
+    let parts = mainPart.split('/');
+    let tabName = parts[0];
+    let subRange = parts[1];
+
+    if (!subRange && queryPart) {
+        const params = new URLSearchParams(queryPart);
+        if (params.has('range')) subRange = params.get('range');
+        if (params.has('period')) subRange = params.get('period');
     }
+
+    let tabId = tabName.startsWith('tab-') ? tabName : 'tab-' + tabName;
+    const targetTab = document.getElementById(tabId);
+    if (!targetTab) return;
+
+    if (tabId === 'tab-history') {
+        if (subRange) {
+            if (subRange === 'custom') {
+                currentHistoryRange = 'custom';
+                if (queryPart) {
+                    const params = new URLSearchParams(queryPart);
+                    if (params.has('start')) customHistoryStart = parseInt(params.get('start'), 10);
+                    if (params.has('end')) customHistoryEnd = parseInt(params.get('end'), 10);
+                }
+            } else {
+                currentHistoryRange = subRange;
+            }
+        }
+
+        document.querySelectorAll('.history-range-btn').forEach(b => {
+            const onclickAttr = b.getAttribute('onclick') || '';
+            if (onclickAttr.includes(`'${currentHistoryRange}'`) || onclickAttr.includes(`"${currentHistoryRange}"`)) {
+                b.classList.add('active');
+            } else {
+                b.classList.remove('active');
+            }
+        });
+    }
+
+    switchTab(tabId, null, false);
 }
 
 window.addEventListener('hashchange', restoreTabFromUrl);
@@ -5273,6 +5330,7 @@ function setHistoryRange(rangeKey, btnEl) {
     const customBox = document.getElementById('history-custom-range-box');
     if (customBox) customBox.style.display = 'none';
     currentHistoryRange = rangeKey;
+    updateHistoryUrlHash();
     fetchAndRenderHistoryCharts();
 }
 
@@ -5293,6 +5351,7 @@ function applyCustomHistoryRange() {
     customHistoryStart = Math.floor(new Date(startVal).getTime() / 1000);
     customHistoryEnd = Math.floor(new Date(endVal).getTime() / 1000);
     currentHistoryRange = 'custom';
+    updateHistoryUrlHash();
     fetchAndRenderHistoryCharts();
 }
 
