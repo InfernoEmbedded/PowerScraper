@@ -87,7 +87,10 @@ pub async fn run_sdm630_driver(
         };
 
         // Query critical register block 1 (voltages, currents, phase powers, total active power)
-        let reg1_res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x0000, 60)).await;
+        let reg1_res = tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x0000, 60)) => res,
+        };
         let reg1 = match reg1_res {
             Ok(Ok(data)) => data,
             Ok(Err(e)) => {
@@ -96,7 +99,10 @@ pub async fn run_sdm630_driver(
                     device_name, e
                 );
                 ctx_opt = None;
-                sleep(Duration::from_millis(100)).await;
+                tokio::select! {
+                    _ = cancel_token.cancelled() => break,
+                    _ = sleep(Duration::from_millis(100)) => {}
+                }
                 continue;
             }
             Err(_) => {
@@ -105,13 +111,19 @@ pub async fn run_sdm630_driver(
                     device_name
                 );
                 ctx_opt = None;
-                sleep(Duration::from_millis(100)).await;
+                tokio::select! {
+                    _ = cancel_token.cancelled() => break,
+                    _ = sleep(Duration::from_millis(100)) => {}
+                }
                 continue;
             }
         };
 
         // Query critical register block 2 (total PF, frequency, import/export kWh)
-        let reg2_res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x003C, 48)).await;
+        let reg2_res = tokio::select! {
+            _ = cancel_token.cancelled() => break,
+            res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x003C, 48)) => res,
+        };
         let reg2 = match reg2_res {
             Ok(Ok(data)) => data,
             Ok(Err(e)) => {
@@ -120,7 +132,10 @@ pub async fn run_sdm630_driver(
                     device_name, e
                 );
                 ctx_opt = None;
-                sleep(Duration::from_millis(100)).await;
+                tokio::select! {
+                    _ = cancel_token.cancelled() => break,
+                    _ = sleep(Duration::from_millis(100)) => {}
+                }
                 continue;
             }
             Err(_) => {
@@ -129,7 +144,10 @@ pub async fn run_sdm630_driver(
                     device_name
                 );
                 ctx_opt = None;
-                sleep(Duration::from_millis(100)).await;
+                tokio::select! {
+                    _ = cancel_token.cancelled() => break,
+                    _ = sleep(Duration::from_millis(100)) => {}
+                }
                 continue;
             }
         };
@@ -139,14 +157,23 @@ pub async fn run_sdm630_driver(
         let mut reg5_opt = None;
 
         if should_poll_extended {
-            if let Ok(Ok(data)) = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00C8, 8)).await {
-                reg3_opt = Some(data);
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00C8, 8)) => {
+                    if let Ok(Ok(data)) = res { reg3_opt = Some(data); }
+                }
             }
-            if let Ok(Ok(data)) = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00E0, 46)).await {
-                reg4_opt = Some(data);
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x00E0, 46)) => {
+                    if let Ok(Ok(data)) = res { reg4_opt = Some(data); }
+                }
             }
-            if let Ok(Ok(data)) = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x014E, 48)).await {
-                reg5_opt = Some(data);
+            tokio::select! {
+                _ = cancel_token.cancelled() => break,
+                res = tokio::time::timeout(timeout_dur, ctx.read_input_registers(0x014E, 48)) => {
+                    if let Ok(Ok(data)) = res { reg5_opt = Some(data); }
+                }
             }
             last_extended_poll = Some(tokio::time::Instant::now());
         }
