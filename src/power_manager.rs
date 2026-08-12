@@ -510,6 +510,7 @@ pub struct PowerManager {
     pub battery_energy_kwh: f64,
     pub inferred_battery_capacities: HashMap<String, f64>,
     last_mode: Option<PowerManagerMode>,
+    last_grid_target: Option<f64>,
     last_period_name: Option<String>,
 }
 
@@ -612,6 +613,7 @@ impl PowerManager {
             battery_energy_kwh: 0.0,
             inferred_battery_capacities: HashMap::new(),
             last_mode: None,
+            last_grid_target: None,
             last_period_name: None,
         }
     }
@@ -1547,11 +1549,31 @@ impl PowerManager {
         mqtt_client: &rumqttc::AsyncClient,
         base_topic: &str,
     ) {
-        // Publish current mode and grid_target status
-        let mode_topic = format!("{}/power_manager/mode", base_topic);
-        let _ = mqtt_client.publish(&mode_topic, rumqttc::QoS::AtMostOnce, true, self.mode.to_string()).await;
-        let target_topic = format!("{}/power_manager/grid_target", base_topic);
-        let _ = mqtt_client.publish(&target_topic, rumqttc::QoS::AtMostOnce, true, self.grid_target.to_string()).await;
+        if self.last_mode != Some(self.mode) {
+            self.last_mode = Some(self.mode);
+            let mode_topic = format!("{}/power_manager/mode", base_topic);
+            let _ = mqtt_client
+                .publish(
+                    &mode_topic,
+                    rumqttc::QoS::AtLeastOnce,
+                    true,
+                    self.mode.to_string(),
+                )
+                .await;
+        }
+
+        if self.last_grid_target != Some(self.grid_target) {
+            self.last_grid_target = Some(self.grid_target);
+            let target_topic = format!("{}/power_manager/grid_target", base_topic);
+            let _ = mqtt_client
+                .publish(
+                    &target_topic,
+                    rumqttc::QoS::AtLeastOnce,
+                    true,
+                    self.grid_target.to_string(),
+                )
+                .await;
+        }
 
         // Run control logic to update state/commands
         self.evaluate_and_command(device_name);

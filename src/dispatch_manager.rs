@@ -101,7 +101,9 @@ impl DispatchManager {
                 timestamp: batch.timestamp,
                 metrics: useful_metrics,
             };
-            let _ = self.power_manager_sender.try_send(filtered_batch);
+            if let Err(e) = self.power_manager_sender.try_send(filtered_batch) {
+                eprintln!("DispatchManager: WARNING: Telemetry queue to PowerManager full: {}", e);
+            }
         }
     }
 }
