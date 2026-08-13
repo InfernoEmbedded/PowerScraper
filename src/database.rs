@@ -318,7 +318,7 @@ pub fn save_config_with_conn(conn: &mut Connection, config: &Config) -> Result<(
     let mut map = std::collections::HashMap::new();
     flatten_json_value("", &val, &mut map);
 
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     {
         tx.execute("DELETE FROM config_kv", []).map_err(|e| e.to_string())?;
         let mut stmt = tx.prepare("INSERT INTO config_kv (key, value) VALUES (?1, ?2)").map_err(|e| e.to_string())?;
@@ -419,7 +419,7 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
         .any(|col| col == "topic");
 
     if is_old_schema {
-        let tx = conn.transaction()?;
+        let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         tx.execute(
             "INSERT OR IGNORE INTO telemetry_topics (topic, device, field)
              SELECT DISTINCT topic,
@@ -584,7 +584,7 @@ pub fn flush_history_with_conn(
     if records.is_empty() {
         return Ok(());
     }
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     {
         let mut stmt = match tx.prepare_cached(
             "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
@@ -1104,7 +1104,7 @@ pub fn delete_and_save_solar_forecast_with_conn(conn: &mut Connection, predictio
         )",
         [],
     ).map_err(|e| e.to_string())?;
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     tx.execute("DELETE FROM solar_forecast", []).map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare("INSERT OR REPLACE INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)").map_err(|e| e.to_string())?;
@@ -1173,7 +1173,7 @@ pub fn insert_telemetry_history_batch_with_conn(
     conn: &mut Connection,
     records: &[(i64, String, f64)],
 ) -> Result<(), String> {
-    let tx = conn.transaction().map_err(|e| e.to_string())?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
     {
         for (ts, topic, val) in records {
             let topic_id = get_or_create_topic_id(&tx, topic).map_err(|e| e.to_string())?;
