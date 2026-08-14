@@ -2173,7 +2173,7 @@ async function fetchStatus() {
         const exportPriceEl = document.getElementById('stat-export-price');
         if (exportPriceEl) {
             if (status.export_price !== undefined && status.export_price !== null) {
-                const dispPrice = status.export_price * -1;
+                const dispPrice = status.export_price;
                 exportPriceEl.innerText = `${dispPrice.toFixed(1)} c/kWh`;
                 if (status.price_thresholds) {
                     const t = status.price_thresholds;
