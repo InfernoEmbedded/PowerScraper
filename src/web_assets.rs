@@ -1417,7 +1417,7 @@ h1 {
 
 .inverter-item {
     display: grid;
-    grid-template-columns: repeat(5, 1fr);
+    grid-template-columns: repeat(6, 1fr);
     padding: 16px;
     background: rgba(255, 255, 255, 0.02);
     border-radius: 10px;
@@ -2000,10 +2000,10 @@ async function fetchStatus() {
                 if (inv.requested_power !== undefined && inv.requested_power !== null) {
                     const reqVal = inv.requested_power;
                     const absReqVal = Math.abs(reqVal);
-                    if (reqVal > 0) {
+                    if (reqVal < 0) {
                         reqPowerStr = `${absReqVal.toFixed(0)} W Charge`;
                         reqPowerStyle = `color: var(--accent); text-shadow: 0 0 8px var(--accent-glow);`;
-                    } else if (reqVal < 0) {
+                    } else if (reqVal > 0) {
                         reqPowerStr = `${absReqVal.toFixed(0)} W Discharge`;
                         reqPowerStyle = `color: var(--danger); text-shadow: 0 0 8px rgba(239, 68, 68, 0.25);`;
                     } else {
@@ -2013,6 +2013,26 @@ async function fetchStatus() {
                 } else {
                     reqPowerStr = `--`;
                     reqPowerStyle = `color: var(--text-muted);`;
+                }
+
+                let cmdPowerStr = "";
+                let cmdPowerStyle = "";
+                const cmdVal = (inv.command_power !== undefined && inv.command_power !== null) ? inv.command_power : (inv.requested_power !== undefined ? inv.requested_power : null);
+                if (cmdVal !== undefined && cmdVal !== null) {
+                    const absCmdVal = Math.abs(cmdVal);
+                    if (cmdVal > 0) {
+                        cmdPowerStr = `${absCmdVal.toFixed(0)} W Charge`;
+                        cmdPowerStyle = `color: var(--accent); text-shadow: 0 0 8px var(--accent-glow);`;
+                    } else if (cmdVal < 0) {
+                        cmdPowerStr = `${absCmdVal.toFixed(0)} W Discharge`;
+                        cmdPowerStyle = `color: var(--danger); text-shadow: 0 0 8px rgba(239, 68, 68, 0.25);`;
+                    } else {
+                        cmdPowerStr = `0 W Idle`;
+                        cmdPowerStyle = `color: var(--text-muted);`;
+                    }
+                } else {
+                    cmdPowerStr = `--`;
+                    cmdPowerStyle = `color: var(--text-muted);`;
                 }
 
                 return `
@@ -2029,6 +2049,10 @@ async function fetchStatus() {
                         <div>
                             <div class="inverter-field-title">Requested Charge/Discharge</div>
                             <div class="inverter-field-val" style="${reqPowerStyle}">${reqPowerStr}</div>
+                        </div>
+                        <div>
+                            <div class="inverter-field-title">Command</div>
+                            <div class="inverter-field-val" style="${cmdPowerStyle}">${cmdPowerStr}</div>
                         </div>
                         <div>
                             <div class="inverter-field-title">Charge/Discharge Power</div>

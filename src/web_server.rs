@@ -19,6 +19,7 @@ pub struct InverterStatus {
     pub last_updated: Option<u64>,
     pub calculated_battery_capacity: Option<f64>,
     pub requested_power: Option<i32>,
+    pub command_power: Option<i32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Clone, Copy, Debug, Default)]
@@ -363,7 +364,7 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                     let path = db_path.clone();
                     let reload_channel = reload_channel.clone();
                     async move {
-                        if let Err(e) = new_cfg.save_to_db(&path) {
+                        if let Err(e) = new_cfg.save_to_db_async(&path).await {
                             return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
                         }
                         // Signal live reload to daemon tasks
@@ -475,7 +476,7 @@ pub fn build_web_app(reload_tx: Sender<()>, db_path: String) -> Router {
                             }
                         };
 
-                        if let Err(e) = cfg.save_to_db(&path) {
+                        if let Err(e) = cfg.save_to_db_async(&path).await {
                             return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save config: {}", e)));
                         }
 
@@ -1204,7 +1205,7 @@ pub async fn handle_apply_training(
         return Err((axum::http::StatusCode::BAD_REQUEST, "Battery control config not initialized in database settings.".to_string()));
     }
 
-    if let Err(e) = cfg.save_to_db(&db_path) {
+    if let Err(e) = cfg.save_to_db_async(&db_path).await {
         return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save config: {}", e)));
     }
 
@@ -1636,10 +1637,15 @@ mod tests {
         {
             get_system_status().lock().unwrap().inverters.clear();
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-            get_system_status().lock().unwrap().inverters.insert("solax-x1".to_string(), InverterStatus {
-                last_updated: Some(now - 5),
-                ..Default::default()
-            });
+            let cfg = Config::load_from_db(temp_db).unwrap_or_else(|_| Config::default_empty());
+            let target_invs = cfg.get_configured_battery_inverters();
+            let target_invs = if target_invs.is_empty() { vec!["solax-x1".to_string()] } else { target_invs };
+            for inv in &target_invs {
+                get_system_status().lock().unwrap().inverters.insert(inv.clone(), InverterStatus {
+                    last_updated: Some(now - 5),
+                    ..Default::default()
+                });
+            }
 
             let response = app.clone()
                 .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
