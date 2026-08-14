@@ -87,6 +87,8 @@ impl DispatchManager {
                 | "PV1 Power"
                 | "PV2 Power"
                 | "Measured Power"
+                | "BMS Max Charge Current"
+                | "Battery Voltage"
                 | "command/mode"
                 | "command/grid_target" => {
                     useful_metrics.insert(metric.clone(), *val);

@@ -87,6 +87,8 @@ pub struct InverterState {
     pub pv2_power: f64,
     pub measured_power: f64,
     pub discharge_power: f64,
+    pub bms_max_charge_current: Option<f64>,
+    pub battery_voltage: Option<f64>,
     pub has_telemetry: bool,
 }
 
@@ -1760,7 +1762,7 @@ impl PowerManager {
         }
 
         let max_limit = in_cfg.max_charge_pct.unwrap_or(100);
-        if battery_capacity >= max_limit && power < 0.0 {
+        if battery_capacity >= max_limit && power <= 0.0 {
             power = 0.0;
         }
 
@@ -2291,6 +2293,12 @@ pub async fn run_power_manager_queue_task(
                                 let phase = inv_cfg.phase;
                                 pm_lock.handle_inverter_power(&batch.device_name, phase, val);
                             }
+                        } else if metric == "BMS Max Charge Current" {
+                            state.bms_max_charge_current = Some(val);
+                            updated = true;
+                        } else if metric == "Battery Voltage" {
+                            state.battery_voltage = Some(val);
+                            updated = true;
                         }
 
                         if updated {
@@ -2756,7 +2764,6 @@ pub async fn run_power_manager_task(
                                             } else if metric == "PV2 Power" {
                                                 state.pv2_power = val;
                                                 updated = true;
-
                                             } else if metric == "Measured Power" {
                                                 state.measured_power = val;
                                                 updated = true;
@@ -2775,6 +2782,12 @@ pub async fn run_power_manager_task(
                                                         status.export_price = Some(rates.export_rate);
                                                     }
                                                 }
+                                            } else if metric == "BMS Max Charge Current" {
+                                                state.bms_max_charge_current = Some(val);
+                                                updated = true;
+                                            } else if metric == "Battery Voltage" {
+                                                state.battery_voltage = Some(val);
+                                                updated = true;
                                             }
 
                                             if updated {

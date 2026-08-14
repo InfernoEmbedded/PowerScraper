@@ -104,7 +104,6 @@ pub async fn run_solax_g3_driver(
         }
         if let Some(ref mut ctx) = *lock {
             let _ = ctx.write_single_register(0x9F, 30).await;
-            let _ = ctx.write_single_register(0x51, 1).await;
             let _ = ctx.write_single_register(0x53, 0).await;
             let _ = ctx.write_single_register(0x40, 3).await;
         }
@@ -155,9 +154,6 @@ pub async fn run_solax_g3_driver(
                             let _ = ctx.write_single_register(0x00, pwd).await;
                             tokio::time::sleep(Duration::from_millis(100)).await;
 
-                            let _ = ctx.write_single_register(0x51, 1).await;
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-
                             let _ = ctx.write_single_register(0x9F, 30).await;
                             tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -185,12 +181,19 @@ pub async fn run_solax_g3_driver(
                     last_written_power = Some(req_power);
                     last_write_time = Some(std::time::Instant::now());
 
-                    // Write target power to Modbus ActivePower (0x0052)
-                    // Sign convention: positive req_power = Charge, negative req_power = Discharge
-                    let power_u16 = (req_power as i16) as u16;
-                    if let Err(e) = ctx.write_single_register(0x52, power_u16).await {
-                        eprintln!("[SolaxG3 Log] Driver [{}] write_single_register(0x52, {}) failed: {}", inverter_name, req_power, e);
-                        reset_connection = true;
+                    if req_power != 0 {
+                        let _ = ctx.write_single_register(0x51, 1).await;
+                        let _ = ctx.write_single_register(0x9F, 30).await;
+                        let power_u16 = (req_power as i16) as u16;
+                        if let Err(e) = ctx.write_single_register(0x52, power_u16).await {
+                            eprintln!("[SolaxG3 Log] Driver [{}] write_single_register(0x52, {}) failed: {}", inverter_name, req_power, e);
+                            reset_connection = true;
+                        }
+                    } else {
+                        // Reset power target to 0 and disable remote control mode (0x51 = 0)
+                        // to drop SolaX G3 back into native Self-Use mode so MPPT runs at full capacity!
+                        let _ = ctx.write_single_register(0x52, 0).await;
+                        let _ = ctx.write_single_register(0x51, 0).await;
                     }
                 }
 
@@ -201,6 +204,11 @@ pub async fn run_solax_g3_driver(
                     let r_b2 = ctx.read_input_registers(0x66, 4).await;
                     let r_c1 = ctx.read_input_registers(0x6A, 0x0C).await;
                     let r_c2 = ctx.read_input_registers(0xBC, 18).await;
+
+                    // Query additional VPP / Throttling registers
+                    let r_wactive = ctx.read_input_registers(0x9C, 2).await;
+                    let r_h_pwrctrl = ctx.read_holding_registers(0x00A6, 1).await;
+                    let r_h_pwrlim = ctx.read_holding_registers(0x0025, 1).await;
 
                     if let Ok(a) = r_a {
                         let mut b = vec![0u16; 42];
@@ -222,7 +230,20 @@ pub async fn run_solax_g3_driver(
                             let start = 0xBC - 0x6A; // 82
                             c[start..start + len].copy_from_slice(&c2[0..len]);
                         }
-                        read_data = Some((a, b, c));
+
+                        let w_active_power = r_wactive.ok().and_then(|regs| {
+                            if regs.len() >= 2 {
+                                let low = regs[0] as u32;
+                                let high = regs[1] as u32;
+                                Some((low | (high << 16)) as i32)
+                            } else {
+                                None
+                            }
+                        });
+                        let modbus_power_control = r_h_pwrctrl.ok().and_then(|regs| regs.first().copied());
+                        let power_limits_percent = r_h_pwrlim.ok().and_then(|regs| regs.first().copied());
+
+                        read_data = Some((a, b, c, w_active_power, modbus_power_control, power_limits_percent));
                     } else {
                         println!(
                             "Driver [{}] Modbus read fail: r_a={:?}",
@@ -238,8 +259,8 @@ pub async fn run_solax_g3_driver(
                 *lock = None;
             }
 
-            if let Some((a, b, c)) = read_data {
-                Ok((a, b, c))
+            if let Some((a, b, c, wap, mpc, plp)) = read_data {
+                Ok((a, b, c, wap, mpc, plp))
             } else {
                 Err(std::io::Error::new(
                     std::io::ErrorKind::ConnectionReset,
@@ -249,9 +270,9 @@ pub async fn run_solax_g3_driver(
         };
 
         match read_res {
-            Ok((reg_a, reg_b, reg_c)) => {
+            Ok((reg_a, reg_b, reg_c, wap, mpc, plp)) => {
                 if reg_a.len() >= 0x1D {
-                    let mut vals = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power);
+                    let mut vals = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power, wap, mpc, plp);
 
                     // Update global status for dashboard
                     let bat_cap = vals
@@ -353,8 +374,21 @@ fn parse_hybrid_registers(
     reg_b: &[u16],
     reg_c: &[u16],
     requested_battery_power: i32,
+    w_active_power: Option<i32>,
+    modbus_power_control: Option<u16>,
+    power_limits_percent: Option<u16>,
 ) -> HashMap<String, String> {
     let mut vals = HashMap::new();
+
+    if let Some(wap) = w_active_power {
+        vals.insert("Active Remote Power Target".to_string(), wap.to_string());
+    }
+    if let Some(mpc) = modbus_power_control {
+        vals.insert("Modbus Power Control State".to_string(), mpc.to_string());
+    }
+    if let Some(plp) = power_limits_percent {
+        vals.insert("Power Limits Percent".to_string(), plp.to_string());
+    }
 
     let u16_a = |addr: usize| -> u32 { reg_a[addr] as u32 };
     let i16_a = |addr: usize| -> i32 { reg_a[addr] as i16 as i32 };
@@ -630,7 +664,7 @@ mod tests {
         reg_c[0x73 - 0x6A] = 52;   // Phase 3 Current = 5.2A
         reg_c[0x74 - 0x6A] = 1198; // Phase 3 Power = 1198W
 
-        let parsed = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, 500);
+        let parsed = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, 500, None, None, None);
         assert_eq!(parsed.get("Grid Voltage").unwrap(), "230.0");
         assert_eq!(parsed.get("Grid Current").unwrap(), "10.5");
         assert_eq!(parsed.get("Inverter Power").unwrap(), "2000");

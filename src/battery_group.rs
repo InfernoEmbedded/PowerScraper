@@ -209,6 +209,7 @@ impl BatteryGroup {
                     if let Ok(mut status) = crate::web_server::get_system_status().lock() {
                         let web_inv = status.inverters.entry(name.clone()).or_default();
                         web_inv.requested_power = Some(0);
+                        web_inv.command_power = Some(0);
                     }
                     final_commands.insert(name.clone(), 0);
                     continue;
@@ -223,9 +224,9 @@ impl BatteryGroup {
                     p = -inv_cfg.max_charge;
                 }
 
-                // BMS Throttling
-                let max_limit = inv_cfg.max_charge_pct.unwrap_or(95);
-                if soc > max_limit && p < 0.0 && state.battery_power > (p / 10.0) {
+                // BMS Throttling & Battery Full Check
+                let max_limit = inv_cfg.max_charge_pct.map(|p| p.min(98)).unwrap_or(95);
+                if soc >= max_limit && p < 0.0 {
                     p = 0.0;
                 }
 
@@ -274,18 +275,49 @@ impl BatteryGroup {
                 assist_needed.insert(name.clone(), assist);
 
                 // Store command
-                let command_power = if inv_cfg.control_grid_power {
+                let mut command_power = if inv_cfg.control_grid_power {
                     let pv_power = state.pv1_power + state.pv2_power;
-                    if pv_power > 0.0 {
-                        let house_load = (pv_power + state.measured_power + state.battery_power).max(0.0);
-                        let grid_cmd = pv_power - house_load + p;
-                        -grid_cmd as i32
+                    let config_max_charge = if inv_cfg.max_charge > 0.0 { inv_cfg.max_charge } else { 5000.0 };
+
+                    // Dynamically calculate effective max charge capacity incorporating real-time BMS limit (BMS Current * Voltage)
+                    let effective_max_charge = match (state.bms_max_charge_current, state.battery_voltage) {
+                        (Some(i_max), Some(v_bat)) if i_max > 0.0 && v_bat > 0.0 => {
+                            config_max_charge.min(i_max * v_bat)
+                        }
+                        _ => config_max_charge,
+                    };
+                    let buffer_limit = 0.95 * effective_max_charge;
+
+                    if p < 0.0 {
+                        // Charging requested (p < 0, target_charge = -p > 0).
+                        // Maximize solar generation by requesting only the net grid draw (target_charge - pv_power).
+                        // Apply 95% max charge buffer so (pv_power + grid_draw) <= 0.95 * effective_max_charge,
+                        // leaving headroom for increasing solar PV output without triggering SolaX MPPT throttling.
+                        let target_charge = -p;
+                        let max_grid_draw = (buffer_limit - pv_power).max(0.0);
+                        let grid_draw = (target_charge - pv_power).clamp(0.0, max_grid_draw);
+                        grid_draw as i32
+                    } else if p > 0.0 {
+                        // Discharging requested (p > 0).
+                        if pv_power >= 50.0 {
+                            (-p - state.measured_power) as i32
+                        } else {
+                            -p as i32
+                        }
                     } else {
-                        -p as i32
+                        // Idle (p == 0.0): Drop to Self-Use mode (command_power = 0) so MPPT runs unthrottled.
+                        0
                     }
                 } else {
                     -p as i32
                 };
+
+                // When battery is full (soc >= max_limit) and we are not drawing down on the battery (p <= 0.0),
+                // drop inverter into self-use mode (command_power = 0) so SolaX MPPT runs at full capacity.
+                // When drawing down on battery (p > 0.0), all inverters share the discharge load.
+                if soc >= max_limit && p <= 0.0 {
+                    command_power = 0;
+                }
 
                 // Save the calculated discharge_power back into the inverter state!
                 state.discharge_power = p;
@@ -296,7 +328,8 @@ impl BatteryGroup {
                 // Update web status
                 if let Ok(mut status) = crate::web_server::get_system_status().lock() {
                     let web_inv = status.inverters.entry(name.clone()).or_default();
-                    web_inv.requested_power = Some(command_power);
+                    web_inv.requested_power = Some(p as i32);
+                    web_inv.command_power = Some(command_power);
                 }
 
                 final_commands.insert(name.clone(), command_power);
@@ -560,7 +593,7 @@ mod tests {
         let mut inv_state = crate::power_manager::InverterState::default();
         inv_state.has_telemetry = true;
         inv_state.battery_capacity = 50;
-        inv_state.pv1_power = 8000.0;
+        inv_state.pv1_power = 2000.0;
         inv_state.measured_power = -2000.0; // exporting 2000W
         inv_state.battery_power = -5000.0; // charging 5000W
         states.insert("A".to_string(), inv_state);
@@ -580,8 +613,8 @@ mod tests {
         };
 
         // Target: -5000W (charge 5000W).
-        // House load = (8000 + (-2000) + (-5000)).max(0.0) = 1000W.
-        // grid_cmd = 8000 - 1000 + (-5000) = 2000W export.
+        // PV = 2000W, Max Charge = 5000W (95% limit = 4750W).
+        // Grid draw = (5000 - 2000).clamp(0, 4750 - 2000) = 2750W.
         let cmds = group.calculate_and_constrain(
             -5000.0,
             &configs,
@@ -593,6 +626,74 @@ mod tests {
             1.0,
         );
 
-        assert_eq!(*cmds.get("A").unwrap(), -2000);
+        assert_eq!(*cmds.get("A").unwrap(), 2750);
+    }
+
+    #[test]
+    fn test_battery_full_drops_to_self_use_mode() {
+        let mut bat = make_test_battery("A", 100.0, 10000.0);
+        bat.max_charge_power_w = 5000.0;
+        bat.max_discharge_power_w = 5000.0;
+        let group = BatteryGroup::new(vec![bat]);
+
+        let mut inv_cfg = crate::config::BatteryControlInverter::default();
+        inv_cfg.max_charge = 5000.0;
+        inv_cfg.max_discharge = 5000.0;
+        inv_cfg.control_grid_power = true;
+        inv_cfg.max_charge_pct = Some(95);
+
+        let mut configs = HashMap::new();
+        configs.insert("A".to_string(), inv_cfg);
+
+        let mut states = HashMap::new();
+        let mut inv_state = crate::power_manager::InverterState::default();
+        inv_state.has_telemetry = true;
+        inv_state.battery_capacity = 100; // Full battery >= max_charge_pct (95)
+        inv_state.pv1_power = 6000.0;
+        inv_state.measured_power = -5000.0;
+        inv_state.battery_power = 0.0;
+        states.insert("A".to_string(), inv_state);
+
+        let mut assist = HashMap::new();
+        let mut commanded = HashMap::new();
+        let period = crate::config::BatteryControlPeriod {
+            start: "00:00:00".to_string(),
+            end: "23:59:59".to_string(),
+            min_charge: 10,
+            grid_charge: false,
+            force_discharge: None,
+            grace: false,
+            prefer_battery: false,
+            min_charge_hysteresis: None,
+            ignore_cost_margin: false,
+        };
+
+        // Battery is full (100% >= 95%), command_power = 0 (drop into self-use mode so PV isn't throttled).
+        let cmds = group.calculate_and_constrain(
+            -2000.0,
+            &configs,
+            &mut states,
+            &mut assist,
+            &mut commanded,
+            crate::power_manager::PowerManagerMode::Auto,
+            &period,
+            1.0,
+        );
+
+        assert_eq!(*cmds.get("A").unwrap(), 0);
+
+        // When ready to draw down on battery again (target: +2000W), positive discharge command should be sent.
+        let cmds_discharge = group.calculate_and_constrain(
+            2000.0,
+            &configs,
+            &mut states,
+            &mut assist,
+            &mut commanded,
+            crate::power_manager::PowerManagerMode::Auto,
+            &period,
+            1.0,
+        );
+
+        assert!(*cmds_discharge.get("A").unwrap() != 0);
     }
 }

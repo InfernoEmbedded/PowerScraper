@@ -81,9 +81,9 @@ where
                 }).unwrap_or(false);
 
                 let recv_res = if is_in_tokio {
-                    tokio::task::block_in_place(|| resp_rx.recv_timeout(std::time::Duration::from_secs(15)))
+                    tokio::task::block_in_place(|| resp_rx.recv_timeout(std::time::Duration::from_secs(30)))
                 } else {
-                    resp_rx.recv_timeout(std::time::Duration::from_secs(15))
+                    resp_rx.recv_timeout(std::time::Duration::from_secs(30))
                 };
                 match recv_res {
                     Ok(res) => return res,

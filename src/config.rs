@@ -535,6 +535,10 @@ impl Config {
         crate::database::save_config_to_db(db_path, self)
     }
 
+    pub async fn save_to_db_async(&self, db_path: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        crate::database::save_config_to_db_async(db_path, self.clone()).await
+    }
+
     pub fn get_configured_battery_inverters(&self) -> Vec<String> {
         let mut list = Vec::new();
         if let Some(ref bc) = self.battery_control {

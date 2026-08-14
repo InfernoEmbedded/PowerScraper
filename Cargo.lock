@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "PowerScraper"
-version = "1.0.153"
+version = "1.0.156"
 dependencies = [
  "axum",
  "chrono",
