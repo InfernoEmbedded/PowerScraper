@@ -4,6 +4,19 @@ All notable user-facing changes in PowerScraper since the transition from the le
 
 ---
 
+## [1.0.156] - 2026-08-15
+
+### Added
+* **Solax Inverter Advanced Configuration (Gen 3 & V2.50)**:
+  - Added full read/write support for all Modbus Function Code `0x06` writable registers for Solax Gen 3 (V3.21) and older V2.50 inverters.
+  - Dynamically generate configuration UI based on driver capabilities to ensure 100% exposure of writable hardware parameters.
+  - Implemented an auto-generated "**⚙️ Other Settings**" section for any unmapped write-only registers.
+  - Fixed API omissions to force-expose writable registers even if omitted from core telemetry reads.
+* **UI Improvements**:
+  - Restructured Charge and Discharge Window End time inputs to their own rows for better legibility.
+
+---
+
 ## [1.0.120] - 2026-08-10
 
 ### Added
