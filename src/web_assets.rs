@@ -1046,6 +1046,402 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
         </div>
     </div>
 
+    <!-- View Inverter Details Modal -->
+    <div id="inverter-details-modal" class="modal" style="display: none;">
+        <div class="modal-content glass-card" style="max-width: 950px; width: 95%; max-height: 85vh; display: flex; flex-direction: column; padding: 25px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 15px;">
+                <div>
+                    <h3 id="inv-details-title" style="margin: 0; font-size: 1.3rem; font-weight: 600; color: var(--text);">Inverter Live Registers</h3>
+                    <div id="inv-details-subtitle" style="font-size: 0.85rem; color: var(--text-dim); margin-top: 4px;">Loading live telemetry data...</div>
+                </div>
+                <button class="delete-btn" onclick="closeInverterDetailsModal()" style="font-size: 1.1rem; padding: 4px 10px;">✕</button>
+            </div>
+
+            <div style="display: flex; gap: 12px; margin-bottom: 15px; flex-wrap: wrap; align-items: center;">
+                <input type="text" id="inv-details-search" placeholder="🔍 Search register address, name, or value..." oninput="filterInverterRegistersTable()" style="flex: 1; min-width: 240px; padding: 8px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+                
+                <select id="inv-details-category" onchange="filterInverterRegistersTable()" style="padding: 8px 12px; background: rgba(0,0,0,0.3); border: 1px solid var(--border); border-radius: 6px; color: var(--text);">
+                    <option value="ALL">All Categories</option>
+                    <option value="READONLY">Readonly Registers</option>
+                    <option value="WRITABLE">Writable Holding Registers</option>
+                    <option value="Grid">Grid Telemetry</option>
+                    <option value="Battery">Battery Telemetry</option>
+                    <option value="Solar PV">Solar PV Generation</option>
+                    <option value="Settings">Configured Settings</option>
+                    <option value="Faults">Faults & Warnings</option>
+                </select>
+
+                <div class="checkbox-group" style="margin: 0; display: flex; align-items: center; gap: 6px;">
+                    <input type="checkbox" id="inv-details-auto-refresh" checked onchange="toggleInverterDetailsAutoRefresh(this.checked)">
+                    <label for="inv-details-auto-refresh" style="font-size: 0.85rem;">Auto Refresh (3s)</label>
+                </div>
+            </div>
+
+            <div style="flex: 1; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: rgba(0,0,0,0.2);">
+                <table style="width: 100%; border-collapse: collapse; text-align: left; font-size: 0.85rem;">
+                    <thead style="position: sticky; top: 0; background: #1e293b; z-index: 10; border-bottom: 1px solid var(--border);">
+                        <tr>
+                            <th style="padding: 10px 12px;">Hex</th>
+                            <th style="padding: 10px 12px;">Dec</th>
+                            <th style="padding: 10px 12px;">Parameter / Register Name</th>
+                            <th style="padding: 10px 12px;">Live Value</th>
+                            <th style="padding: 10px 12px;">Access</th>
+                            <th style="padding: 10px 12px;">Category</th>
+                            <th style="padding: 10px 12px;">Description</th>
+                        </tr>
+                    </thead>
+                    <tbody id="inv-details-table-body">
+                        <!-- Dynamic register rows -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Configure Inverter Modal -->
+    <div id="inverter-configure-modal" class="modal" style="display: none;">
+        <div class="modal-content glass-card" style="max-width: 800px; width: 95%; max-height: 90vh; display: flex; flex-direction: column; padding: 25px; overflow-y: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 15px; margin-bottom: 20px;">
+                <div>
+                    <h3 id="inv-cfg-title" style="margin: 0; font-size: 1.3rem; font-weight: 600; color: var(--text);">Configure Inverter Registers</h3>
+                    <div id="inv-cfg-subtitle" style="font-size: 0.85rem; color: var(--text-dim); margin-top: 4px;">Read & Manipulate Inverter Hardware Settings</div>
+                </div>
+                <button class="delete-btn" onclick="closeInverterConfigureModal()" style="font-size: 1.1rem; padding: 4px 10px;">✕</button>
+            </div>
+
+            <div id="cfg-toast" style="margin-bottom: 15px; padding: 10px 14px; border-radius: 6px; display: none; font-size: 0.85rem;"></div>
+
+            <!-- Section 1: Work Mode & Battery Management -->
+            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: var(--accent-light); border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">🔋 Work Mode & Battery Management</h4>
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Operating Mode (Reg 0x001F / 31)</label>
+                        <select id="cfg-op-mode">
+                            <option value="0">0: Self Use Mode</option>
+                            <option value="1">1: Force Time Use Mode</option>
+                            <option value="2">2: Remote Control Mode</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(31, document.getElementById('cfg-op-mode').value)" style="height: 38px;">Write Mode</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Battery Type (Reg 0x0021 / 33)</label>
+                        <select id="cfg-bat-type">
+                            <option value="0">0: Lead Acid</option>
+                            <option value="1">1: Lithium</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(33, document.getElementById('cfg-bat-type').value)" style="height: 38px;">Write Type</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Min SOC Protection Limit (Reg 0x0020 / 32 - %)</label>
+                        <input type="number" id="cfg-min-soc" min="10" max="100" placeholder="e.g. 15 for 15%">
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(32, document.getElementById('cfg-min-soc').value)" style="height: 38px;">Write Min SOC</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Max Charge Current (Reg 0x0024 / 36 - Amps)</label>
+                        <input type="number" step="0.1" id="cfg-max-charge-curr" placeholder="e.g. 50.0">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(36, document.getElementById('cfg-max-charge-curr').value, 100)" style="height: 38px;">Write Current</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Max Discharge Current (Reg 0x0025 / 37 - Amps)</label>
+                        <input type="number" step="0.1" id="cfg-max-discharge-curr" placeholder="e.g. 50.0">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(37, document.getElementById('cfg-max-discharge-curr').value, 100)" style="height: 38px;">Write Current</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Charge Cutoff Voltage (Reg 0x0022 / 34 - Volts)</label>
+                        <input type="number" step="0.1" id="cfg-charge-cut-v" placeholder="e.g. 54.0">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(34, document.getElementById('cfg-charge-cut-v').value, 100)" style="height: 38px;">Write Voltage</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Discharge Cutoff Voltage (Reg 0x0023 / 35 - Volts)</label>
+                        <input type="number" step="0.1" id="cfg-discharge-cut-v" placeholder="e.g. 48.0">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(35, document.getElementById('cfg-discharge-cut-v').value, 100)" style="height: 38px;">Write Voltage</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Charge Absorption Voltage (Reg 0x0053 / 83 - Volts)</label>
+                        <input type="number" step="0.1" id="cfg-absorption-v" placeholder="e.g. 54.5">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(83, document.getElementById('cfg-absorption-v').value, 100)" style="height: 38px;">Write Voltage</button>
+                </div>
+            </div>
+
+            <!-- Section 2: Grid Charge & Export Power Control -->
+            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: var(--accent-light); border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">⚡ Grid Charge & Export Limits</h4>
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Allow Grid Charge (Reg 0x0040 / 64)</label>
+                        <select id="cfg-grid-charge">
+                            <option value="0">0: Both Periods Forbidden</option>
+                            <option value="1">1: Period 1 Allowed</option>
+                            <option value="2">2: Period 2 Allowed</option>
+                            <option value="3">3: Both Periods Allowed</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(64, document.getElementById('cfg-grid-charge').value)" style="height: 38px;">Write Setting</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Export Control User Limit (Reg 0x0042 / 66 - Watts)</label>
+                        <input type="number" id="cfg-export-user" placeholder="e.g. 0">
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(66, document.getElementById('cfg-export-user').value)" style="height: 38px;">Write Limit</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Export Control Factory Limit (Reg 0x0041 / 65 - Watts)</label>
+                        <input type="number" id="cfg-export-factory" placeholder="e.g. 0">
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(65, document.getElementById('cfg-export-factory').value)" style="height: 38px;">Write Limit</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Active Power Limit (Reg 0x0011 / 17 - %)</label>
+                        <input type="number" id="cfg-active-pwr-limit" min="0" max="100" placeholder="e.g. 100">
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(17, document.getElementById('cfg-active-pwr-limit').value)" style="height: 38px;">Write Limit</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Power Manager Enable (Reg 0x001B / 27)</label>
+                        <select id="cfg-pwr-mgr-enable">
+                            <option value="0">0: Disabled</option>
+                            <option value="1">1: Enabled</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(27, document.getElementById('cfg-pwr-mgr-enable').value)" style="height: 38px;">Write Setting</button>
+                </div>
+            </div>
+
+            <!-- Section 3: Charge & Discharge Timer Windows -->
+            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: var(--accent-light); border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">⏱️ Charge & Discharge Timers</h4>
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Charge Period 1 Start (Reg 0x0026 / 38)</label>
+                        <input type="time" id="cfg-chg-start1">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(38, document.getElementById('cfg-chg-start1').value)" style="height: 38px;">Save Start</button>
+                </div>
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Charge Period 1 End (Reg 0x0027 / 39)</label>
+                        <input type="time" id="cfg-chg-end1">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(39, document.getElementById('cfg-chg-end1').value)" style="height: 38px;">Save End</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Discharge Period 1 Start (Reg 0x0028 / 40)</label>
+                        <input type="time" id="cfg-dischg-start1">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(40, document.getElementById('cfg-dischg-start1').value)" style="height: 38px;">Save Start</button>
+                </div>
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Discharge Period 1 End (Reg 0x0029 / 41)</label>
+                        <input type="time" id="cfg-dischg-end1">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(41, document.getElementById('cfg-dischg-end1').value)" style="height: 38px;">Save End</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Charge Period 2 Start (Reg 0x002A / 42)</label>
+                        <input type="time" id="cfg-chg-start2">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(42, document.getElementById('cfg-chg-start2').value)" style="height: 38px;">Save Start</button>
+                </div>
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Charge Period 2 End (Reg 0x002B / 43)</label>
+                        <input type="time" id="cfg-chg-end2">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(43, document.getElementById('cfg-chg-end2').value)" style="height: 38px;">Save End</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Discharge Period 2 Start (Reg 0x002C / 44)</label>
+                        <input type="time" id="cfg-dischg-start2">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(44, document.getElementById('cfg-dischg-start2').value)" style="height: 38px;">Save Start</button>
+                </div>
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Discharge Period 2 End (Reg 0x002D / 45)</label>
+                        <input type="time" id="cfg-dischg-end2">
+                    </div>
+                    <button class="sub-btn" onclick="submitTimeRegisterWrite(45, document.getElementById('cfg-dischg-end2').value)" style="height: 38px;">Save End</button>
+                </div>
+            </div>
+
+            <!-- Section 4: Grid Protection & System Parameters -->
+            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: var(--accent-light); border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">🛡️ Grid Protection & System Settings</h4>
+            <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;">
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>PV Start Voltage (Reg 0x0001 / 1 - Volts)</label>
+                        <input type="number" step="0.1" id="cfg-pv-start-v" placeholder="e.g. 120.0">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(1, document.getElementById('cfg-pv-start-v').value, 10)" style="height: 38px;">Write Voltage</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Start Wait Time (Reg 0x0002 / 2 - Seconds)</label>
+                        <input type="number" id="cfg-start-wait-t" placeholder="e.g. 60">
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(2, document.getElementById('cfg-start-wait-t').value)" style="height: 38px;">Write Time</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Min Grid Voltage Protect (Reg 0x0005 / 5 - Volts)</label>
+                        <input type="number" step="0.1" id="cfg-vac-min" placeholder="e.g. 200.0">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(5, document.getElementById('cfg-vac-min').value, 10)" style="height: 38px;">Write Voltage</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Max Grid Voltage Protect (Reg 0x0006 / 6 - Volts)</label>
+                        <input type="number" step="0.1" id="cfg-vac-max" placeholder="e.g. 265.0">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(6, document.getElementById('cfg-vac-max').value, 10)" style="height: 38px;">Write Voltage</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Min Grid Freq Protect (Reg 0x0007 / 7 - Hz)</label>
+                        <input type="number" step="0.01" id="cfg-fac-min" placeholder="e.g. 47.50">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(7, document.getElementById('cfg-fac-min').value, 100)" style="height: 38px;">Write Freq</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Max Grid Freq Protect (Reg 0x0008 / 8 - Hz)</label>
+                        <input type="number" step="0.01" id="cfg-fac-max" placeholder="e.g. 52.00">
+                    </div>
+                    <button class="sub-btn" onclick="submitScaledRegisterWrite(8, document.getElementById('cfg-fac-max').value, 100)" style="height: 38px;">Write Freq</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Safety Grid Standard Code (Reg 0x0009 / 9)</label>
+                        <select id="cfg-safety-type">
+                            <option value="0">0: VDE0126</option>
+                            <option value="1">1: ARN4105</option>
+                            <option value="2">2: AS4777 (Australia)</option>
+                            <option value="3">3: G83/2 (UK)</option>
+                            <option value="4">4: C10/11</option>
+                            <option value="5">5: OVE/ONORM E8001</option>
+                            <option value="6">6: EN50438_NL</option>
+                            <option value="7">7: EN50438_DK</option>
+                            <option value="8">8: CEB</option>
+                            <option value="9">9: CEI021</option>
+                            <option value="10">10: NRS097</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(9, document.getElementById('cfg-safety-type').value)" style="height: 38px;">Write Safety</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>EPS Mute Alarm (Reg 0x0043 / 67)</label>
+                        <select id="cfg-eps-mute">
+                            <option value="0">0: Alarm Active (Off)</option>
+                            <option value="1">1: Alarm Muted (On)</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(67, document.getElementById('cfg-eps-mute').value)" style="height: 38px;">Write Mute</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>EPS Output Frequency (Reg 0x0044 / 68)</label>
+                        <select id="cfg-eps-freq">
+                            <option value="0">0: 50 Hz</option>
+                            <option value="1">1: 60 Hz</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(68, document.getElementById('cfg-eps-freq').value)" style="height: 38px;">Write Freq</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>Display Language (Reg 0x0047 / 71)</label>
+                        <select id="cfg-language">
+                            <option value="0">0: English</option>
+                            <option value="1">1: German</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(71, document.getElementById('cfg-language').value)" style="height: 38px;">Write Lang</button>
+                </div>
+
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>IP Network Method (Reg 0x0048 / 72)</label>
+                        <select id="cfg-ip-method">
+                            <option value="0">0: DHCP</option>
+                            <option value="1">1: Manual Static</option>
+                        </select>
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(72, document.getElementById('cfg-ip-method').value)" style="height: 38px;">Write IP Method</button>
+                </div>
+            </div>
+
+            <!-- Section: Other Dynamically Generated Settings -->
+            <div id="cfg-other-section" style="display: none;">
+                <h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: var(--accent-light); border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">⚙️ Other Settings</h4>
+                <div id="cfg-other-settings" style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px;"></div>
+            </div>
+
+            <!-- Section 5: Advanced Manual Register Write -->
+            <h4 style="margin: 0 0 12px 0; font-size: 0.95rem; color: var(--accent-light); border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 6px;">🛠️ Advanced Raw Register Write</h4>
+            <div style="background: rgba(0,0,0,0.25); border: 1px solid var(--border); border-radius: 8px; padding: 15px; display: flex; flex-direction: column; gap: 12px;">
+                <div class="form-row" id="cfg-adv-row">
+                    <div class="form-group">
+                        <label>Register Address (Hex e.g. 0x001F or Dec 31)</label>
+                        <input type="text" id="cfg-adv-reg" placeholder="e.g. 0x001F or 31">
+                    </div>
+                    <div class="form-group">
+                        <label>Raw Value (u16 0-65535)</label>
+                        <input type="number" id="cfg-adv-val" min="0" max="65535" placeholder="e.g. 1000">
+                    </div>
+                </div>
+                <button class="sub-btn" onclick="submitAdvancedRegisterWrite()" style="background: var(--accent-gradient); width: 100%;">⚡ Execute Custom Register Write</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/app.js"></script>
 </body>
 </html>
@@ -2035,8 +2431,33 @@ async function fetchStatus() {
                     cmdPowerStyle = `color: var(--text-muted);`;
                 }
 
+                const nowSecs = Math.floor(Date.now() / 1000);
+                const age = inv.last_updated ? (nowSecs - inv.last_updated) : 999;
+                const isStale = age > 15;
+                const isErr = inv.is_error || isStale || (inv.error_text && inv.error_text.length > 0);
+
+                let errText = inv.error_text || "";
+                if (isStale && (!errText || !errText.includes("Offline"))) {
+                    const ageText = inv.last_updated ? `no response for ${age}s` : `never connected`;
+                    errText = errText ? `Offline / Communication Lost (${ageText}) | ${errText}` : `Offline / Communication Lost (${ageText})`;
+                }
+
+                const itemStyle = isErr 
+                    ? `background: rgba(139, 0, 0, 0.45); border: 1px solid rgba(239, 68, 68, 0.8); border-left: 5px solid #ef4444;` 
+                    : ``;
+
+                let errorBannerHtml = "";
+                if (isErr && errText) {
+                    errorBannerHtml = `
+                        <div style="grid-column: 1 / -1; margin-top: 12px; padding: 8px 12px; background: rgba(0, 0, 0, 0.5); border-radius: 6px; border: 1px solid rgba(239, 68, 68, 0.6); color: #fca5a5; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 16px;">⚠️</span>
+                            <span>${errText}</span>
+                        </div>
+                    `;
+                }
+
                 return `
-                    <div class="inverter-item">
+                    <div class="inverter-item" style="${itemStyle}">
                         <div>
                             <div class="inverter-field-title">Inverter ID</div>
                             <div class="inverter-field-val">${k}</div>
@@ -2062,6 +2483,7 @@ async function fetchStatus() {
                             <div class="inverter-field-title">PV Output Power</div>
                             <div class="inverter-field-val">${inv.pv_power} W</div>
                         </div>
+                        ${errorBannerHtml}
                     </div>
                 `;
             }).join('');
@@ -2347,7 +2769,11 @@ function renderDriverCard(type, data = {}) {
         content = `
             <div class="card-title">
                 <span>SolaX Wi-Fi HTTP API</span>
-                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(255,255,255,0.08); border: 1px solid var(--border);" onclick="openInverterDetailsModal(this)">🔍 View Details</button>
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: var(--accent-gradient);" onclick="openInverterConfigureModal(this)">⚙️ Configure Inverter</button>
+                    <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -2374,7 +2800,11 @@ function renderDriverCard(type, data = {}) {
         content = `
             <div class="card-title">
                 <span>SolaX Modbus TCP (Standard)</span>
-                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(255,255,255,0.08); border: 1px solid var(--border);" onclick="openInverterDetailsModal(this)">🔍 View Details</button>
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: var(--accent-gradient);" onclick="openInverterConfigureModal(this)">⚙️ Configure Inverter</button>
+                    <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -2417,7 +2847,11 @@ function renderDriverCard(type, data = {}) {
         content = `
             <div class="card-title">
                 <span>${title}</span>
-                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(255,255,255,0.08); border: 1px solid var(--border);" onclick="openInverterDetailsModal(this)">🔍 View Details</button>
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: var(--accent-gradient);" onclick="openInverterConfigureModal(this)">⚙️ Configure Inverter</button>
+                    <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -2459,7 +2893,10 @@ function renderDriverCard(type, data = {}) {
         content = `
             <div class="card-title">
                 <span>Eastron SDM630 Serial Meter</span>
-                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(255,255,255,0.08); border: 1px solid var(--border);" onclick="openInverterDetailsModal(this)">🔍 View Details</button>
+                    <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -2512,7 +2949,10 @@ function renderDriverCard(type, data = {}) {
         content = `
             <div class="card-title">
                 <span>Chint DTSU666 Serial Meter</span>
-                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(255,255,255,0.08); border: 1px solid var(--border);" onclick="openInverterDetailsModal(this)">🔍 View Details</button>
+                    <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -2565,7 +3005,10 @@ function renderDriverCard(type, data = {}) {
         content = `
             <div class="card-title">
                 <span>MQTT Custom Power Meter Bridge</span>
-                <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button class="sub-btn" style="padding: 4px 10px; font-size: 0.8rem; background: rgba(255,255,255,0.08); border: 1px solid var(--border);" onclick="openInverterDetailsModal(this)">🔍 View Details</button>
+                    <button class="delete-btn" onclick="this.closest('.driver-card').remove()">Remove</button>
+                </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
@@ -6041,5 +6484,389 @@ function renderHistoryCharts(records, startTs, endTs) {
             el.classList.remove('graph-loading-pulse');
         }
     });
+}
+
+let currentDetailsInverter = null;
+let detailsAutoRefreshTimer = null;
+let currentConfigureInverter = null;
+let currentRegisterData = [];
+
+function openInverterDetailsModal(btn) {
+    const card = btn.closest('.driver-card');
+    let invName = '';
+    const nameInput = card.querySelector('.driver-modbus-name, .driver-g3g4-name, .driver-mqttinv-name, .driver-wifi-host, .driver-sdm-port, .driver-dtsu-port, .driver-mqtt-meter-name');
+    if (nameInput) invName = nameInput.value.trim();
+    if (invName.startsWith('/dev/tty')) invName = invName.replace('/dev/tty', '');
+    if (invName.startsWith('/dev/')) invName = invName.replace('/dev/', '');
+    if (!invName) invName = 'device';
+
+    currentDetailsInverter = invName;
+    document.getElementById('inv-details-title').innerText = `Device / Meter Live Registers: ${invName}`;
+    document.getElementById('inverter-details-modal').style.display = 'flex';
+    
+    fetchInverterRegisters(invName);
+    toggleInverterDetailsAutoRefresh(document.getElementById('inv-details-auto-refresh').checked);
+}
+
+function closeInverterDetailsModal() {
+    document.getElementById('inverter-details-modal').style.display = 'none';
+    currentDetailsInverter = null;
+    if (detailsAutoRefreshTimer) {
+        clearInterval(detailsAutoRefreshTimer);
+        detailsAutoRefreshTimer = null;
+    }
+}
+
+function toggleInverterDetailsAutoRefresh(enabled) {
+    if (detailsAutoRefreshTimer) {
+        clearInterval(detailsAutoRefreshTimer);
+        detailsAutoRefreshTimer = null;
+    }
+    if (enabled && currentDetailsInverter) {
+        detailsAutoRefreshTimer = setInterval(() => {
+            if (currentDetailsInverter) fetchInverterRegisters(currentDetailsInverter);
+        }, 3000);
+    }
+}
+
+async function fetchInverterRegisters(invName) {
+    try {
+        const res = await fetch(`/api/inverter/registers?name=${encodeURIComponent(invName)}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        
+        currentRegisterData = data.registers || [];
+        const subtitle = document.getElementById('inv-details-subtitle');
+        const lastUpd = data.last_updated ? new Date(data.last_updated * 1000).toLocaleTimeString() : 'N/A';
+        subtitle.innerText = `Driver: ${data.driver_type} | Last Updated: ${lastUpd} | Total Registers/Metrics: ${currentRegisterData.length}`;
+
+        renderInverterRegistersTable();
+    } catch (e) {
+        document.getElementById('inv-details-subtitle').innerText = `Error fetching registers: ${e.message}`;
+    }
+}
+
+function renderInverterRegistersTable() {
+    const tbody = document.getElementById('inv-details-table-body');
+    const searchVal = (document.getElementById('inv-details-search').value || '').toLowerCase().trim();
+    const catVal = document.getElementById('inv-details-category').value;
+
+    let filtered = currentRegisterData.filter(r => {
+        if (catVal === 'READONLY' && r.writable) return false;
+        if (catVal === 'WRITABLE' && !r.writable) return false;
+        if (catVal !== 'ALL' && catVal !== 'READONLY' && catVal !== 'WRITABLE') {
+            if (r.category !== catVal) return false;
+        }
+        if (searchVal) {
+            const matchesHex = (r.address_hex || '').toLowerCase().includes(searchVal);
+            const matchesDec = (r.address_dec + '').includes(searchVal);
+            const matchesName = (r.name || '').toLowerCase().includes(searchVal);
+            const matchesVal = (r.value || '').toLowerCase().includes(searchVal);
+            const matchesDesc = (r.description || '').toLowerCase().includes(searchVal);
+            return matchesHex || matchesDec || matchesName || matchesVal || matchesDesc;
+        }
+        return true;
+    });
+
+    filtered.sort((a, b) => {
+        const aHasAddr = a.address_hex && a.address_hex !== 'N/A';
+        const bHasAddr = b.address_hex && b.address_hex !== 'N/A';
+        if (aHasAddr && bHasAddr) {
+            return a.address_dec - b.address_dec;
+        } else if (aHasAddr) {
+            return -1;
+        } else if (bHasAddr) {
+            return 1;
+        } else {
+            return (a.name || '').localeCompare(b.name || '');
+        }
+    });
+
+    if (filtered.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" style="padding: 20px; text-align: center; color: var(--text-dim);">No registers match current filter criteria.</td></tr>`;
+        return;
+    }
+
+    tbody.innerHTML = filtered.map(r => `
+        <tr style="border-bottom: 1px solid rgba(255,255,255,0.05);">
+            <td style="padding: 8px 12px; font-family: monospace; color: var(--accent-light);">${r.address_hex}</td>
+            <td style="padding: 8px 12px; font-family: monospace; color: var(--text-dim);">${r.address_dec}</td>
+            <td style="padding: 8px 12px; font-weight: 500;">${r.name}</td>
+            <td style="padding: 8px 12px; font-weight: 600; color: #38bdf8;">${r.value} ${r.unit}</td>
+            <td style="padding: 8px 12px;">
+                ${r.writable 
+                    ? '<span style="background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">Writable</span>' 
+                    : '<span style="background: rgba(148, 163, 184, 0.2); color: #94a3b8; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">Readonly</span>'}
+            </td>
+            <td style="padding: 8px 12px;"><span style="background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;">${r.category}</span></td>
+            <td style="padding: 8px 12px; font-size: 0.8rem; color: var(--text-dim);">${r.description || ''}</td>
+        </tr>
+    `).join('');
+}
+
+function filterInverterRegistersTable() {
+    renderInverterRegistersTable();
+}
+
+async function openInverterConfigureModal(btn) {
+    const card = btn.closest('.driver-card');
+    let invName = '';
+    const nameInput = card.querySelector('.driver-modbus-name, .driver-g3g4-name, .driver-mqttinv-name, .driver-wifi-host');
+    if (nameInput) invName = nameInput.value.trim();
+    if (!invName) invName = 'solax-modbus';
+
+    currentConfigureInverter = invName;
+    document.getElementById('inv-cfg-title').innerText = `Configure Inverter: ${invName}`;
+    document.getElementById('inverter-configure-modal').style.display = 'flex';
+    document.getElementById('cfg-toast').style.display = 'none';
+
+    await populateInverterConfigFields(invName);
+}
+
+function closeInverterConfigureModal() {
+    document.getElementById('inverter-configure-modal').style.display = 'none';
+    currentConfigureInverter = null;
+}
+
+async function populateInverterConfigFields(invName) {
+    const toast = document.getElementById('cfg-toast');
+    toast.style.display = 'block';
+    toast.style.background = 'rgba(59, 130, 246, 0.2)';
+    toast.style.color = '#60a5fa';
+    toast.style.border = '1px solid rgba(59, 130, 246, 0.4)';
+    toast.innerText = `Fetching current hardware settings from ${invName}...`;
+
+    try {
+        const res = await fetch('/api/inverter/registers?name=' + encodeURIComponent(invName));
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const regMap = {};
+        (data.registers || []).forEach(r => {
+            if (r.name) regMap[r.name] = r.value;
+            if (r.address_dec !== undefined) regMap['dec_' + r.address_dec] = r.value;
+            if (r.address_hex) regMap['hex_' + r.address_hex.toLowerCase()] = r.value;
+        });
+
+        // Hide all custom rows initially, except the Advanced one and Other Settings rows
+        const allCustomRows = document.querySelectorAll('#inverter-configure-modal .form-row');
+        allCustomRows.forEach(row => {
+            if (row.id !== 'cfg-adv-row' && !row.closest('#cfg-other-section')) {
+                row.style.display = 'none';
+            }
+        });
+
+        function bindField(id, name, regMap) {
+            const el = document.getElementById(id);
+            if (!el) return false;
+            const row = el.closest('.form-row');
+            if (regMap[name] !== undefined) {
+                el.value = regMap[name];
+                if (row) row.style.display = 'flex';
+                regMap[name + '_handled'] = true;
+                return true;
+            }
+            return false;
+        }
+
+        // Pre-populate fields with live values and unhide active rows
+        bindField('cfg-op-mode', 'Work Mode', regMap) || bindField('cfg-op-mode', 'SolarChargerUseMode', regMap);
+        bindField('cfg-bat-type', 'Battery Type', regMap);
+        bindField('cfg-min-soc', 'Battery Min Capacity', regMap);
+        bindField('cfg-max-charge-curr', 'Max Charge Current', regMap);
+        bindField('cfg-max-discharge-curr', 'Max Discharge Current', regMap);
+        bindField('cfg-charge-cut-v', 'Charge Cutoff Voltage', regMap);
+        bindField('cfg-discharge-cut-v', 'Discharge Cutoff Voltage', regMap);
+        bindField('cfg-absorption-v', 'Charge Absorption Voltage', regMap);
+        bindField('cfg-grid-charge', 'Allow Grid Charge', regMap);
+        bindField('cfg-export-user', 'Export Control User Limit', regMap);
+        bindField('cfg-export-factory', 'Export Control Factory Limit', regMap);
+        bindField('cfg-active-pwr-limit', 'Active Power Limit', regMap);
+        bindField('cfg-pwr-mgr-enable', 'Power Manager Enable', regMap);
+        bindField('cfg-chg-start1', 'Charge Window 1 Start', regMap);
+        bindField('cfg-chg-end1', 'Charge Window 1 End', regMap);
+        bindField('cfg-dischg-start1', 'Discharge Window 1 Start', regMap);
+        bindField('cfg-dischg-end1', 'Discharge Window 1 End', regMap);
+        bindField('cfg-chg-start2', 'Charge Window 2 Start', regMap);
+        bindField('cfg-chg-end2', 'Charge Window 2 End', regMap);
+        bindField('cfg-dischg-start2', 'Discharge Window 2 Start', regMap);
+        bindField('cfg-dischg-end2', 'Discharge Window 2 End', regMap);
+        bindField('cfg-pv-start-v', 'PV Start Voltage', regMap);
+        bindField('cfg-start-wait-t', 'Start Wait Time', regMap);
+        bindField('cfg-vac-min', 'Min Grid Voltage Protect', regMap);
+        bindField('cfg-vac-max', 'Max Grid Voltage Protect', regMap);
+        bindField('cfg-fac-min', 'Min Grid Freq Protect', regMap);
+        bindField('cfg-fac-max', 'Max Grid Freq Protect', regMap);
+        bindField('cfg-safety-type', 'Safety Type', regMap);
+        bindField('cfg-eps-mute', 'EPS Mute', regMap);
+        bindField('cfg-eps-freq', 'EPS Frequency', regMap);
+        bindField('cfg-language', 'Language', regMap);
+        bindField('cfg-ip-method', 'IP Method', regMap);
+
+        // Hide empty sections
+        document.querySelectorAll('#inverter-configure-modal h4').forEach(h4 => {
+            if (h4.innerText.includes('Advanced Raw') || h4.innerText.includes('Other Settings')) return;
+            const container = h4.nextElementSibling;
+            if (container && container.tagName === 'DIV') {
+                const hasVisible = Array.from(container.querySelectorAll('.form-row')).some(row => row.style.display !== 'none');
+                h4.style.display = hasVisible ? 'block' : 'none';
+                container.style.display = hasVisible ? 'flex' : 'none';
+            }
+        });
+
+        // Build Other Settings
+        let otherSettingsHtml = '';
+        const writableRegs = (data.registers || []).filter(r => r.writable === true);
+        writableRegs.forEach(r => {
+            if (!regMap[r.name + '_handled']) {
+                let writeRegDec = r.address_dec;
+                const writeRegMatch = (r.description || '').match(/\(Write Reg (0x[0-9a-fA-F]+)\)/i);
+                if (writeRegMatch) {
+                    writeRegDec = parseInt(writeRegMatch[1], 16);
+                }
+                const val = r.value !== undefined ? r.value : '';
+                const step = (r.unit === 'V' || r.unit === 'A' || r.unit === 'Hz') ? 'any' : '1';
+                otherSettingsHtml += `
+                <div class="form-row" style="align-items: flex-end; gap: 10px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label>${r.name} (Reg ${writeRegDec} - ${r.unit || 'Raw'})</label>
+                        <input type="number" step="${step}" id="cfg-dyn-${writeRegDec}" value="${val}">
+                    </div>
+                    <button class="sub-btn" onclick="submitQuickRegisterWrite(${writeRegDec}, document.getElementById('cfg-dyn-${writeRegDec}').value)" style="height: 38px;">Write</button>
+                </div>
+                `;
+            }
+        });
+
+        const otherContainer = document.getElementById('cfg-other-settings');
+        if (otherContainer) {
+            if (otherSettingsHtml) {
+                otherContainer.innerHTML = otherSettingsHtml;
+                document.getElementById('cfg-other-section').style.display = 'block';
+            } else {
+                otherContainer.innerHTML = '';
+                document.getElementById('cfg-other-section').style.display = 'none';
+            }
+        }
+
+        toast.style.background = 'rgba(34, 197, 94, 0.2)';
+        toast.style.color = '#4ade80';
+        toast.style.border = '1px solid rgba(34, 197, 94, 0.4)';
+        toast.innerText = `Current hardware settings loaded from ${invName}!`;
+        setTimeout(() => { toast.style.display = 'none'; }, 3000);
+    } catch (e) {
+        toast.style.background = 'rgba(239, 68, 68, 0.2)';
+        toast.style.color = '#f87171';
+        toast.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+        toast.innerText = `Note: Could not read current holding settings (${e.message}). You can still send write commands.`;
+    }
+}
+
+async function submitQuickRegisterWrite(regDec, val) {
+    if (!currentConfigureInverter) return;
+    if (val === null || val === undefined || val === '') {
+        showConfigToast('Please enter a valid value to write.', false);
+        return;
+    }
+
+    await executeRegisterWriteApi(currentConfigureInverter, parseInt(regDec, 10), parseInt(val, 10));
+}
+
+async function submitScaledRegisterWrite(regDec, rawVal, scaleMultiplier) {
+    if (!currentConfigureInverter) return;
+    if (rawVal === null || rawVal === undefined || rawVal === '') {
+        showConfigToast('Please enter a valid value.', false);
+        return;
+    }
+    const floatVal = parseFloat(rawVal);
+    if (isNaN(floatVal)) {
+        showConfigToast('Invalid numeric value format.', false);
+        return;
+    }
+    const scaledInt = Math.round(floatVal * (scaleMultiplier || 1));
+    await executeRegisterWriteApi(currentConfigureInverter, parseInt(regDec, 10), scaledInt);
+}
+
+async function submitTimeRegisterWrite(regDec, timeStr) {
+    if (!currentConfigureInverter) return;
+    if (!timeStr || !timeStr.includes(':')) {
+        showConfigToast('Please enter time in HH:MM format.', false);
+        return;
+    }
+    const parts = timeStr.split(':');
+    const hours = parseInt(parts[0], 10);
+    const mins = parseInt(parts[1], 10);
+    if (isNaN(hours) || isNaN(mins) || hours < 0 || hours > 23 || mins < 0 || mins > 59) {
+        showConfigToast('Invalid time format (must be 00:00 to 23:59).', false);
+        return;
+    }
+    const packedVal = (mins << 8) | hours;
+    await executeRegisterWriteApi(currentConfigureInverter, parseInt(regDec, 10), packedVal);
+}
+
+async function submitAdvancedRegisterWrite() {
+    if (!currentConfigureInverter) return;
+    const regInput = document.getElementById('cfg-adv-reg').value.trim();
+    const valInput = document.getElementById('cfg-adv-val').value.trim();
+
+    if (!regInput || !valInput) {
+        showConfigToast('Please enter both Register Address and Raw Value.', false);
+        return;
+    }
+
+    let regDec = 0;
+    if (regInput.startsWith('0x') || regInput.startsWith('0X')) {
+        regDec = parseInt(regInput, 16);
+    } else {
+        regDec = parseInt(regInput, 10);
+    }
+
+    const valDec = parseInt(valInput, 10);
+
+    if (isNaN(regDec) || isNaN(valDec)) {
+        showConfigToast('Invalid register address or value format.', false);
+        return;
+    }
+
+    await executeRegisterWriteApi(currentConfigureInverter, regDec, valDec);
+}
+
+async function executeRegisterWriteApi(invName, reg, val) {
+    const toast = document.getElementById('cfg-toast');
+    toast.style.display = 'block';
+    toast.style.background = 'rgba(59, 130, 246, 0.2)';
+    toast.style.color = '#60a5fa';
+    toast.innerText = `Dispatching Modbus write (Reg ${reg} = ${val})...`;
+
+    try {
+        const res = await fetch('/api/inverter/write_register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ inverter: invName, register: reg, value: val })
+        });
+        const data = await res.json();
+        if (res.ok && data.status === 'success') {
+            showConfigToast(`✅ ${data.message || 'Register write queued successfully!'}`, true);
+        } else {
+            showConfigToast(`❌ Error: ${data.message || data.error || 'Write command failed'}`, false);
+        }
+    } catch (e) {
+        showConfigToast(`❌ Network error: ${e.message}`, false);
+    }
+}
+
+function showConfigToast(msg, isSuccess) {
+    const toast = document.getElementById('cfg-toast');
+    toast.style.display = 'block';
+    if (isSuccess) {
+        toast.style.background = 'rgba(16, 185, 129, 0.2)';
+        toast.style.color = '#34d399';
+        toast.style.border = '1px solid rgba(16, 185, 129, 0.4)';
+    } else {
+        toast.style.background = 'rgba(239, 68, 68, 0.2)';
+        toast.style.color = '#f87171';
+        toast.style.border = '1px solid rgba(239, 68, 68, 0.4)';
+    }
+    toast.innerText = msg;
 }
 "###;
