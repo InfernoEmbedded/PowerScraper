@@ -74,7 +74,24 @@ impl DispatchManager {
             .collect();
         crate::database::push_pending_history_records(new_recs);
 
-        // 3. Filter useful control information for PowerManager using exact metric name matching
+        // 3. Update live meter status for web details view
+        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+            let meter_status = status.meters.entry(batch.device_name.clone()).or_default();
+            meter_status.last_updated = Some(now_ts as u64);
+            for (k, &v) in &batch.metrics {
+                meter_status.raw_metrics.insert(k.clone(), format!("{:.3}", v));
+            }
+            let lower = batch.device_name.to_lowercase();
+            if lower.contains("sdm") || lower.contains("mains") {
+                meter_status.driver_type = Some("SDM630Modbusv2".to_string());
+            } else if lower.contains("dtsu") {
+                meter_status.driver_type = Some("DTSU666".to_string());
+            } else {
+                meter_status.driver_type = Some("MQTTPowerMeter".to_string());
+            }
+        }
+
+        // 4. Filter useful control information for PowerManager using exact metric name matching
         let mut useful_metrics = HashMap::new();
         for (metric, val) in &batch.metrics {
             match metric.as_str() {

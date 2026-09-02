@@ -46,6 +46,7 @@ pub async fn run_solax_g3_driver(
     let inverter_name_clone = inverter_name.clone();
     let cancel_token_clone = cancel_token.clone();
     let command_topic_clone = command_topic.clone();
+    let mqtt_client_clone = mqtt_client.clone();
 
     tokio::spawn(async move {
         loop {
@@ -54,13 +55,27 @@ pub async fn run_solax_g3_driver(
                 res = eventloop.poll() => {
                     match res {
                         Ok(notification) => {
-                            if let Event::Incoming(Packet::Publish(publish)) = notification {
-                                if publish.topic == command_topic_clone {
-                                    let payload = String::from_utf8_lossy(&publish.payload);
-                                    if let Ok(power) = payload.trim().parse::<i32>() {
-                                        *req_power_clone.lock().await = power;
+                            match notification {
+                                Event::Incoming(Packet::ConnAck(_)) => {
+                                    if let Err(e) = mqtt_client_clone
+                                        .subscribe(&command_topic_clone, QoS::AtLeastOnce)
+                                        .await
+                                    {
+                                        eprintln!(
+                                            "[SolaxG3 Log] Driver [{}] failed to re-subscribe to command topic on ConnAck: {}",
+                                            inverter_name_clone, e
+                                        );
                                     }
                                 }
+                                Event::Incoming(Packet::Publish(publish)) => {
+                                    if publish.topic == command_topic_clone {
+                                        let payload = String::from_utf8_lossy(&publish.payload);
+                                        if let Ok(power) = payload.trim().parse::<i32>() {
+                                            *req_power_clone.lock().await = power;
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         Err(e) => {
@@ -70,7 +85,7 @@ pub async fn run_solax_g3_driver(
                             );
                             tokio::select! {
                                 _ = cancel_token_clone.cancelled() => break,
-                                _ = sleep(Duration::from_secs(5)) => {}
+                                _ = sleep(Duration::from_millis(500)) => {}
                             }
                         }
                     }
@@ -172,6 +187,17 @@ pub async fn run_solax_g3_driver(
             let mut read_data = None;
 
             if let Some(ref mut ctx) = *lock {
+                while let Some((reg, val)) = crate::web_server::pop_pending_modbus_write(&inverter_name) {
+                    let pwd = config.installer_password.unwrap_or(2014);
+                    let _ = ctx.write_single_register(0x00, pwd).await;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    if let Err(e) = ctx.write_single_register(reg, val).await {
+                        eprintln!("[SolaxG3 Log] Driver [{}] manual write ({:#06x}, {}) failed: {}", inverter_name, reg, val, e);
+                    } else {
+                        println!("[SolaxG3 Log] Driver [{}] manual write ({:#06x}, {}) succeeded", inverter_name, reg, val);
+                    }
+                }
+
                 let needs_update = match (last_written_power, last_write_time) {
                     (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
                     _ => true,
@@ -296,12 +322,27 @@ pub async fn run_solax_g3_driver(
                         .and_then(|v| v.parse::<u32>().ok())
                         .unwrap_or(0);
 
+                    let inv_fault = vals.get("Inverter Fault").and_then(|v| v.parse::<u32>().ok());
+                    let chg_fault = vals.get("Charger Fault").and_then(|v| v.parse::<u32>().ok());
+                    let mgr_fault = vals.get("Manager Fault").and_then(|v| v.parse::<u32>().ok());
+                    let bms_warn = vals.get("BMS Warning").and_then(|v| v.parse::<u32>().ok());
+
+                    let (is_err, err_text) = decipher_solax_v321_faults(run_mode, inv_fault, chg_fault, mgr_fault, bms_warn);
+
                     if let Ok(mut status) = crate::web_server::get_system_status().lock() {
                         let inv = status.inverters.entry(inverter_name.clone()).or_default();
                         inv.battery_capacity = bat_cap;
                         inv.battery_power = bat_pow;
                         inv.pv_power = pv1 + pv2;
                         inv.run_mode = run_mode;
+                        inv.inverter_fault = inv_fault;
+                        inv.charger_fault = chg_fault;
+                        inv.manager_fault = mgr_fault;
+                        inv.bms_warning = bms_warn;
+                        inv.is_error = is_err;
+                        inv.error_text = err_text;
+                        inv.raw_metrics = vals.clone();
+                        inv.driver_type = Some("Solax-G3-Modbus".to_string());
                         inv.last_updated = Some(std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()
@@ -634,6 +675,105 @@ fn parse_hybrid_registers(
     }
 
     vals
+}
+
+pub fn decipher_solax_v321_faults(
+    run_mode: u32,
+    inv_fault: Option<u32>,
+    chg_fault: Option<u32>,
+    mgr_fault: Option<u32>,
+    bms_warning: Option<u32>,
+) -> (bool, Option<String>) {
+    let mut errors = Vec::new();
+
+    match run_mode {
+        3 => errors.push("Run Mode: Fault Mode".to_string()),
+        4 => errors.push("Run Mode: Permanent Fault Mode".to_string()),
+        _ => {}
+    }
+
+    if let Some(f) = inv_fault {
+        if f > 0 {
+            let labels = [
+                "HardwareTrip", "MainsLostFault", "GridVoltFault", "GridFreqFault",
+                "PvVoltFault", "BusVoltFault", "Bat Volt Fault", "Ac10Mins_Voltage_Fault",
+                "Dci_OCP_Fault", "Dcv_OCP_Fault", "SW_OCP_Fault", "RC_OCP_Fault",
+                "IsolationFault", "TemperatureOverFault", "BatConDir_Fault", "SampleConsistenceFault",
+                "EpsOverLoad", "EPS_OCP_Fault / OverLoad", "InputConfigFault", "FirmwareVerFault / EPSBatPowerLow",
+                "EPSBatPowerLow / Hybrid_IRelayFault", "PhaseAngleFault", "PLL_OverTime", "ParallelFault / BMS_Lost",
+                "Inter_Com_Fault", "Fan Fault", "HCT_AC_DeviceFault", "EepromFault",
+                "ResidualCurrent_DeviceFault", "EpsRelayFault", "GridRelayFault", "BatRelayFault / Other_DeviceFault",
+            ];
+            for i in 0..32 {
+                if (f & (1u32 << i)) != 0 {
+                    if i < labels.len() {
+                        errors.push(format!("Inverter Fault: {}", labels[i]));
+                    } else {
+                        errors.push(format!("Inverter Fault: Bit {}", i));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(f) = chg_fault {
+        if f > 0 {
+            let labels = [
+                "Boost over current", "Battery over current", "Battery over volt", "Boost over volt",
+                "Charger BUS over volt", "Charger FAN Fault", "Charger EPS OverLoad", "Charger Temp High ERR",
+                "Charger Temp Lower ERR", "Battery awaken Failed", "Charger Current Sensor Boost Fault", "Charger Current Sensor Bat Fault",
+                "Charger EEPROM WR Fault", "Charger UnRecover FAN Fault", "Spi ERR", "Charger CanERR",
+            ];
+            for i in 0..16 {
+                if (f & (1u32 << i)) != 0 {
+                    if i < labels.len() {
+                        errors.push(format!("Charger Fault: {}", labels[i]));
+                    } else {
+                        errors.push(format!("Charger Fault: Bit {}", i));
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(f) = mgr_fault {
+        if f > 0 {
+            let labels = [
+                "Internet IC (DM9000) Error", "Real_Time IC (RTC) Error", "EEPROM Error",
+                "Inter communication (CAN) Error", "CT or meter connection missing",
+            ];
+            for i in 0..5 {
+                if (f & (1u32 << i)) != 0 {
+                    errors.push(format!("Manager Fault: {}", labels[i]));
+                }
+            }
+        }
+    }
+
+    if let Some(f) = bms_warning {
+        if f > 0 {
+            let labels = [
+                "BMS_Disconnected", "BMS_Alarm", "BMS_OverVoltage", "BMS_LowerVoltage",
+                "BMS_ChargeOverCurrent", "BMS_DishargeOverCurrent", "BMS_TemHighWarning", "BMS_TemLowWarning",
+                "BMS_CellImblance",
+            ];
+            for i in 0..9 {
+                if (f & (1u32 << i)) != 0 {
+                    if i < labels.len() {
+                        errors.push(format!("BMS Warning: {}", labels[i]));
+                    } else {
+                        errors.push(format!("BMS Warning: Bit {}", i));
+                    }
+                }
+            }
+        }
+    }
+
+    if !errors.is_empty() {
+        (true, Some(errors.join(" | ")))
+    } else {
+        (false, None)
+    }
 }
 
 #[cfg(test)]

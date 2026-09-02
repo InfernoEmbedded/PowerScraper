@@ -155,6 +155,7 @@ pub fn open_db_conn<P: AsRef<Path>>(db_path: P) -> rusqlite::Result<Connection> 
         PRAGMA journal_mode = WAL;
         PRAGMA busy_timeout = 5000;
         PRAGMA synchronous = NORMAL;
+        PRAGMA journal_size_limit = 67108864;
     ");
     Ok(conn)
 }
@@ -328,8 +329,9 @@ pub fn save_config_with_conn(conn: &mut Connection, config: &Config) -> Result<(
     }
     tx.commit().map_err(|e| e.to_string())?;
 
-    // Compact WAL file to prevent unbounded growth on embedded storage
-    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);") {
+    // Truncate WAL file to prevent unbounded growth on embedded storage
+    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
         eprintln!("WAL checkpoint after config save failed: {}", e);
     }
     Ok(())
@@ -626,8 +628,9 @@ pub fn flush_history_with_conn(
         }
     }
 
-    // Non-blocking WAL checkpoint to prevent unbounded growth on embedded storage
-    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);") {
+    // Truncate WAL file to prevent unbounded growth on embedded storage
+    if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);") {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);");
         eprintln!("WAL checkpoint after telemetry flush failed: {}", e);
     }
     Ok(())

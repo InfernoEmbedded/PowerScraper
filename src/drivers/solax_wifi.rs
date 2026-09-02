@@ -107,6 +107,8 @@ pub async fn run_solax_wifi_driver(
                                         inv.battery_power = bat_pow;
                                         inv.pv_power = pv1 + pv2;
                                         inv.run_mode = run_mode;
+                                        inv.raw_metrics = vals.clone();
+                                        inv.driver_type = Some("Solax-Wifi".to_string());
                                         inv.last_updated = Some(std::time::SystemTime::now()
                                             .duration_since(std::time::UNIX_EPOCH)
                                             .unwrap()

@@ -36,6 +36,13 @@ pub async fn run_mqtt_meter_driver(
         .clone()
         .unwrap_or_else(|| "Phase3Power".to_string());
 
+    let meter_topics = [
+        topic_total.clone(),
+        topic_p1.clone(),
+        topic_p2.clone(),
+        topic_p3.clone(),
+    ];
+
     if let Err(e) = mqtt_client.subscribe(&topic_total, QoS::AtLeastOnce).await {
         println!(
             "MQTT Meter [{}] failed to subscribe to total topic: {}",
@@ -59,62 +66,75 @@ pub async fn run_mqtt_meter_driver(
             res = eventloop.poll() => {
                 match res {
                     Ok(notification) => {
-                        if let Event::Incoming(Packet::Publish(publish)) = notification {
-                            let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
-                            let target_metric = if publish.topic == topic_total {
-                                Some("Total system power")
-                            } else if publish.topic == topic_p1 {
-                                Some("Phase 1 power")
-                            } else if publish.topic == topic_p2 {
-                                Some("Phase 2 power")
-                            } else if publish.topic == topic_p3 {
-                                Some("Phase 3 power")
-                            } else {
-                                None
-                            };
-
-                            if let Some(metric_name) = target_metric {
-                                if let Ok(num) = payload.parse::<f64>() {
-                                    let mut metrics = std::collections::HashMap::new();
-                                    metrics.insert(metric_name.to_string(), num);
-                                    let batch = crate::dispatch_manager::TelemetryBatch {
-                                        device_name: meter_name.clone(),
-                                        timestamp: chrono::Utc::now().timestamp(),
-                                        metrics,
-                                    };
-                                    let _ = tx_telemetry.try_send(batch);
-                                }
-
-                                if !discovered_metrics.contains(metric_name) {
-                                    crate::mqtt_helper::publish_home_assistant_discovery(
-                                        &mqtt_client,
-                                        &mqtt_config,
-                                        &meter_name,
-                                        metric_name,
-                                        false,
-                                    )
-                                    .await;
-                                    discovered_metrics.insert(metric_name.to_string());
-                                }
-
-                                let target_topic = format!("{}/{}/{}", base_topic, meter_name, metric_name);
-                                if let Err(e) = mqtt_client
-                                    .publish(&target_topic, QoS::AtMostOnce, false, payload)
-                                    .await
-                                {
-                                    println!(
-                                        "MQTT Meter [{}] failed to publish standard topic {}: {}",
-                                        meter_name, target_topic, e
-                                    );
+                        match notification {
+                            Event::Incoming(Packet::ConnAck(_)) => {
+                                for t in &meter_topics {
+                                    if let Err(e) = mqtt_client.subscribe(t, QoS::AtLeastOnce).await {
+                                        eprintln!(
+                                            "MQTT Meter [{}] failed to re-subscribe to topic '{}' on ConnAck: {}",
+                                            meter_name, t, e
+                                        );
+                                    }
                                 }
                             }
+                            Event::Incoming(Packet::Publish(publish)) => {
+                                let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
+                                let target_metric = if publish.topic == topic_total {
+                                    Some("Total system power")
+                                } else if publish.topic == topic_p1 {
+                                    Some("Phase 1 power")
+                                } else if publish.topic == topic_p2 {
+                                    Some("Phase 2 power")
+                                } else if publish.topic == topic_p3 {
+                                    Some("Phase 3 power")
+                                } else {
+                                    None
+                                };
+
+                                if let Some(metric_name) = target_metric {
+                                    if let Ok(num) = payload.parse::<f64>() {
+                                        let mut metrics = std::collections::HashMap::new();
+                                        metrics.insert(metric_name.to_string(), num);
+                                        let batch = crate::dispatch_manager::TelemetryBatch {
+                                            device_name: meter_name.clone(),
+                                            timestamp: chrono::Utc::now().timestamp(),
+                                            metrics,
+                                        };
+                                        let _ = tx_telemetry.try_send(batch);
+                                    }
+
+                                    if !discovered_metrics.contains(metric_name) {
+                                        crate::mqtt_helper::publish_home_assistant_discovery(
+                                            &mqtt_client,
+                                            &mqtt_config,
+                                            &meter_name,
+                                            metric_name,
+                                            false,
+                                        )
+                                        .await;
+                                        discovered_metrics.insert(metric_name.to_string());
+                                    }
+
+                                    let target_topic = format!("{}/{}/{}", base_topic, meter_name, metric_name);
+                                    if let Err(e) = mqtt_client
+                                        .publish(&target_topic, QoS::AtMostOnce, false, payload)
+                                        .await
+                                    {
+                                        println!(
+                                            "MQTT Meter [{}] failed to publish standard topic {}: {}",
+                                            meter_name, target_topic, e
+                                        );
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Err(e) => {
                         println!("MQTT Meter [{}] connection error: {}", meter_name, e);
                         tokio::select! {
                             _ = cancel_token.cancelled() => break,
-                            _ = sleep(Duration::from_secs(5)) => {}
+                            _ = sleep(Duration::from_millis(500)) => {}
                         }
                     }
                 }

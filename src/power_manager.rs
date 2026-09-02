@@ -2618,80 +2618,86 @@ pub async fn run_power_manager_task(
                                 status.mqtt_connected = true;
                             }
                         }
-                        if let Event::Incoming(Packet::Publish(publish)) = notification {
-                            // Extract topic components
-                            // Expected structure: sensors/<device_name>/<metric>
-                            let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
-                            if let Some(suffix) = topic_suffix {
-                                let parts: Vec<&str> = suffix.split('/').collect();
-                                if parts.len() >= 2 {
-                                    let device_name = parts[0];
-                                    let metric = parts[1..].join("/");
-                                    let payload = String::from_utf8_lossy(&publish.payload);
-                                    let payload_trim = payload.trim();
+                        match notification {
+                            Event::Incoming(Packet::ConnAck(_)) => {
+                                if let Err(e) = mqtt_client.subscribe(&status_wildcard, QoS::AtLeastOnce).await {
+                                    eprintln!("Power Manager failed to re-subscribe to status topic on ConnAck: {}", e);
+                                }
+                            }
+                            Event::Incoming(Packet::Publish(publish)) => {
+                                // Extract topic components
+                                // Expected structure: sensors/<device_name>/<metric>
+                                let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
+                                if let Some(suffix) = topic_suffix {
+                                    let parts: Vec<&str> = suffix.split('/').collect();
+                                    if parts.len() >= 2 {
+                                        let device_name = parts[0];
+                                        let metric = parts[1..].join("/");
+                                        let payload = String::from_utf8_lossy(&publish.payload);
+                                        let payload_trim = payload.trim();
 
-                                    if device_name == "power_manager" {
-                                        if metric == "command/mode" {
-                                            if let Ok(new_mode) = payload_trim.parse::<PowerManagerMode>() {
-                                                let mut pm_lock = pm.lock().await;
-                                                pm_lock.mode = new_mode;
-                                                pm_lock.config.initial_mode = Some(new_mode.to_string());
-                                                println!("Power Manager mode changed to: {}", new_mode);
+                                        if device_name == "power_manager" {
+                                            if metric == "command/mode" {
+                                                if let Ok(new_mode) = payload_trim.parse::<PowerManagerMode>() {
+                                                    let mut pm_lock = pm.lock().await;
+                                                    pm_lock.mode = new_mode;
+                                                    pm_lock.config.initial_mode = Some(new_mode.to_string());
+                                                    println!("Power Manager mode changed to: {}", new_mode);
 
-                                                if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                                                    status.active_mode = new_mode.to_string();
-                                                }
+                                                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                                        status.active_mode = new_mode.to_string();
+                                                    }
 
-                                                // Save to SQLite DB
-                                                if let Ok(mut db_cfg) = crate::config::Config::load_from_db(&db_path) {
-                                                    if let Some(ref mut bat_ctrl) = db_cfg.battery_control {
-                                                        bat_ctrl.initial_mode = Some(new_mode.to_string());
-                                                        if let Err(e) = db_cfg.save_to_db(&db_path) {
-                                                            eprintln!("Failed to save config to DB on mode change: {}", e);
+                                                    // Save to SQLite DB
+                                                    if let Ok(mut db_cfg) = crate::config::Config::load_from_db(&db_path) {
+                                                        if let Some(ref mut bat_ctrl) = db_cfg.battery_control {
+                                                            bat_ctrl.initial_mode = Some(new_mode.to_string());
+                                                            if let Err(e) = db_cfg.save_to_db(&db_path) {
+                                                                eprintln!("Failed to save config to DB on mode change: {}", e);
+                                                            }
                                                         }
                                                     }
-                                                }
 
-                                                // Publish status update
-                                                let status_topic =
-                                                    format!("{}/power_manager/mode", base_topic);
-                                                let _ = mqtt_client
-                                                    .publish(
-                                                        &status_topic,
-                                                        QoS::AtLeastOnce,
-                                                        true,
-                                                        new_mode.to_string(),
-                                                    )
-                                                    .await;
+                                                    // Publish status update
+                                                    let status_topic =
+                                                        format!("{}/power_manager/mode", base_topic);
+                                                    let _ = mqtt_client
+                                                        .publish(
+                                                            &status_topic,
+                                                            QoS::AtLeastOnce,
+                                                            true,
+                                                            new_mode.to_string(),
+                                                        )
+                                                        .await;
 
-                                                // Re-evaluate and command all inverters immediately
-                                                let inverter_names: Vec<String> =
-                                                    pm_lock.config.inverter.keys().cloned().collect();
-                                                for inv_name in inverter_names {
-                                                    pm_lock.command_group(&inv_name, &mqtt_client, &base_topic).await;
-                                                }
-                                            }
-                                        } else if metric == "command/grid_target" {
-                                            if let Ok(target) = payload_trim.parse::<f64>() {
-                                                let mut pm_lock = pm.lock().await;
-                                                pm_lock.grid_target = target;
-                                                pm_lock.config.grid_target = Some(target);
-                                                println!("Power Manager grid target changed to: {}", target);
-
-                                                if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                                                    status.grid_target = target;
-                                                }
-
-                                                // Save to SQLite DB
-                                                if let Ok(mut db_cfg) = crate::config::Config::load_from_db(&db_path) {
-                                                    let bat_ctrl = db_cfg.battery_control.get_or_insert_with(Default::default);
-                                                    bat_ctrl.grid_target = Some(target);
-                                                    if let Err(e) = db_cfg.save_to_db(&db_path) {
-                                                        eprintln!("Failed to save config to DB on target change: {}", e);
+                                                    // Re-evaluate and command all inverters immediately
+                                                    let inverter_names: Vec<String> =
+                                                        pm_lock.config.inverter.keys().cloned().collect();
+                                                    for inv_name in inverter_names {
+                                                        pm_lock.command_group(&inv_name, &mqtt_client, &base_topic).await;
                                                     }
                                                 }
+                                            } else if metric == "command/grid_target" {
+                                                if let Ok(target) = payload_trim.parse::<f64>() {
+                                                    let mut pm_lock = pm.lock().await;
+                                                    pm_lock.grid_target = target;
+                                                    pm_lock.config.grid_target = Some(target);
+                                                    println!("Power Manager grid target changed to: {}", target);
 
-                                                // Publish status update
+                                                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                                        status.grid_target = target;
+                                                    }
+
+                                                    // Save to SQLite DB
+                                                    if let Ok(mut db_cfg) = crate::config::Config::load_from_db(&db_path) {
+                                                        let bat_ctrl = db_cfg.battery_control.get_or_insert_with(Default::default);
+                                                        bat_ctrl.grid_target = Some(target);
+                                                        if let Err(e) = db_cfg.save_to_db(&db_path) {
+                                                            eprintln!("Failed to save config to DB on target change: {}", e);
+                                                        }
+                                                    }
+
+                                                    // Publish status update
                                                 let status_topic =
                                                     format!("{}/power_manager/grid_target", base_topic);
                                                 let _ = mqtt_client
@@ -2822,8 +2828,10 @@ pub async fn run_power_manager_task(
                                 }
                             }
                         }
+                        _ => {}
                     }
-                    Some(Err(())) => {
+                }
+                Some(Err(())) => {
                         if currently_connected {
                             currently_connected = false;
                             if let Ok(mut status) = crate::web_server::get_system_status().lock() {

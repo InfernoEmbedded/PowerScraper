@@ -111,7 +111,7 @@ async fn run_mock_modbus_server(
 
                                     let function_code = buf[7];
                                     match function_code {
-                                        0x04 => {
+                                        0x03 | 0x04 => {
                                             let start_addr = u16::from_be_bytes([buf[8], buf[9]]) as usize;
                                             let quantity = u16::from_be_bytes([buf[10], buf[11]]) as usize;
 
@@ -125,7 +125,7 @@ async fn run_mock_modbus_server(
                                                 data
                                             };
 
-                                            let mut resp_pdu = vec![0x04, (quantity * 2) as u8];
+                                            let mut resp_pdu = vec![function_code, (quantity * 2) as u8];
                                             resp_pdu.extend_from_slice(&data);
 
                                             let resp_len = (1 + resp_pdu.len()) as u16;

@@ -2,6 +2,14 @@
 
 All notable user-facing changes in PowerScraper since the transition from the legacy Python implementation (commit `2c2227e5fbb7957aed1c77ad66eb0986f63ecfbf`) are documented below.
 
+## [1.0.157] - 2026-09-02
+
+### Fixed
+* **MQTT Driver & Forwarder Reconnection**:
+  - Added automatic re-subscription on `ConnAck` across all MQTT drivers (`mqtt_inverter`, `mqtt_meter`, `solax_modbus`, `solax_g3`, `solax_g4`), `MQTTForwarder`, and `PowerManager` to prevent telemetry loss following broker restarts or TCP reconnects.
+  - Reduced disconnect backoff delay from 5s to 500ms for rapid session recovery.
+  - Set `driver_type` and populated `raw_metrics` in `InverterStatus` for MQTT Inverters so live registers display correctly in the Web UI Register Viewer modal.
+
 ---
 
 ## [1.0.156] - 2026-08-15

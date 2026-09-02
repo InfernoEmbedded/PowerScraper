@@ -77,6 +77,8 @@ pub async fn run_solax_g4_driver(
     let req_power_clone = requested_battery_power.clone();
     let inverter_name_clone = inverter_name.clone();
     let cancel_token_clone = cancel_token.clone();
+    let mqtt_client_clone = mqtt_client.clone();
+    let command_topic_clone = command_topic.clone();
 
     tokio::spawn(async move {
         loop {
@@ -85,13 +87,27 @@ pub async fn run_solax_g4_driver(
                 res = eventloop.poll() => {
                     match res {
                         Ok(notification) => {
-                            if let Event::Incoming(Packet::Publish(publish)) = notification {
-                                if publish.topic == command_topic {
-                                    let payload = String::from_utf8_lossy(&publish.payload);
-                                    if let Ok(power) = payload.trim().parse::<i32>() {
-                                        *req_power_clone.lock().await = power;
+                            match notification {
+                                Event::Incoming(Packet::ConnAck(_)) => {
+                                    if let Err(e) = mqtt_client_clone
+                                        .subscribe(&command_topic_clone, QoS::AtLeastOnce)
+                                        .await
+                                    {
+                                        eprintln!(
+                                            "Driver [{}] failed to re-subscribe to command topic on ConnAck: {}",
+                                            inverter_name_clone, e
+                                        );
                                     }
                                 }
+                                Event::Incoming(Packet::Publish(publish)) => {
+                                    if publish.topic == command_topic_clone {
+                                        let payload = String::from_utf8_lossy(&publish.payload);
+                                        if let Ok(power) = payload.trim().parse::<i32>() {
+                                            *req_power_clone.lock().await = power;
+                                        }
+                                    }
+                                }
+                                _ => {}
                             }
                         }
                         Err(e) => {
@@ -101,7 +117,7 @@ pub async fn run_solax_g4_driver(
                             );
                             tokio::select! {
                                 _ = cancel_token_clone.cancelled() => break,
-                                _ = sleep(Duration::from_secs(5)) => {}
+                                _ = sleep(Duration::from_millis(500)) => {}
                             }
                         }
                     }
@@ -144,6 +160,17 @@ pub async fn run_solax_g4_driver(
                 }
             }
             if let Some(ref mut ctx) = *lock {
+                while let Some((reg, val)) = crate::web_server::pop_pending_modbus_write(&inverter_name) {
+                    let pwd = config.installer_password.unwrap_or(2014);
+                    let _ = ctx.write_single_register(0x0000, pwd).await;
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    if let Err(e) = ctx.write_single_register(reg, val).await {
+                        eprintln!("[SolaxG4 Log] Driver [{}] manual write ({:#06x}, {}) failed: {}", inverter_name, reg, val, e);
+                    } else {
+                        println!("[SolaxG4 Log] Driver [{}] manual write ({:#06x}, {}) succeeded", inverter_name, reg, val);
+                    }
+                }
+
                 let needs_update = match (last_written_power, last_write_time) {
                     (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
                     _ => true,
@@ -227,6 +254,8 @@ pub async fn run_solax_g4_driver(
                         inv.battery_power = bat_pow;
                         inv.pv_power = pv1 + pv2;
                         inv.run_mode = run_mode;
+                        inv.raw_metrics = vals.clone();
+                        inv.driver_type = Some("Solax-G4-Modbus".to_string());
                         inv.last_updated = Some(std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .unwrap()

@@ -118,20 +118,41 @@ impl MQTTForwarder {
                 notification = eventloop.poll() => {
                     match notification {
                         Ok(evt) => {
-                            if !currently_connected {
-                                currently_connected = true;
-                                if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                                    status.mqtt_connected = true;
+                            match evt {
+                                Event::Incoming(Packet::ConnAck(_)) => {
+                                    if !currently_connected {
+                                        currently_connected = true;
+                                        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                            status.mqtt_connected = true;
+                                        }
+                                    }
+                                    if let Err(e) = client.subscribe(&command_wildcard, QoS::AtLeastOnce).await {
+                                        eprintln!("MQTT Forwarder failed to re-subscribe to {} on ConnAck: {}", command_wildcard, e);
+                                    }
                                 }
-                            }
-                            if let Event::Incoming(Packet::Publish(publish)) = evt {
-                                let topic = publish.topic.clone();
-                                if let Ok(payload_str) = String::from_utf8(publish.payload.to_vec()) {
-                                    if topic.ends_with("/mode") {
-                                        let _ = self.cmd_sender.try_send(DriverCommand::SetMode { mode: payload_str.trim().to_string() });
-                                    } else if topic.ends_with("/grid_target") {
-                                        if let Ok(val) = payload_str.trim().parse::<f64>() {
-                                            let _ = self.cmd_sender.try_send(DriverCommand::SetGridTarget { watts: val });
+                                Event::Incoming(Packet::Publish(publish)) => {
+                                    if !currently_connected {
+                                        currently_connected = true;
+                                        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                            status.mqtt_connected = true;
+                                        }
+                                    }
+                                    let topic = publish.topic.clone();
+                                    if let Ok(payload_str) = String::from_utf8(publish.payload.to_vec()) {
+                                        if topic.ends_with("/mode") {
+                                            let _ = self.cmd_sender.try_send(DriverCommand::SetMode { mode: payload_str.trim().to_string() });
+                                        } else if topic.ends_with("/grid_target") {
+                                            if let Ok(val) = payload_str.trim().parse::<f64>() {
+                                                let _ = self.cmd_sender.try_send(DriverCommand::SetGridTarget { watts: val });
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    if !currently_connected {
+                                        currently_connected = true;
+                                        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                            status.mqtt_connected = true;
                                         }
                                     }
                                 }

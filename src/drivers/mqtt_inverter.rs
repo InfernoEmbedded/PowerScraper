@@ -31,7 +31,7 @@ pub async fn run_mqtt_inverter_driver(
                 res = pub_eventloop.poll() => {
                     if let Err(e) = res {
                         eprintln!("Publisher client error for inverter [{}]: {}", inverter_name_clone, e);
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        tokio::time::sleep(Duration::from_millis(500)).await;
                     }
                 }
             }
@@ -105,6 +105,7 @@ pub async fn run_mqtt_inverter_driver(
     if let Ok(mut status) = crate::web_server::get_system_status().lock() {
         let inv = status.inverters.entry(inverter_name.clone()).or_default();
         inv.run_mode = 2; // Normal running state
+        inv.driver_type = Some("MQTTInverter".to_string());
     }
 
     let mut pv1_power = 0.0;
@@ -124,100 +125,115 @@ pub async fn run_mqtt_inverter_driver(
             res = sub_eventloop.poll() => {
                 match res {
                     Ok(notification) => {
-                        if let Event::Incoming(Packet::Publish(publish)) = notification {
-                            let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
-                            
-                            // Find matching topic
-                            let mut matched_metric = None;
-                            for (t, metric) in &topics {
-                                if publish.topic == *t {
-                                    matched_metric = Some(*metric);
-                                    break;
-                                }
-                            }
-
-                            if let Some(metric_name) = matched_metric {
-                                // Parse value
-                                let parsed_val: Option<f64> = payload.parse::<f64>().ok();
-
-                                if let Some(val) = parsed_val {
-                                     let mut metrics = std::collections::HashMap::new();
-                                     metrics.insert(metric_name.to_string(), val);
-                                     let batch = crate::dispatch_manager::TelemetryBatch {
-                                         device_name: inverter_name.clone(),
-                                         timestamp: chrono::Utc::now().timestamp(),
-                                         metrics,
-                                     };
-                                     let _ = tx_telemetry.try_send(batch);
-
-                                     if metric_name == "PV1 Power" {
-                                        pv1_power = val;
-                                    } else if metric_name == "PV2 Power" {
-                                        pv2_power = val;
-                                    } else if metric_name == "PV1 Voltage" {
-                                        pv1_voltage = val;
-                                    } else if metric_name == "PV1 Current" {
-                                        pv1_current = val;
-                                    } else if metric_name == "PV2 Voltage" {
-                                        pv2_voltage = val;
-                                    } else if metric_name == "PV2 Current" {
-                                        pv2_current = val;
-                                    } else if metric_name == "Battery Capacity" {
-                                        battery_capacity = val.round() as u32;
-                                    } else if metric_name == "Battery Power" {
-                                        battery_power = val;
-                                    }
-
-                                    if let Ok(mut status) = crate::web_server::get_system_status().lock() {
-                                        let inv = status.inverters.entry(inverter_name.clone()).or_default();
-                                        let total_pv = if (pv1_power + pv2_power) > 0.0 {
-                                            pv1_power + pv2_power
-                                        } else {
-                                            (pv1_voltage * pv1_current) + (pv2_voltage * pv2_current)
-                                        };
-                                        inv.pv_power = total_pv.round() as u32;
-                                        inv.battery_capacity = battery_capacity as u8;
-                                        inv.battery_power = battery_power.round() as i32;
-                                        inv.run_mode = 2; // Normal running state
-                                        inv.last_updated = Some(std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap()
-                                            .as_secs());
-                                    }
-                                }
-
-                                // Publish HA auto-discovery (to main/local broker)
-                                if !discovered_metrics.contains(metric_name) {
-                                    crate::mqtt_helper::publish_home_assistant_discovery(
-                                        &pub_client,
-                                        &mqtt_config,
-                                        &inverter_name,
-                                        metric_name,
-                                        false,
-                                    )
-                                    .await;
-                                    discovered_metrics.insert(metric_name.to_string());
-                                }
-
-                                // Republish to main/local broker under the standard topic format
-                                let target_topic = format!("{}/{}/{}", base_topic, inverter_name, metric_name);
-                                if let Err(e) = pub_client
-                                    .publish(&target_topic, QoS::AtMostOnce, false, payload)
-                                    .await
-                                    {
-                                        println!(
-                                            "MQTT Inverter [{}] failed to publish standard topic {}: {}",
-                                            inverter_name, target_topic, e
+                        match notification {
+                            Event::Incoming(Packet::ConnAck(_)) => {
+                                for (topic, _) in &topics {
+                                    if let Err(e) = sub_client.subscribe(topic, QoS::AtLeastOnce).await {
+                                        eprintln!(
+                                            "MQTT Inverter [{}] failed to re-subscribe to topic '{}' on ConnAck: {}",
+                                            inverter_name, topic, e
                                         );
                                     }
+                                }
                             }
+                            Event::Incoming(Packet::Publish(publish)) => {
+                                let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
+                                
+                                // Find matching topic
+                                let mut matched_metric = None;
+                                for (t, metric) in &topics {
+                                    if publish.topic == *t {
+                                        matched_metric = Some(*metric);
+                                        break;
+                                    }
+                                }
+
+                                if let Some(metric_name) = matched_metric {
+                                    // Parse value
+                                    let parsed_val: Option<f64> = payload.parse::<f64>().ok();
+
+                                    if let Some(val) = parsed_val {
+                                         let mut metrics = std::collections::HashMap::new();
+                                         metrics.insert(metric_name.to_string(), val);
+                                         let batch = crate::dispatch_manager::TelemetryBatch {
+                                             device_name: inverter_name.clone(),
+                                             timestamp: chrono::Utc::now().timestamp(),
+                                             metrics,
+                                         };
+                                         let _ = tx_telemetry.try_send(batch);
+
+                                         if metric_name == "PV1 Power" {
+                                            pv1_power = val;
+                                        } else if metric_name == "PV2 Power" {
+                                            pv2_power = val;
+                                        } else if metric_name == "PV1 Voltage" {
+                                            pv1_voltage = val;
+                                        } else if metric_name == "PV1 Current" {
+                                            pv1_current = val;
+                                        } else if metric_name == "PV2 Voltage" {
+                                            pv2_voltage = val;
+                                        } else if metric_name == "PV2 Current" {
+                                            pv2_current = val;
+                                        } else if metric_name == "Battery Capacity" {
+                                            battery_capacity = val.round() as u32;
+                                        } else if metric_name == "Battery Power" {
+                                            battery_power = val;
+                                        }
+
+                                        if let Ok(mut status) = crate::web_server::get_system_status().lock() {
+                                            let inv = status.inverters.entry(inverter_name.clone()).or_default();
+                                            let total_pv = if (pv1_power + pv2_power) > 0.0 {
+                                                pv1_power + pv2_power
+                                            } else {
+                                                (pv1_voltage * pv1_current) + (pv2_voltage * pv2_current)
+                                            };
+                                            inv.pv_power = total_pv.round() as u32;
+                                            inv.battery_capacity = battery_capacity as u8;
+                                            inv.battery_power = battery_power.round() as i32;
+                                            inv.run_mode = 2; // Normal running state
+                                            inv.driver_type = Some("MQTTInverter".to_string());
+                                            inv.raw_metrics.insert(metric_name.to_string(), payload.clone());
+                                            inv.last_updated = Some(std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap()
+                                                .as_secs());
+                                        }
+                                    }
+
+                                    // Publish HA auto-discovery (to main/local broker)
+                                    if !discovered_metrics.contains(metric_name) {
+                                        crate::mqtt_helper::publish_home_assistant_discovery(
+                                            &pub_client,
+                                            &mqtt_config,
+                                            &inverter_name,
+                                            metric_name,
+                                            false,
+                                        )
+                                        .await;
+                                        discovered_metrics.insert(metric_name.to_string());
+                                    }
+
+                                    // Republish to main/local broker under the standard topic format
+                                    let target_topic = format!("{}/{}/{}", base_topic, inverter_name, metric_name);
+                                    if let Err(e) = pub_client
+                                        .publish(&target_topic, QoS::AtMostOnce, false, payload)
+                                        .await
+                                        {
+                                            println!(
+                                                "MQTT Inverter [{}] failed to publish standard topic {}: {}",
+                                                inverter_name, target_topic, e
+                                            );
+                                        }
+                                }
+                            }
+                            _ => {}
                         }
                     }
                     Err(e) => {
                         println!("MQTT Inverter [{}] subscriber connection error: {}", inverter_name, e);
                         tokio::select! {
                             _ = cancel_token.cancelled() => break,
-                            _ = sleep(Duration::from_secs(5)) => {}
+                            _ = sleep(Duration::from_millis(500)) => {}
                         }
                     }
                 }

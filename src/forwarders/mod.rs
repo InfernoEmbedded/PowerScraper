@@ -54,28 +54,34 @@ pub async fn run_forwarders_task(
         tokio::select! {
             _ = cancel_token.cancelled() => break,
             notification = eventloop.poll() => {
-                if let Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) = notification {
-                    let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
-                    if let Some(suffix) = topic_suffix {
-                        let parts: Vec<&str> = suffix.split('/').collect();
-                        if parts.len() >= 2 {
-                            let device_name = parts[0].to_string();
-                            let metric = parts[1..].join("/");
-                            let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
-                            if let Ok(val) = payload.parse::<f64>() {
-                                let mut metrics = std::collections::HashMap::new();
-                                metrics.insert(metric, val);
-                                let batch = crate::dispatch_manager::TelemetryBatch {
-                                    device_name,
-                                    timestamp: chrono::Utc::now().timestamp(),
-                                    metrics,
-                                };
-                                for sender in &senders {
-                                    let _ = sender.try_send(batch.clone());
+                match notification {
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::ConnAck(_))) => {
+                        let _ = mqtt_client.subscribe(&status_wildcard, rumqttc::QoS::AtLeastOnce).await;
+                    }
+                    Ok(rumqttc::Event::Incoming(rumqttc::Packet::Publish(publish))) => {
+                        let topic_suffix = publish.topic.strip_prefix(&format!("{}/", base_topic));
+                        if let Some(suffix) = topic_suffix {
+                            let parts: Vec<&str> = suffix.split('/').collect();
+                            if parts.len() >= 2 {
+                                let device_name = parts[0].to_string();
+                                let metric = parts[1..].join("/");
+                                let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
+                                if let Ok(val) = payload.parse::<f64>() {
+                                    let mut metrics = std::collections::HashMap::new();
+                                    metrics.insert(metric, val);
+                                    let batch = crate::dispatch_manager::TelemetryBatch {
+                                        device_name,
+                                        timestamp: chrono::Utc::now().timestamp(),
+                                        metrics,
+                                    };
+                                    for sender in &senders {
+                                        let _ = sender.try_send(batch.clone());
+                                    }
                                 }
                             }
                         }
                     }
+                    _ => {}
                 }
             }
         }
