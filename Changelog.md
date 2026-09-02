@@ -2,7 +2,7 @@
 
 All notable user-facing changes in PowerScraper since the transition from the legacy Python implementation (commit `2c2227e5fbb7957aed1c77ad66eb0986f63ecfbf`) are documented below.
 
-## [1.0.157] - 2026-09-02
+## [1.0.158] - 2026-09-02
 
 ### Fixed
 * **MQTT Driver & Forwarder Reconnection**:
