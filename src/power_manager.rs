@@ -826,6 +826,10 @@ impl PowerManager {
                 (false, false, 15.0, false, 30.0)
             };
 
+        let rates = self.tariff_manager.get_current_rates();
+        let export_rate = rates.export_rate;
+        let is_high_price_discharge = high_price_discharge && export_rate >= high_price_threshold;
+
         // Build list of Battery structs
         let mut battery_map = HashMap::new();
         for (name, inv_cfg) in &self.config.inverter {
@@ -835,7 +839,9 @@ impl PowerManager {
             let state = self.inverters.get(name).cloned().unwrap_or_default();
             let cap_kwh = inv_cfg.battery_capacity.filter(|&c| c > 0.0).unwrap_or(13.8);
             let soc = state.battery_capacity as f64;
-            let min_pct = if self.mode == PowerManagerMode::MaximumFeedin {
+            let min_pct = if self.mode == PowerManagerMode::MaximumFeedin
+                || (is_high_price_discharge && self.mode == PowerManagerMode::Auto)
+            {
                 inv_cfg.min_charge_pct.unwrap_or(10) as f64
             } else {
                 period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64
@@ -899,7 +905,14 @@ impl PowerManager {
                     max_total_discharge
                 }
                 PowerManagerMode::Auto => {
-                    if period.grid_charge && any_low_capacity {
+                    if is_high_price_discharge {
+                        self.total_discharge_power = 0.0;
+                        if global_group.batteries.iter().any(|b| b.current_soc_pct > b.min_soc_pct) {
+                            max_total_discharge
+                        } else {
+                            0.0
+                        }
+                    } else if period.grid_charge && any_low_capacity {
                         self.total_discharge_power = 0.0;
                         -max_total_charge
                     } else if any_low_capacity && period.prefer_battery {
@@ -1234,23 +1247,32 @@ impl PowerManager {
                     PowerManagerMode::ChargeBatteries => -max_phase_charge,
                     PowerManagerMode::MaximumFeedin => max_phase_discharge,
                     PowerManagerMode::Auto => {
-                        let now = std::time::Instant::now();
-                        if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
-                            self.phase_discharge_power[p] += phase_error * 0.25;
-                        }
-                        self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
-
-                        let rates = self.tariff_manager.get_current_rates();
-                        if !period.ignore_cost_margin && !self.allow_auto_discharge(&rates) {
-                            self.phase_discharge_power[p] = self.phase_discharge_power[p].min(0.0);
-                        }
-
-                        if period.grid_charge && any_low_capacity {
-                            -max_phase_charge
-                        } else if any_low_capacity && period.prefer_battery {
-                            (-phase_pv).max(-max_phase_charge)
+                        if is_high_price_discharge {
+                            self.phase_discharge_power[p] = 0.0;
+                            if phase_group.batteries.iter().any(|b| b.current_soc_pct > b.min_soc_pct) {
+                                max_phase_discharge
+                            } else {
+                                0.0
+                            }
                         } else {
-                            self.phase_discharge_power[p]
+                            let now = std::time::Instant::now();
+                            if now.duration_since(self.last_regulation_update).as_secs_f64() >= 1.0 {
+                                self.phase_discharge_power[p] += phase_error * 0.25;
+                            }
+                            self.phase_discharge_power[p] = self.phase_discharge_power[p].clamp(-max_phase_charge, max_phase_discharge);
+
+                            let rates = self.tariff_manager.get_current_rates();
+                            if !period.ignore_cost_margin && !self.allow_auto_discharge(&rates) {
+                                self.phase_discharge_power[p] = self.phase_discharge_power[p].min(0.0);
+                            }
+
+                            if period.grid_charge && any_low_capacity {
+                                -max_phase_charge
+                            } else if any_low_capacity && period.prefer_battery {
+                                (-phase_pv).max(-max_phase_charge)
+                            } else {
+                                self.phase_discharge_power[p]
+                            }
                         }
                     }
                     PowerManagerMode::SmartHeuristic => {
@@ -1598,6 +1620,20 @@ impl PowerManager {
         };
         let period = period_opt.unwrap_or(default_period);
 
+        let (high_price_discharge, high_price_threshold) =
+            if let Some(crate::config::TariffConfig::Amber {
+                high_price_discharge,
+                high_price_threshold,
+                ..
+            }) = self.tariff_manager.config() {
+                (*high_price_discharge, *high_price_threshold)
+            } else {
+                (false, 30.0)
+            };
+        let rates = self.tariff_manager.get_current_rates();
+        let export_rate = rates.export_rate;
+        let is_high_price_discharge = high_price_discharge && export_rate >= high_price_threshold;
+
         if self.linked_batteries {
             // Build global group
             let mut batteries = Vec::new();
@@ -1611,7 +1647,9 @@ impl PowerManager {
                     .or_else(|| inv_cfg.battery_capacity.filter(|&c| c > 0.0))
                     .unwrap_or(13.8);
                 let soc = state.battery_capacity as f64;
-                let min_pct = if self.mode == PowerManagerMode::MaximumFeedin {
+                let min_pct = if self.mode == PowerManagerMode::MaximumFeedin
+                    || (is_high_price_discharge && self.mode == PowerManagerMode::Auto)
+                {
                     inv_cfg.min_charge_pct.unwrap_or(10) as f64
                 } else {
                     period.min_charge.max(inv_cfg.min_charge_pct.unwrap_or(0)) as f64
@@ -1641,7 +1679,13 @@ impl PowerManager {
                 PowerManagerMode::ChargeBatteries => -max_total_charge,
                 PowerManagerMode::MaximumFeedin => max_total_discharge,
                 PowerManagerMode::Auto => {
-                    if period.grid_charge && any_low_capacity {
+                    if is_high_price_discharge {
+                        if global_group.batteries.iter().any(|b| b.current_soc_pct > b.min_soc_pct) {
+                            max_total_discharge
+                        } else {
+                            0.0
+                        }
+                    } else if period.grid_charge && any_low_capacity {
                         -max_total_charge
                     } else if any_low_capacity && period.prefer_battery {
                         (-total_pv).max(-max_total_charge)
@@ -1689,7 +1733,9 @@ impl PowerManager {
                             .or_else(|| cfg.battery_capacity.filter(|&c| c > 0.0))
                             .unwrap_or(13.8);
                         let soc = state.battery_capacity as f64;
-                        let min_pct = if self.mode == PowerManagerMode::MaximumFeedin {
+                        let min_pct = if self.mode == PowerManagerMode::MaximumFeedin
+                            || (is_high_price_discharge && self.mode == PowerManagerMode::Auto)
+                        {
                             cfg.min_charge_pct.unwrap_or(10) as f64
                         } else {
                             period.min_charge.max(cfg.min_charge_pct.unwrap_or(0)) as f64
@@ -1717,6 +1763,17 @@ impl PowerManager {
                 let target_power = match self.mode {
                     PowerManagerMode::ChargeBatteries => -max_phase_charge,
                     PowerManagerMode::MaximumFeedin => max_phase_discharge,
+                    PowerManagerMode::Auto => {
+                        if is_high_price_discharge {
+                            if phase_group.batteries.iter().any(|b| b.current_soc_pct > b.min_soc_pct) {
+                                max_phase_discharge
+                            } else {
+                                0.0
+                            }
+                        } else {
+                            self.phase_discharge_power[phase]
+                        }
+                    }
                     _ => self.phase_discharge_power[phase],
                 };
 
@@ -4749,6 +4806,109 @@ mod tests {
         pm.last_regulation_update = std::time::Instant::now() - std::time::Duration::from_secs(10);
         let cmd = pm.evaluate_and_command("solax1");
         assert_eq!(cmd, Some(-100));
+    }
+
+    #[test]
+    fn test_auto_high_price_discharge_below_period_min_charge() {
+        let mut periods = HashMap::new();
+        // Period with min_charge 95% and grid_charge: true
+        periods.insert(
+            "Topup".to_string(),
+            mock_period("00:00:00", "23:59:59", 95, true, false),
+        );
+
+        let mut inverters = HashMap::new();
+        inverters.insert("solax1".to_string(), mock_inverter(1, 2000.0, 3000.0));
+
+        let tariff_config = crate::config::TariffConfig::Amber {
+            api_key: "api".to_string(),
+            site_id: "site".to_string(),
+            negative_export_prevent: true,
+            low_price_charge: false,
+            low_price_threshold: 10.0,
+            high_price_discharge: true,
+            high_price_threshold: 60.0,
+            api_url: None,
+        };
+
+        // Test 1: linked_batteries = true
+        let config_linked = SolaxBatteryControlConfig {
+            source: None,
+            linked_batteries: true,
+            timezone: None,
+            inverter: inverters.clone(),
+            period: periods.clone(),
+            grid_target: Some(0.0),
+            initial_mode: Some("Auto".to_string()),
+            tariff: Some(tariff_config.clone()),
+            demand: None,
+            ..Default::default()
+        };
+
+        let mut pm = PowerManager::new(config_linked, "sensors".to_string());
+        assert_eq!(pm.mode, PowerManagerMode::Auto);
+
+        // Battery is at 50% SoC (well below period min_charge of 95%)
+        let state = InverterState {
+            battery_capacity: 50,
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state);
+
+        // Normal prices -> Should charge because SoC (50) < period min_charge (95) with grid_charge: true
+        pm.tariff_manager
+            .set_current_rates(crate::tariff_manager::CurrentTariffRates {
+                import_rate: 30.0,
+                export_rate: 15.0,
+            });
+        let cmd = pm.evaluate_and_command("solax1");
+        assert_eq!(cmd, Some(2000)); // charging 2000W
+
+        // High export price spike (export 75c >= threshold 60c) -> Should discharge at max power despite being below period min_charge!
+        pm.tariff_manager
+            .set_current_rates(crate::tariff_manager::CurrentTariffRates {
+                import_rate: 90.0,
+                export_rate: 75.0,
+            });
+        let cmd = pm.evaluate_and_command("solax1");
+        assert_eq!(cmd, Some(-3000)); // discharging 3000W
+
+        // If battery reaches inverter safety cutoff (e.g. 10% <= min_charge_pct 10%), it should stop discharging
+        let state_empty = InverterState {
+            battery_capacity: 10,
+            ..Default::default()
+        };
+        pm.inverters.insert("solax1".to_string(), state_empty);
+        let cmd = pm.evaluate_and_command("solax1");
+        assert_eq!(cmd, Some(0)); // idle, safe
+
+        // Test 2: linked_batteries = false (per-phase)
+        let config_unlinked = SolaxBatteryControlConfig {
+            source: None,
+            linked_batteries: false,
+            timezone: None,
+            inverter: inverters,
+            period: periods,
+            grid_target: Some(0.0),
+            initial_mode: Some("Auto".to_string()),
+            tariff: Some(tariff_config),
+            demand: None,
+            ..Default::default()
+        };
+
+        let mut pm_unlinked = PowerManager::new(config_unlinked, "sensors".to_string());
+        let state50 = InverterState {
+            battery_capacity: 50,
+            ..Default::default()
+        };
+        pm_unlinked.inverters.insert("solax1".to_string(), state50);
+        pm_unlinked.tariff_manager
+            .set_current_rates(crate::tariff_manager::CurrentTariffRates {
+                import_rate: 90.0,
+                export_rate: 75.0,
+            });
+        let cmd_unlinked = pm_unlinked.evaluate_and_command("solax1");
+        assert_eq!(cmd_unlinked, Some(-3000)); // discharging 3000W in per-phase mode as well
     }
 
     #[test]

@@ -61,7 +61,13 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             bat_pct < min_pct
         };
 
-        if let Some(fd_w) = force_discharge {
+        let is_high_price_discharge = config.high_price_discharge && r.export_price_cents >= config.high_price_threshold;
+
+        if is_high_price_discharge {
+            let base_min_pct = config.min_charge_pct as f64;
+            let max_avail_discharge = ((bat_soc - (base_min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+            discharge_w = config.max_power_w.min(max_avail_discharge);
+        } else if let Some(fd_w) = force_discharge {
             if fd_w > 0.0 {
                 let max_avail_discharge = ((bat_soc - (min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
                 discharge_w = fd_w.min(config.max_power_w).min(max_avail_discharge);
@@ -421,5 +427,58 @@ mod tests {
 
         let res = run(&records, &config);
         assert_eq!(res.import_kwh, 1.0);
+    }
+
+    #[test]
+    fn test_auto_simulation_high_price_discharge_below_period_min_charge() {
+        let dt1 = chrono::DateTime::parse_from_rfc3339("2026-08-10T15:30:00+10:00").unwrap();
+
+        let records = vec![
+            SimRecord {
+                timestamp: dt1.timestamp(),
+                dt_local: dt1,
+                solar_power_w: 0.0,
+                load_power_w: 0.0,
+                import_price_cents: 95.0,
+                export_price_cents: 80.0,
+                duration_hours: 1.0,
+                day_solar_kwh: 0.0,
+            },
+        ];
+
+        let config = SimConfig {
+            battery_capacity_kwh: 10.0,
+            max_power_w: 3000.0,
+            min_charge_pct: 20,
+            max_charge_pct: 100,
+            demand_window: None,
+            demand_rate: 0.0,
+            negative_export_prevent: false,
+            low_price_charge: false,
+            low_price_threshold: 0.0,
+            high_price_discharge: true,
+            high_price_threshold: 60.0,
+            periods: vec![BatteryControlPeriod {
+                start: "15:00:00".to_string(),
+                end: "17:00:00".to_string(),
+                min_charge: 90, // Period min charge is 90%
+                grid_charge: true,
+                force_discharge: None,
+                grace: false,
+                prefer_battery: false,
+                min_charge_hysteresis: None,
+                ignore_cost_margin: false,
+            }],
+            evolved_heuristic: crate::config::EvolvedHeuristicConfig::default(),
+            evolved_heuristic_monthly: None,
+            min_charge_hysteresis: None,
+            auto_cost_margin: None,
+        };
+
+        // Battery starts at 50% SoC (below period min_charge of 90%).
+        // With high_price_discharge active, it should discharge to grid up to max_power (3kW), NOT grid charge.
+        let res = run(&records, &config);
+        assert_eq!(res.import_kwh, 0.0);
+        assert!(res.export_kwh >= 2.5); // Discharged ~2.85 kWh to grid
     }
 }

@@ -2,6 +2,16 @@
 
 All notable user-facing changes in PowerScraper since the transition from the legacy Python implementation (commit `2c2227e5fbb7957aed1c77ad66eb0986f63ecfbf`) are documented below.
 
+## [1.0.159] - 2026-10-12
+
+### Added
+* **Auto Mode High-Price Forced Discharging**:
+  - Configured `PowerManagerMode::Auto` in live control (both linked and per-phase) and historical simulation (`auto.rs`) to honor high-price forced discharging when export tariff exceeds the configured threshold.
+  - Allowed battery discharging during high-price events even when the battery is below the scheduled period's minimum SoC limit (`period.min_charge`), discharging safely down to the inverter's base safety cutoff (`min_charge_pct`).
+  - Preempted scheduled period grid charging during export price spikes to prevent importing power from the grid during high-price wholesale events.
+
+---
+
 ## [1.0.158] - 2026-09-02
 
 ### Fixed
