@@ -1,6 +1,6 @@
-use super::{SimRecord, SimConfig, SimTracker, is_time_in_window, calculate_demand_charges_total};
+use super::{SimConfig, SimRecord, SimTracker, calculate_demand_charges_total, is_time_in_window};
 use crate::power_manager::SimulationResultModel;
-use chrono::{Timelike, Datelike};
+use chrono::{Datelike, Timelike};
 use std::collections::HashMap;
 
 pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
@@ -14,7 +14,9 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         }
         let month = r.dt_local.month();
         let eh_config = if let Some(ref monthly_map) = config.evolved_heuristic_monthly {
-            monthly_map.get(&month.to_string()).unwrap_or(&config.evolved_heuristic)
+            monthly_map
+                .get(&month.to_string())
+                .unwrap_or(&config.evolved_heuristic)
         } else {
             &config.evolved_heuristic
         };
@@ -26,7 +28,9 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         let import_price = r.import_price_cents;
         let export_price = r.export_price_cents;
 
-        let is_demand = config.demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end));
+        let is_demand = config.demand_window.map_or(false, |(start, end)| {
+            is_time_in_window(now_time, start, end)
+        });
         let current_month_peak = *evolved_peaks.get(&month_key).unwrap_or(&0.0);
 
         let mut charge_w = 0.0;
@@ -34,11 +38,18 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
 
         // 1. Extreme negative price: charge from grid
         if import_price < eh_config.neg_price_threshold {
-            let max_avail_charge = ((config.battery_capacity_kwh * (config.max_charge_pct as f64 / 100.0) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
+            let max_avail_charge =
+                ((config.battery_capacity_kwh * (config.max_charge_pct as f64 / 100.0) - bat_soc)
+                    .max(0.0)
+                    / 0.95)
+                    / r.duration_hours
+                    * 1000.0;
             charge_w = config.max_power_w.min(max_avail_charge);
         }
         // 2. High export price: dump to grid (arbitrage)
-        else if export_price >= eh_config.tier2_export_dump_threshold || export_price >= eh_config.export_dump_threshold {
+        else if export_price >= eh_config.tier2_export_dump_threshold
+            || export_price >= eh_config.export_dump_threshold
+        {
             let is_near_or_in_demand = if let Some((_start, end)) = config.demand_window {
                 let hour_val = hour as i32;
                 let end_hour = end.hour() as i32;
@@ -55,7 +66,8 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             };
             let min_pct_limit = reserve_kwh.clamp(0.0, config.battery_capacity_kwh);
             if bat_soc > min_pct_limit {
-                let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                let max_avail_discharge =
+                    ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
                 discharge_w = config.max_power_w.min(max_avail_discharge);
             }
         }
@@ -77,10 +89,16 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
                     hour >= pc_start || hour < 15
                 }
             };
-            let effective_soc_limit = (eh_config.pre_charge_soc_limit * (1.0 - r.day_solar_kwh * eh_config.forecast_solar_weight)).max(0.0);
-            is_pre_charge_window && import_price < eh_config.pre_charge_price_threshold && (bat_soc / config.battery_capacity_kwh) < effective_soc_limit
+            let effective_soc_limit = (eh_config.pre_charge_soc_limit
+                * (1.0 - r.day_solar_kwh * eh_config.forecast_solar_weight))
+                .max(0.0);
+            is_pre_charge_window
+                && import_price < eh_config.pre_charge_price_threshold
+                && (bat_soc / config.battery_capacity_kwh) < effective_soc_limit
         } {
-            let effective_soc_limit = (eh_config.pre_charge_soc_limit * (1.0 - r.day_solar_kwh * eh_config.forecast_solar_weight)).max(0.0);
+            let effective_soc_limit = (eh_config.pre_charge_soc_limit
+                * (1.0 - r.day_solar_kwh * eh_config.forecast_solar_weight))
+                .max(0.0);
             let target = config.battery_capacity_kwh * effective_soc_limit;
             let deficit = (target - bat_soc).max(0.0);
             let max_avail_charge = (deficit / 0.95) / r.duration_hours * 1000.0;
@@ -99,18 +117,22 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
                 let max_avail_discharge = (bat_soc * 0.95) / r.duration_hours * 1000.0;
                 discharge_w = excess.min(config.max_power_w).min(max_avail_discharge);
             } else if net_w < 0.0 {
-                let max_avail_charge = ((config.battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                let max_avail_charge =
+                    ((config.battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
                 charge_w = (-net_w).min(config.max_power_w).min(max_avail_charge);
             }
         }
         // 5. Standard operation
         else {
             if net_w < 0.0 {
-                let max_avail_charge = ((config.battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+                let max_avail_charge =
+                    ((config.battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
                 charge_w = (-net_w).min(config.max_power_w).min(max_avail_charge);
             } else if net_w > 0.0 {
-                let min_pct_limit = config.battery_capacity_kwh * (config.min_charge_pct as f64 / 100.0);
-                let max_avail_discharge = ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                let min_pct_limit =
+                    config.battery_capacity_kwh * (config.min_charge_pct as f64 / 100.0);
+                let max_avail_discharge =
+                    ((bat_soc - min_pct_limit).max(0.0) * 0.95) / r.duration_hours * 1000.0;
                 discharge_w = net_w.min(config.max_power_w).min(max_avail_discharge);
             }
         }
@@ -168,7 +190,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
 mod tests {
     use super::*;
     use crate::config::EvolvedHeuristicConfig;
-    use chrono::{TimeZone, FixedOffset, NaiveTime};
+    use chrono::{FixedOffset, NaiveTime, TimeZone};
 
     #[test]
     fn test_evolved_heuristic_rules() {
@@ -256,7 +278,10 @@ mod tests {
             max_power_w: 3000.0,
             min_charge_pct: 20,
             max_charge_pct: 100,
-            demand_window: Some((NaiveTime::from_hms_opt(11, 0, 0).unwrap(), NaiveTime::from_hms_opt(15, 0, 0).unwrap())),
+            demand_window: Some((
+                NaiveTime::from_hms_opt(11, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(15, 0, 0).unwrap(),
+            )),
             demand_rate: 10.0,
             negative_export_prevent: false,
             low_price_charge: false,

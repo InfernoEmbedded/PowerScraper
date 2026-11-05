@@ -1,4 +1,4 @@
-use super::{SimRecord, SimConfig, SimTracker, is_time_in_window, calculate_demand_charges_total};
+use super::{SimConfig, SimRecord, SimTracker, calculate_demand_charges_total, is_time_in_window};
 use crate::power_manager::SimulationResultModel;
 use std::collections::HashMap;
 
@@ -23,7 +23,9 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         );
 
         if net_w > 0.0 {
-            if config.demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+            if config.demand_window.map_or(false, |(start, end)| {
+                is_time_in_window(now_time, start, end)
+            }) {
                 let peak = no_bat_peaks.entry(month_key).or_insert(0.0);
                 if net_w > *peak {
                     *peak = net_w;
@@ -48,7 +50,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, FixedOffset, NaiveTime};
+    use chrono::{FixedOffset, NaiveTime, TimeZone};
 
     #[test]
     fn test_no_battery_simulation() {
@@ -73,7 +75,10 @@ mod tests {
             max_power_w: 3000.0,
             min_charge_pct: 20,
             max_charge_pct: 100,
-            demand_window: Some((NaiveTime::from_hms_opt(17, 0, 0).unwrap(), NaiveTime::from_hms_opt(20, 0, 0).unwrap())),
+            demand_window: Some((
+                NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(20, 0, 0).unwrap(),
+            )),
             demand_rate: 0.15,
             negative_export_prevent: false,
             low_price_charge: false,
@@ -118,7 +123,10 @@ mod tests {
             max_power_w: 3000.0,
             min_charge_pct: 20,
             max_charge_pct: 100,
-            demand_window: Some((NaiveTime::from_hms_opt(17, 0, 0).unwrap(), NaiveTime::from_hms_opt(20, 0, 0).unwrap())),
+            demand_window: Some((
+                NaiveTime::from_hms_opt(17, 0, 0).unwrap(),
+                NaiveTime::from_hms_opt(20, 0, 0).unwrap(),
+            )),
             demand_rate: 0.15,
             negative_export_prevent: false,
             low_price_charge: false,

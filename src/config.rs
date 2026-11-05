@@ -28,7 +28,6 @@ pub struct SolaxModbusConfig {
     pub hostnames: Option<Vec<String>>,
 }
 
-
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
 pub struct SolaxG4ModbusConfig {
@@ -71,6 +70,8 @@ pub struct SerialMeterConfig {
     pub ports: Vec<String>,
     #[serde(default)]
     pub watchdog_timeout: Option<u64>,
+    #[serde(default)]
+    pub invert: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -92,6 +93,8 @@ pub struct MQTTPowerMeterDeviceConfig {
     pub poll_period: Option<f64>,
     #[serde(default)]
     pub watchdog_timeout: Option<u64>,
+    #[serde(default)]
+    pub invert: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -111,7 +114,7 @@ pub struct MQTTInverterDeviceConfig {
     pub port: Option<u16>,
     pub username: Option<String>,
     pub password: Option<String>,
-    
+
     #[serde(alias = "topic_pv1_power")]
     pub topic_pv1_power: Option<String>,
     #[serde(alias = "topic_pv2_power")]
@@ -265,7 +268,11 @@ pub struct BatteryControlPeriod {
     pub grace: bool,
     #[serde(default, alias = "prefer-battery", alias = "prefer_battery")]
     pub prefer_battery: bool,
-    #[serde(default, alias = "min-charge-hysteresis", alias = "min_charge_hysteresis")]
+    #[serde(
+        default,
+        alias = "min-charge-hysteresis",
+        alias = "min_charge_hysteresis"
+    )]
     pub min_charge_hysteresis: Option<u8>,
     #[serde(default, alias = "ignore-cost-margin", alias = "ignore_cost_margin")]
     pub ignore_cost_margin: bool,
@@ -285,14 +292,9 @@ pub struct TouTariffPeriod {
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum TariffConfig {
     #[serde(rename_all = "kebab-case")]
-    Flat {
-        import_rate: f64,
-        export_rate: f64,
-    },
+    Flat { import_rate: f64, export_rate: f64 },
     #[serde(rename_all = "kebab-case")]
-    Tou {
-        periods: Vec<TouTariffPeriod>,
-    },
+    Tou { periods: Vec<TouTariffPeriod> },
     #[serde(rename_all = "kebab-case")]
     Amber {
         api_key: String,
@@ -427,14 +429,22 @@ pub struct SolaxBatteryControlConfig {
     pub evolved_heuristic: Option<EvolvedHeuristicConfig>,
     #[serde(default)]
     pub evolved_heuristic_monthly: Option<HashMap<String, EvolvedHeuristicConfig>>,
-    #[serde(default, alias = "min-charge-hysteresis", alias = "min_charge_hysteresis")]
+    #[serde(
+        default,
+        alias = "min-charge-hysteresis",
+        alias = "min_charge_hysteresis"
+    )]
     pub min_charge_hysteresis: Option<u8>,
     #[serde(default, alias = "auto-cost-margin", alias = "auto_cost_margin")]
     pub auto_cost_margin: Option<f64>,
 }
 
-fn default_flush_interval() -> u32 { 30 }
-fn default_retention_days() -> Option<u32> { Some(365) }
+fn default_flush_interval() -> u32 {
+    30
+}
+fn default_retention_days() -> Option<u32> {
+    Some(365)
+}
 
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 #[serde(rename_all = "kebab-case")]
@@ -458,7 +468,6 @@ pub struct Config {
 
     #[serde(rename = "Solax-Modbus")]
     pub solax_modbus: Option<SolaxModbusConfig>,
-
 
     #[serde(rename = "Solax-G4-Modbus")]
     pub solax_g4_modbus: Option<SolaxG4ModbusConfig>,
@@ -521,7 +530,9 @@ impl Config {
                             cfg.save_to_db(db_path)?;
                             Ok(cfg)
                         }
-                        Err(err) => Err(format!("Failed to load config-sample.toml: {}", err).into()),
+                        Err(err) => {
+                            Err(format!("Failed to load config-sample.toml: {}", err).into())
+                        }
                     }
                 } else {
                     Err(e)
@@ -530,12 +541,14 @@ impl Config {
         }
     }
 
-
     pub fn save_to_db(&self, db_path: &str) -> Result<(), Box<dyn std::error::Error>> {
         crate::database::save_config_to_db(db_path, self)
     }
 
-    pub async fn save_to_db_async(&self, db_path: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn save_to_db_async(
+        &self,
+        db_path: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         crate::database::save_config_to_db_async(db_path, self.clone()).await
     }
 
@@ -771,6 +784,7 @@ topic_phase3 = "sensors/Phase3"
 username = "mqtt_user"
 password = "mqtt_password"
 poll_period = 10
+invert = true
 
 [Solax-BatteryControl]
 source = "Meter1"
@@ -805,38 +819,42 @@ prefer_battery = false
             config_res.err()
         );
         let config = config_res.unwrap();
-        
+
         assert!(config.mqtt.is_some());
         let mqtt = config.mqtt.as_ref().unwrap();
         assert_eq!(mqtt.base_topic, Some("sensors".to_string()));
-        
+
         assert_eq!(config.solax_wifi.as_ref().unwrap().timeout, 0.5);
-        
+
         assert!(config.sdm630_modbus_v2.is_some());
         let sdm = config.sdm630_modbus_v2.as_ref().unwrap();
         assert_eq!(sdm.baud, 38400);
         assert_eq!(sdm.ports[0], "/dev/ttyUSB0");
         assert_eq!(sdm.timeout, 0.5);
-        
+
         assert!(config.mqtt_power_meter.is_some());
         let mqtt_meter = config.mqtt_power_meter.as_ref().unwrap();
         assert_eq!(mqtt_meter.meters[0], "Meter1");
         let meter1 = mqtt_meter.meter_devices.get("Meter1").unwrap();
-        assert_eq!(meter1.topic_total, Some("sensors/TotalSystemPower".to_string()));
+        assert_eq!(
+            meter1.topic_total,
+            Some("sensors/TotalSystemPower".to_string())
+        );
         assert_eq!(meter1.topic_phase1, Some("sensors/Phase1".to_string()));
-        
+        assert_eq!(meter1.invert, Some(true));
+
         assert!(config.battery_control.is_some());
         let bat = config.battery_control.as_ref().unwrap();
         assert_eq!(bat.source, Some("Meter1".to_string()));
         assert!(bat.linked_batteries);
         assert_eq!(bat.timezone, Some("AEDT-10".to_string()));
-        
+
         let inv1 = bat.inverter.get("solax1").unwrap();
         assert_eq!(inv1.phase, 1);
         assert!(!inv1.use_total_power);
         assert_eq!(inv1.single_phase_charge_limit, 1000.0);
         assert!(inv1.control_grid_power);
-        
+
         let period1 = bat.period.get("MorningPeak").unwrap();
         assert_eq!(period1.start, "6:55:00");
         assert_eq!(period1.min_charge, 20);
@@ -875,19 +893,58 @@ topic_energy_total = "emon/aurora/total"
         assert_eq!(aurora1.broker, Some("homeautomation.lan".to_string()));
         assert_eq!(aurora1.username, Some("aurora10k".to_string()));
         assert_eq!(aurora1.password, Some("somepassword".to_string()));
-        assert_eq!(aurora1.topic_pv1_power, Some("emon/aurora/power_in_1".to_string()));
-        assert_eq!(aurora1.topic_pv2_power, Some("emon/aurora/power_in_2".to_string()));
-        assert_eq!(aurora1.topic_pv1_voltage, Some("emon/aurora/v_in_1".to_string()));
-        assert_eq!(aurora1.topic_pv2_voltage, Some("emon/aurora/v_in_2".to_string()));
-        assert_eq!(aurora1.topic_pv1_current, Some("emon/aurora/i_in_1".to_string()));
-        assert_eq!(aurora1.topic_pv2_current, Some("emon/aurora/i_in_2".to_string()));
-        assert_eq!(aurora1.topic_grid_voltage, Some("emon/aurora/grid_voltage".to_string()));
-        assert_eq!(aurora1.topic_grid_current, Some("emon/aurora/grid_current".to_string()));
-        assert_eq!(aurora1.topic_grid_power, Some("emon/aurora/grid_power".to_string()));
-        assert_eq!(aurora1.topic_frequency, Some("emon/aurora/frequency".to_string()));
-        assert_eq!(aurora1.topic_temperature, Some("emon/aurora/temperature_inverter".to_string()));
-        assert_eq!(aurora1.topic_energy_today, Some("emon/aurora/current_day".to_string()));
-        assert_eq!(aurora1.topic_energy_total, Some("emon/aurora/total".to_string()));
+        assert_eq!(
+            aurora1.topic_pv1_power,
+            Some("emon/aurora/power_in_1".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_pv2_power,
+            Some("emon/aurora/power_in_2".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_pv1_voltage,
+            Some("emon/aurora/v_in_1".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_pv2_voltage,
+            Some("emon/aurora/v_in_2".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_pv1_current,
+            Some("emon/aurora/i_in_1".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_pv2_current,
+            Some("emon/aurora/i_in_2".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_grid_voltage,
+            Some("emon/aurora/grid_voltage".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_grid_current,
+            Some("emon/aurora/grid_current".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_grid_power,
+            Some("emon/aurora/grid_power".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_frequency,
+            Some("emon/aurora/frequency".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_temperature,
+            Some("emon/aurora/temperature_inverter".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_energy_today,
+            Some("emon/aurora/current_day".to_string())
+        );
+        assert_eq!(
+            aurora1.topic_energy_total,
+            Some("emon/aurora/total".to_string())
+        );
     }
 
     #[test]
@@ -947,7 +1004,8 @@ topic_energy_total = "emon/aurora/total"
         // Create a corrupted database file filled with random text
         let corrupt_path = "corrupted_test_config.db";
         let mut file = std::fs::File::create(corrupt_path).unwrap();
-        file.write_all(b"not a sqlite database file header").unwrap();
+        file.write_all(b"not a sqlite database file header")
+            .unwrap();
         drop(file);
 
         // Trying to load should fail or fall back (Config::load_from_db returns Result)
@@ -957,5 +1015,3 @@ topic_energy_total = "emon/aurora/total"
         let _ = std::fs::remove_file(corrupt_path);
     }
 }
-
-

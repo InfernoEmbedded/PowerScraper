@@ -361,7 +361,10 @@ mod tests {
             import_rate: 10.0,
             export_rate: 2.0,
         }];
-        let bad_rates = TariffManager::lookup_tou_rate_at(&bad_periods, NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+        let bad_rates = TariffManager::lookup_tou_rate_at(
+            &bad_periods,
+            NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+        );
         assert_eq!(bad_rates.import_rate, 0.0);
     }
 
@@ -380,7 +383,10 @@ mod tests {
         });
 
         let client = reqwest::Client::new();
-        let url = format!("http://127.0.0.1:{}/v1/sites/test-site/prices/current", port);
+        let url = format!(
+            "http://127.0.0.1:{}/v1/sites/test-site/prices/current",
+            port
+        );
         let rates = Arc::new(RwLock::new(CurrentTariffRates::default()));
 
         let res = TariffManager::fetch_amber_prices(&client, &url, "test-key", &rates).await;

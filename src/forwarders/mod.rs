@@ -45,10 +45,13 @@ pub async fn run_forwarders_task(
         .base_topic
         .clone()
         .unwrap_or_else(|| "sensors".to_string());
-    let (mqtt_client, mut eventloop) = crate::mqtt_helper::create_mqtt_client("powerscraper-forwarder-legacy", &mqtt_config);
+    let (mqtt_client, mut eventloop) =
+        crate::mqtt_helper::create_mqtt_client("powerscraper-forwarder-legacy", &mqtt_config);
 
     let status_wildcard = format!("{}/#", base_topic);
-    let _ = mqtt_client.subscribe(&status_wildcard, rumqttc::QoS::AtLeastOnce).await;
+    let _ = mqtt_client
+        .subscribe(&status_wildcard, rumqttc::QoS::AtLeastOnce)
+        .await;
 
     loop {
         tokio::select! {

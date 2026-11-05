@@ -38,12 +38,15 @@ impl BatteryGroup {
         if target_power_w > 0.0 {
             // Discharging (target_power_w > 0)
             let mut remaining = target_power_w;
-            
+
             // Map batteries to their available discharge capacity in Wh
             // Filter out batteries that cannot discharge (avail_cap <= 0 or max_discharge_power <= 0)
-            let mut active: Vec<(&Battery, f64)> = self.batteries.iter()
+            let mut active: Vec<(&Battery, f64)> = self
+                .batteries
+                .iter()
                 .map(|b| {
-                    let avail_cap = b.capacity_wh * ((b.current_soc_pct - b.min_soc_pct) / 100.0).max(0.0);
+                    let avail_cap =
+                        b.capacity_wh * ((b.current_soc_pct - b.min_soc_pct) / 100.0).max(0.0);
                     (b, avail_cap)
                 })
                 .filter(|(b, avail_cap)| *avail_cap > 1e-5 && b.max_discharge_power_w > 1e-5)
@@ -100,9 +103,12 @@ impl BatteryGroup {
 
             // Map batteries to their available charge capacity in Wh
             // Filter out batteries that cannot charge (avail_cap <= 0 or max_charge_power <= 0)
-            let mut active: Vec<(&Battery, f64)> = self.batteries.iter()
+            let mut active: Vec<(&Battery, f64)> = self
+                .batteries
+                .iter()
                 .map(|b| {
-                    let avail_cap = b.capacity_wh * ((b.max_soc_pct - b.current_soc_pct) / 100.0).max(0.0);
+                    let avail_cap =
+                        b.capacity_wh * ((b.max_soc_pct - b.current_soc_pct) / 100.0).max(0.0);
                     (b, avail_cap)
                 })
                 .filter(|(b, avail_cap)| *avail_cap > 1e-5 && b.max_charge_power_w > 1e-5)
@@ -162,7 +168,12 @@ impl BatteryGroup {
     /// allocations: Map of battery names to power in Watts.
     /// duration_hours: Duration of the step in hours.
     /// efficiency: Round-trip/charging/discharging efficiency (e.g. 0.95).
-    pub fn step(&mut self, allocations: &HashMap<String, f64>, duration_hours: f64, efficiency: f64) {
+    pub fn step(
+        &mut self,
+        allocations: &HashMap<String, f64>,
+        duration_hours: f64,
+        efficiency: f64,
+    ) {
         let eff = if efficiency <= 0.0 { 1.0 } else { efficiency };
         for b in &mut self.batteries {
             if let Some(&power_w) = allocations.get(&b.name) {
@@ -178,7 +189,8 @@ impl BatteryGroup {
                 } else {
                     // Discharging
                     let discharged_energy_wh = (power_w * duration_hours) / eff;
-                    let new_soc_pct = b.current_soc_pct - (discharged_energy_wh / b.capacity_wh) * 100.0;
+                    let new_soc_pct =
+                        b.current_soc_pct - (discharged_energy_wh / b.capacity_wh) * 100.0;
                     b.current_soc_pct = new_soc_pct.clamp(0.0, 100.0);
                 }
             }
@@ -189,12 +201,16 @@ impl BatteryGroup {
         &self,
         target_power_w: f64,
         inverter_configs: &std::collections::HashMap<String, crate::config::BatteryControlInverter>,
-        inverters_state: &mut std::collections::HashMap<String, crate::power_manager::InverterState>,
+        inverters_state: &mut std::collections::HashMap<
+            String,
+            crate::power_manager::InverterState,
+        >,
         assist_needed: &mut std::collections::HashMap<String, bool>,
         commanded_powers: &mut std::collections::HashMap<String, i32>,
         _mode: crate::power_manager::PowerManagerMode,
         period: &crate::config::BatteryControlPeriod,
         divider: f64,
+        prevent_export: bool,
     ) -> std::collections::HashMap<String, i32> {
         let allocations = self.apportion_power(target_power_w);
         let mut final_commands = std::collections::HashMap::new();
@@ -202,7 +218,7 @@ impl BatteryGroup {
         for (name, mut p) in allocations {
             if let Some(inv_cfg) = inverter_configs.get(&name) {
                 let mut state = inverters_state.get(&name).cloned().unwrap_or_default();
-                
+
                 // If telemetry has never been received for this inverter since startup, default to 0 W (0 charge)
                 if !state.has_telemetry() {
                     commanded_powers.insert(name.clone(), 0);
@@ -216,7 +232,7 @@ impl BatteryGroup {
                 }
 
                 let soc = state.battery_capacity;
-                
+
                 // Apply individual clamps & constraints
                 if p > inv_cfg.max_discharge {
                     p = inv_cfg.max_discharge;
@@ -226,12 +242,15 @@ impl BatteryGroup {
 
                 // BMS Throttling & Battery Full Check
                 let max_limit = inv_cfg.max_charge_pct.map(|p| p.min(98)).unwrap_or(95);
-                if soc >= max_limit && p < 0.0 {
+                let bms_full = state.bms_max_charge_current == Some(0.0);
+                let is_full = soc >= max_limit || bms_full;
+                if is_full && p < 0.0 {
                     p = 0.0;
                 }
 
                 // Grace Period
-                let grace = period.grace && inv_cfg.grace_capacity > 0 && inv_cfg.grace_charge_power > 0.0;
+                let grace =
+                    period.grace && inv_cfg.grace_capacity > 0 && inv_cfg.grace_charge_power > 0.0;
                 if grace && p < 0.0 && soc > inv_cfg.grace_capacity {
                     let total_pv = state.pv1_power + state.pv2_power;
                     if total_pv < inv_cfg.grace_power_threshold {
@@ -257,7 +276,9 @@ impl BatteryGroup {
                             assist = false;
                         }
                     } else {
-                        if p > inv_cfg.single_phase_discharge_limit || p < -inv_cfg.single_phase_charge_limit {
+                        if p > inv_cfg.single_phase_discharge_limit
+                            || p < -inv_cfg.single_phase_charge_limit
+                        {
                             assist = true;
                         }
                     }
@@ -277,15 +298,20 @@ impl BatteryGroup {
                 // Store command
                 let mut command_power = if inv_cfg.control_grid_power {
                     let pv_power = state.pv1_power + state.pv2_power;
-                    let config_max_charge = if inv_cfg.max_charge > 0.0 { inv_cfg.max_charge } else { 5000.0 };
+                    let config_max_charge = if inv_cfg.max_charge > 0.0 {
+                        inv_cfg.max_charge
+                    } else {
+                        5000.0
+                    };
 
                     // Dynamically calculate effective max charge capacity incorporating real-time BMS limit (BMS Current * Voltage)
-                    let effective_max_charge = match (state.bms_max_charge_current, state.battery_voltage) {
-                        (Some(i_max), Some(v_bat)) if i_max > 0.0 && v_bat > 0.0 => {
-                            config_max_charge.min(i_max * v_bat)
-                        }
-                        _ => config_max_charge,
-                    };
+                    let effective_max_charge =
+                        match (state.bms_max_charge_current, state.battery_voltage) {
+                            (Some(i_max), Some(v_bat)) if i_max > 0.0 && v_bat > 0.0 => {
+                                config_max_charge.min(i_max * v_bat)
+                            }
+                            _ => config_max_charge,
+                        };
                     let buffer_limit = 0.95 * effective_max_charge;
 
                     if p < 0.0 {
@@ -300,7 +326,7 @@ impl BatteryGroup {
                     } else if p > 0.0 {
                         // Discharging requested (p > 0).
                         if pv_power >= 50.0 {
-                            (-p - state.measured_power) as i32
+                            (-p - pv_power) as i32
                         } else {
                             -p as i32
                         }
@@ -312,11 +338,24 @@ impl BatteryGroup {
                     -p as i32
                 };
 
-                // When battery is full (soc >= max_limit) and we are not drawing down on the battery (p <= 0.0),
-                // drop inverter into self-use mode (command_power = 0) so SolaX MPPT runs at full capacity.
-                // When drawing down on battery (p > 0.0), all inverters share the discharge load.
-                if soc >= max_limit && p <= 0.0 {
-                    command_power = 0;
+                // When not drawing down on the battery (p <= 0.0):
+                // - If battery is full (soc >= max_limit or BMS max charge current == 0), normally drop inverter into
+                //   self-use mode (command_power = 0) so SolaX MPPT runs at full capacity.
+                // - When prevent_export is active (negative export price), command 1W in Remote Power Control mode instead of 0
+                //   so SolaX charges up to the BMS limit and load-sheds excess PV instead of exporting.
+                if p <= 0.0 {
+                    if is_full {
+                        command_power = if prevent_export && !inv_cfg.no_pv.unwrap_or(false) {
+                            1
+                        } else {
+                            0
+                        };
+                    } else if prevent_export
+                        && !inv_cfg.no_pv.unwrap_or(false)
+                        && command_power == 0
+                    {
+                        command_power = 1;
+                    }
                 }
 
                 // Save the calculated discharge_power back into the inverter state!
@@ -344,12 +383,16 @@ impl BatteryGroup {
         mqtt_client: &rumqttc::AsyncClient,
         base_topic: &str,
         inverter_configs: &std::collections::HashMap<String, crate::config::BatteryControlInverter>,
-        inverters_state: &mut std::collections::HashMap<String, crate::power_manager::InverterState>,
+        inverters_state: &mut std::collections::HashMap<
+            String,
+            crate::power_manager::InverterState,
+        >,
         assist_needed: &mut std::collections::HashMap<String, bool>,
         commanded_powers: &mut std::collections::HashMap<String, i32>,
         mode: crate::power_manager::PowerManagerMode,
         period: &crate::config::BatteryControlPeriod,
         divider: f64,
+        prevent_export: bool,
     ) {
         let commands = self.calculate_and_constrain(
             target_power_w,
@@ -360,6 +403,7 @@ impl BatteryGroup {
             mode,
             period,
             divider,
+            prevent_export,
         );
 
         for (name, command_power) in commands {
@@ -564,9 +608,7 @@ mod tests {
 
     #[test]
     fn test_step_efficiency_boundary() {
-        let mut group = BatteryGroup::new(vec![
-            make_test_battery("A", 50.0, 10000.0),
-        ]);
+        let mut group = BatteryGroup::new(vec![make_test_battery("A", 50.0, 10000.0)]);
         let mut allocations = HashMap::new();
         allocations.insert("A".to_string(), -1000.0);
 
@@ -624,6 +666,7 @@ mod tests {
             crate::power_manager::PowerManagerMode::Auto,
             &period,
             1.0,
+            false,
         );
 
         assert_eq!(*cmds.get("A").unwrap(), 2750);
@@ -678,11 +721,27 @@ mod tests {
             crate::power_manager::PowerManagerMode::Auto,
             &period,
             1.0,
+            false,
         );
 
         assert_eq!(*cmds.get("A").unwrap(), 0);
 
-        // When ready to draw down on battery again (target: +2000W), positive discharge command should be sent.
+        // When prevent_export is true and battery is full, command_power = 1 to load-shed PV instead of exporting.
+        let cmds_prevent_export = group.calculate_and_constrain(
+            -2000.0,
+            &configs,
+            &mut states,
+            &mut assist,
+            &mut commanded,
+            crate::power_manager::PowerManagerMode::Auto,
+            &period,
+            1.0,
+            true,
+        );
+
+        assert_eq!(*cmds_prevent_export.get("A").unwrap(), 1);
+
+        // When ready to draw down on battery again (target: +2000W with 6000W PV), command_power = -2000 - 6000 = -8000.
         let cmds_discharge = group.calculate_and_constrain(
             2000.0,
             &configs,
@@ -692,8 +751,9 @@ mod tests {
             crate::power_manager::PowerManagerMode::Auto,
             &period,
             1.0,
+            false,
         );
 
-        assert!(*cmds_discharge.get("A").unwrap() != 0);
+        assert_eq!(*cmds_discharge.get("A").unwrap(), -8000);
     }
 }

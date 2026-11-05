@@ -32,7 +32,10 @@ fn get_topic_for_column(col_name: &str, mains_source: &str) -> Option<String> {
 }
 
 pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error>> {
-    println!("Initializing import from {} into database {}...", csv_path, db_path);
+    println!(
+        "Initializing import from {} into database {}...",
+        csv_path, db_path
+    );
 
     if !Path::new(csv_path).exists() {
         return Err(format!("CSV file not found: {}", csv_path).into());
@@ -67,10 +70,7 @@ pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error
         if header == "timestamp" {
             timestamp_idx = Some(idx);
         } else if let Some(topic) = get_topic_for_column(header, mains_source) {
-            mappings.push(ColumnMapping {
-                index: idx,
-                topic,
-            });
+            mappings.push(ColumnMapping { index: idx, topic });
         }
     }
 
@@ -81,7 +81,10 @@ pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error
 
     println!("Mapped columns to topics:");
     for mapping in &mappings {
-        println!("  Column '{}' -> Topic '{}'", &headers[mapping.index], &mapping.topic);
+        println!(
+            "  Column '{}' -> Topic '{}'",
+            &headers[mapping.index], &mapping.topic
+        );
     }
 
     let mut total_rows = 0;
@@ -103,7 +106,10 @@ pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error
         let timestamp: i64 = match ts_str.parse() {
             Ok(val) => val,
             Err(e) => {
-                eprintln!("Row {}: Failed to parse timestamp '{}': {}", total_rows, ts_str, e);
+                eprintln!(
+                    "Row {}: Failed to parse timestamp '{}': {}",
+                    total_rows, ts_str, e
+                );
                 continue;
             }
         };
@@ -133,7 +139,10 @@ pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error
         }
 
         if total_rows % 10000 == 0 {
-            println!("Processed {} rows, inserted {} points so far...", total_rows, total_inserts);
+            println!(
+                "Processed {} rows, inserted {} points so far...",
+                total_rows, total_inserts
+            );
         }
     }
 
@@ -141,6 +150,9 @@ pub fn run_csv_import(db_path: &str, csv_path: &str) -> Result<(), Box<dyn Error
         crate::database::insert_telemetry_history_batch(db_path, &batch)?;
     }
 
-    println!("Successfully imported {} records (total {} data points) from CSV.", total_rows, total_inserts);
+    println!(
+        "Successfully imported {} records (total {} data points) from CSV.",
+        total_rows, total_inserts
+    );
     Ok(())
 }

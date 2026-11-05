@@ -187,19 +187,29 @@ pub async fn run_solax_g3_driver(
             let mut read_data = None;
 
             if let Some(ref mut ctx) = *lock {
-                while let Some((reg, val)) = crate::web_server::pop_pending_modbus_write(&inverter_name) {
+                while let Some((reg, val)) =
+                    crate::web_server::pop_pending_modbus_write(&inverter_name)
+                {
                     let pwd = config.installer_password.unwrap_or(2014);
                     let _ = ctx.write_single_register(0x00, pwd).await;
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     if let Err(e) = ctx.write_single_register(reg, val).await {
-                        eprintln!("[SolaxG3 Log] Driver [{}] manual write ({:#06x}, {}) failed: {}", inverter_name, reg, val, e);
+                        eprintln!(
+                            "[SolaxG3 Log] Driver [{}] manual write ({:#06x}, {}) failed: {}",
+                            inverter_name, reg, val, e
+                        );
                     } else {
-                        println!("[SolaxG3 Log] Driver [{}] manual write ({:#06x}, {}) succeeded", inverter_name, reg, val);
+                        println!(
+                            "[SolaxG3 Log] Driver [{}] manual write ({:#06x}, {}) succeeded",
+                            inverter_name, reg, val
+                        );
                     }
                 }
 
                 let needs_update = match (last_written_power, last_write_time) {
-                    (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
+                    (Some(lp), Some(lt)) => {
+                        lp != req_power || lt.elapsed() >= Duration::from_secs(10)
+                    }
                     _ => true,
                 };
 
@@ -212,7 +222,10 @@ pub async fn run_solax_g3_driver(
                         let _ = ctx.write_single_register(0x9F, 30).await;
                         let power_u16 = (req_power as i16) as u16;
                         if let Err(e) = ctx.write_single_register(0x52, power_u16).await {
-                            eprintln!("[SolaxG3 Log] Driver [{}] write_single_register(0x52, {}) failed: {}", inverter_name, req_power, e);
+                            eprintln!(
+                                "[SolaxG3 Log] Driver [{}] write_single_register(0x52, {}) failed: {}",
+                                inverter_name, req_power, e
+                            );
                             reset_connection = true;
                         }
                     } else {
@@ -266,10 +279,19 @@ pub async fn run_solax_g3_driver(
                                 None
                             }
                         });
-                        let modbus_power_control = r_h_pwrctrl.ok().and_then(|regs| regs.first().copied());
-                        let power_limits_percent = r_h_pwrlim.ok().and_then(|regs| regs.first().copied());
+                        let modbus_power_control =
+                            r_h_pwrctrl.ok().and_then(|regs| regs.first().copied());
+                        let power_limits_percent =
+                            r_h_pwrlim.ok().and_then(|regs| regs.first().copied());
 
-                        read_data = Some((a, b, c, w_active_power, modbus_power_control, power_limits_percent));
+                        read_data = Some((
+                            a,
+                            b,
+                            c,
+                            w_active_power,
+                            modbus_power_control,
+                            power_limits_percent,
+                        ));
                     } else {
                         println!(
                             "Driver [{}] Modbus read fail: r_a={:?}",
@@ -298,7 +320,8 @@ pub async fn run_solax_g3_driver(
         match read_res {
             Ok((reg_a, reg_b, reg_c, wap, mpc, plp)) => {
                 if reg_a.len() >= 0x1D {
-                    let mut vals = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power, wap, mpc, plp);
+                    let mut vals =
+                        parse_hybrid_registers(&reg_a, &reg_b, &reg_c, req_power, wap, mpc, plp);
 
                     // Update global status for dashboard
                     let bat_cap = vals
@@ -322,12 +345,20 @@ pub async fn run_solax_g3_driver(
                         .and_then(|v| v.parse::<u32>().ok())
                         .unwrap_or(0);
 
-                    let inv_fault = vals.get("Inverter Fault").and_then(|v| v.parse::<u32>().ok());
-                    let chg_fault = vals.get("Charger Fault").and_then(|v| v.parse::<u32>().ok());
-                    let mgr_fault = vals.get("Manager Fault").and_then(|v| v.parse::<u32>().ok());
+                    let inv_fault = vals
+                        .get("Inverter Fault")
+                        .and_then(|v| v.parse::<u32>().ok());
+                    let chg_fault = vals
+                        .get("Charger Fault")
+                        .and_then(|v| v.parse::<u32>().ok());
+                    let mgr_fault = vals
+                        .get("Manager Fault")
+                        .and_then(|v| v.parse::<u32>().ok());
                     let bms_warn = vals.get("BMS Warning").and_then(|v| v.parse::<u32>().ok());
 
-                    let (is_err, err_text) = decipher_solax_v321_faults(run_mode, inv_fault, chg_fault, mgr_fault, bms_warn);
+                    let (is_err, err_text) = decipher_solax_v321_faults(
+                        run_mode, inv_fault, chg_fault, mgr_fault, bms_warn,
+                    );
 
                     if let Ok(mut status) = crate::web_server::get_system_status().lock() {
                         let inv = status.inverters.entry(inverter_name.clone()).or_default();
@@ -343,10 +374,12 @@ pub async fn run_solax_g3_driver(
                         inv.error_text = err_text;
                         inv.raw_metrics = vals.clone();
                         inv.driver_type = Some("Solax-G3-Modbus".to_string());
-                        inv.last_updated = Some(std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs());
+                        inv.last_updated = Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                        );
                     }
 
                     // Add power budget average calculation
@@ -609,10 +642,7 @@ fn parse_hybrid_registers(
             "Phase 1 Grid Current".to_string(),
             format!("{:.1}", i16_c(0x6B) as f64 / 10.0),
         );
-        vals.insert(
-            "Phase 1 Grid Power".to_string(),
-            i16_c(0x6C).to_string(),
-        );
+        vals.insert("Phase 1 Grid Power".to_string(), i16_c(0x6C).to_string());
         vals.insert(
             "Phase 2 Grid Voltage".to_string(),
             format!("{:.1}", u16_c(0x6E) as f64 / 10.0),
@@ -621,10 +651,7 @@ fn parse_hybrid_registers(
             "Phase 2 Grid Current".to_string(),
             format!("{:.1}", i16_c(0x6F) as f64 / 10.0),
         );
-        vals.insert(
-            "Phase 2 Grid Power".to_string(),
-            i16_c(0x70).to_string(),
-        );
+        vals.insert("Phase 2 Grid Power".to_string(), i16_c(0x70).to_string());
         vals.insert(
             "Phase 3 Grid Voltage".to_string(),
             format!("{:.1}", u16_c(0x72) as f64 / 10.0),
@@ -633,10 +660,7 @@ fn parse_hybrid_registers(
             "Phase 3 Grid Current".to_string(),
             format!("{:.1}", i16_c(0x73) as f64 / 10.0),
         );
-        vals.insert(
-            "Phase 3 Grid Power".to_string(),
-            i16_c(0x74).to_string(),
-        );
+        vals.insert("Phase 3 Grid Power".to_string(), i16_c(0x74).to_string());
     }
 
     if reg_c.len() >= 96 {
@@ -644,10 +668,22 @@ fn parse_hybrid_registers(
         let measured_power_x3_p1 = i16_c(0xBE);
         let measured_power_x3_p2 = i16_c(0xBF);
         let measured_power_x3_p3 = i16_c(0xC0);
-        vals.insert("Grid Power (P1)".to_string(), measured_power_x3_p1.to_string());
-        vals.insert("Grid Power (P2)".to_string(), measured_power_x3_p2.to_string());
-        vals.insert("Grid Power (P3)".to_string(), measured_power_x3_p3.to_string());
-        vals.insert("Battery Temperature (Hybrid)".to_string(), i16_c(0xC6).to_string());
+        vals.insert(
+            "Grid Power (P1)".to_string(),
+            measured_power_x3_p1.to_string(),
+        );
+        vals.insert(
+            "Grid Power (P2)".to_string(),
+            measured_power_x3_p2.to_string(),
+        );
+        vals.insert(
+            "Grid Power (P3)".to_string(),
+            measured_power_x3_p3.to_string(),
+        );
+        vals.insert(
+            "Battery Temperature (Hybrid)".to_string(),
+            i16_c(0xC6).to_string(),
+        );
         vals.insert("Inner Temp (Hybrid)".to_string(), i16_c(0xC8).to_string());
         vals.insert("Inverter Power (X3)".to_string(), i16_c(0xC5).to_string());
         vals.insert("Run Mode 2".to_string(), u16_c(0xBF).to_string());
@@ -659,7 +695,11 @@ fn parse_hybrid_registers(
             vals.insert("BMS Energy Throughput".to_string(), u32_c(0xCC).to_string());
         }
 
-        let power_budget = battery_power_c + measured_power + measured_power_x3_p1 + measured_power_x3_p2 + measured_power_x3_p3;
+        let power_budget = battery_power_c
+            + measured_power
+            + measured_power_x3_p1
+            + measured_power_x3_p2
+            + measured_power_x3_p3;
         vals.insert("Power Budget".to_string(), power_budget.to_string());
 
         let grid_power = i16_c(0xBC);
@@ -695,14 +735,38 @@ pub fn decipher_solax_v321_faults(
     if let Some(f) = inv_fault {
         if f > 0 {
             let labels = [
-                "HardwareTrip", "MainsLostFault", "GridVoltFault", "GridFreqFault",
-                "PvVoltFault", "BusVoltFault", "Bat Volt Fault", "Ac10Mins_Voltage_Fault",
-                "Dci_OCP_Fault", "Dcv_OCP_Fault", "SW_OCP_Fault", "RC_OCP_Fault",
-                "IsolationFault", "TemperatureOverFault", "BatConDir_Fault", "SampleConsistenceFault",
-                "EpsOverLoad", "EPS_OCP_Fault / OverLoad", "InputConfigFault", "FirmwareVerFault / EPSBatPowerLow",
-                "EPSBatPowerLow / Hybrid_IRelayFault", "PhaseAngleFault", "PLL_OverTime", "ParallelFault / BMS_Lost",
-                "Inter_Com_Fault", "Fan Fault", "HCT_AC_DeviceFault", "EepromFault",
-                "ResidualCurrent_DeviceFault", "EpsRelayFault", "GridRelayFault", "BatRelayFault / Other_DeviceFault",
+                "HardwareTrip",
+                "MainsLostFault",
+                "GridVoltFault",
+                "GridFreqFault",
+                "PvVoltFault",
+                "BusVoltFault",
+                "Bat Volt Fault",
+                "Ac10Mins_Voltage_Fault",
+                "Dci_OCP_Fault",
+                "Dcv_OCP_Fault",
+                "SW_OCP_Fault",
+                "RC_OCP_Fault",
+                "IsolationFault",
+                "TemperatureOverFault",
+                "BatConDir_Fault",
+                "SampleConsistenceFault",
+                "EpsOverLoad",
+                "EPS_OCP_Fault / OverLoad",
+                "InputConfigFault",
+                "FirmwareVerFault / EPSBatPowerLow",
+                "EPSBatPowerLow / Hybrid_IRelayFault",
+                "PhaseAngleFault",
+                "PLL_OverTime",
+                "ParallelFault / BMS_Lost",
+                "Inter_Com_Fault",
+                "Fan Fault",
+                "HCT_AC_DeviceFault",
+                "EepromFault",
+                "ResidualCurrent_DeviceFault",
+                "EpsRelayFault",
+                "GridRelayFault",
+                "BatRelayFault / Other_DeviceFault",
             ];
             for i in 0..32 {
                 if (f & (1u32 << i)) != 0 {
@@ -719,10 +783,22 @@ pub fn decipher_solax_v321_faults(
     if let Some(f) = chg_fault {
         if f > 0 {
             let labels = [
-                "Boost over current", "Battery over current", "Battery over volt", "Boost over volt",
-                "Charger BUS over volt", "Charger FAN Fault", "Charger EPS OverLoad", "Charger Temp High ERR",
-                "Charger Temp Lower ERR", "Battery awaken Failed", "Charger Current Sensor Boost Fault", "Charger Current Sensor Bat Fault",
-                "Charger EEPROM WR Fault", "Charger UnRecover FAN Fault", "Spi ERR", "Charger CanERR",
+                "Boost over current",
+                "Battery over current",
+                "Battery over volt",
+                "Boost over volt",
+                "Charger BUS over volt",
+                "Charger FAN Fault",
+                "Charger EPS OverLoad",
+                "Charger Temp High ERR",
+                "Charger Temp Lower ERR",
+                "Battery awaken Failed",
+                "Charger Current Sensor Boost Fault",
+                "Charger Current Sensor Bat Fault",
+                "Charger EEPROM WR Fault",
+                "Charger UnRecover FAN Fault",
+                "Spi ERR",
+                "Charger CanERR",
             ];
             for i in 0..16 {
                 if (f & (1u32 << i)) != 0 {
@@ -739,8 +815,11 @@ pub fn decipher_solax_v321_faults(
     if let Some(f) = mgr_fault {
         if f > 0 {
             let labels = [
-                "Internet IC (DM9000) Error", "Real_Time IC (RTC) Error", "EEPROM Error",
-                "Inter communication (CAN) Error", "CT or meter connection missing",
+                "Internet IC (DM9000) Error",
+                "Real_Time IC (RTC) Error",
+                "EEPROM Error",
+                "Inter communication (CAN) Error",
+                "CT or meter connection missing",
             ];
             for i in 0..5 {
                 if (f & (1u32 << i)) != 0 {
@@ -753,8 +832,14 @@ pub fn decipher_solax_v321_faults(
     if let Some(f) = bms_warning {
         if f > 0 {
             let labels = [
-                "BMS_Disconnected", "BMS_Alarm", "BMS_OverVoltage", "BMS_LowerVoltage",
-                "BMS_ChargeOverCurrent", "BMS_DishargeOverCurrent", "BMS_TemHighWarning", "BMS_TemLowWarning",
+                "BMS_Disconnected",
+                "BMS_Alarm",
+                "BMS_OverVoltage",
+                "BMS_LowerVoltage",
+                "BMS_ChargeOverCurrent",
+                "BMS_DishargeOverCurrent",
+                "BMS_TemHighWarning",
+                "BMS_TemLowWarning",
                 "BMS_CellImblance",
             ];
             for i in 0..9 {
@@ -795,13 +880,13 @@ mod tests {
 
         // 3-Phase Grid Telemetry (R=0x6A..0x6D, S=0x6E..0x71, T=0x72..0x75)
         reg_c[0x6A - 0x6A] = 2310; // Phase 1 Voltage = 231.0V
-        reg_c[0x6B - 0x6A] = 50;   // Phase 1 Current = 5.0A
+        reg_c[0x6B - 0x6A] = 50; // Phase 1 Current = 5.0A
         reg_c[0x6C - 0x6A] = 1155; // Phase 1 Power = 1155W
         reg_c[0x6E - 0x6A] = 2295; // Phase 2 Voltage = 229.5V
-        reg_c[0x6F - 0x6A] = 48;   // Phase 2 Current = 4.8A
+        reg_c[0x6F - 0x6A] = 48; // Phase 2 Current = 4.8A
         reg_c[0x70 - 0x6A] = 1100; // Phase 2 Power = 1100W
         reg_c[0x72 - 0x6A] = 2305; // Phase 3 Voltage = 230.5V
-        reg_c[0x73 - 0x6A] = 52;   // Phase 3 Current = 5.2A
+        reg_c[0x73 - 0x6A] = 52; // Phase 3 Current = 5.2A
         reg_c[0x74 - 0x6A] = 1198; // Phase 3 Power = 1198W
 
         let parsed = parse_hybrid_registers(&reg_a, &reg_b, &reg_c, 500, None, None, None);

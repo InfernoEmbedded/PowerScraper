@@ -1,7 +1,7 @@
-use crate::power_manager::DailyScenarioResult;
 use crate::config::EvolvedHeuristicConfig;
-use std::collections::{BTreeMap, HashMap};
+use crate::power_manager::DailyScenarioResult;
 use chrono::{DateTime, FixedOffset, NaiveTime};
+use std::collections::{BTreeMap, HashMap};
 
 #[derive(Clone, Debug)]
 pub struct SimRecord {
@@ -30,7 +30,8 @@ pub struct SimConfig {
     pub high_price_threshold: f64,
     pub periods: Vec<crate::config::BatteryControlPeriod>,
     pub evolved_heuristic: EvolvedHeuristicConfig,
-    pub evolved_heuristic_monthly: Option<std::collections::HashMap<String, EvolvedHeuristicConfig>>,
+    pub evolved_heuristic_monthly:
+        Option<std::collections::HashMap<String, EvolvedHeuristicConfig>>,
     pub min_charge_hysteresis: Option<u8>,
     pub auto_cost_margin: Option<f64>,
 }
@@ -110,12 +111,12 @@ pub fn is_time_in_window(now_time: NaiveTime, start: NaiveTime, end: NaiveTime) 
     }
 }
 
-pub mod no_battery;
-pub mod baseline;
-pub mod auto;
-pub mod smart_heuristic;
-pub mod lookahead_mpc;
 pub mod adaptive_peak;
-pub mod mpc_arbitrage;
+pub mod auto;
+pub mod baseline;
 pub mod evolved_heuristic;
+pub mod lookahead_mpc;
+pub mod mpc_arbitrage;
+pub mod no_battery;
+pub mod smart_heuristic;
 pub mod tuning;

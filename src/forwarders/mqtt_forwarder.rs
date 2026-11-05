@@ -4,7 +4,7 @@ use crate::mqtt_helper::create_mqtt_client;
 use rumqttc::{Event, Packet, QoS};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
 pub struct MQTTForwarder {
@@ -32,14 +32,21 @@ impl MQTTForwarder {
             .base_topic
             .clone()
             .unwrap_or_else(|| "sensors".to_string());
-        let (client, mut eventloop) = create_mqtt_client("powerscraper-mqtt-forwarder", &self.mqtt_config);
+        let (client, mut eventloop) =
+            create_mqtt_client("powerscraper-mqtt-forwarder", &self.mqtt_config);
 
         // Subscribe to command topic
         let command_wildcard = format!("{}/power_manager/command/#", base_topic);
         if let Err(e) = client.subscribe(&command_wildcard, QoS::AtLeastOnce).await {
-            println!("MQTT Forwarder failed to subscribe to {}: {}", command_wildcard, e);
+            println!(
+                "MQTT Forwarder failed to subscribe to {}: {}",
+                command_wildcard, e
+            );
         } else {
-            println!("MQTT Forwarder subscribed to command topic: {}", command_wildcard);
+            println!(
+                "MQTT Forwarder subscribed to command topic: {}",
+                command_wildcard
+            );
         }
 
         // Publish HA Discovery for known static metrics & entities
@@ -77,7 +84,8 @@ impl MQTTForwarder {
             }
         }
 
-        let announced_metrics: Arc<Mutex<HashSet<(String, String)>>> = Arc::new(Mutex::new(HashSet::new()));
+        let announced_metrics: Arc<Mutex<HashSet<(String, String)>>> =
+            Arc::new(Mutex::new(HashSet::new()));
         let mut currently_connected = false;
         let enqueue_wrapper = crate::mqtt_helper::MqttEnqueueWrapper::new();
         let _worker = enqueue_wrapper.spawn_worker(client.clone());

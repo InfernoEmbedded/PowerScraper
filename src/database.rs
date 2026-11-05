@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::power_manager::HistoryRecord;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use std::sync::{Mutex, LazyLock, mpsc as std_mpsc};
+use std::sync::{LazyLock, Mutex, mpsc as std_mpsc};
 
 pub type DbWriteTask = Box<dyn FnOnce(&mut rusqlite::Connection) -> Result<(), String> + Send>;
 
@@ -18,7 +18,8 @@ struct DbWriter {
 }
 
 static DB_WRITER: LazyLock<Mutex<Option<DbWriter>>> = LazyLock::new(|| Mutex::new(None));
-static PENDING_HISTORY: LazyLock<Mutex<Vec<HistoryRecord>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static PENDING_HISTORY: LazyLock<Mutex<Vec<HistoryRecord>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 static LAST_PRUNE: LazyLock<Mutex<Option<std::time::Instant>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Initializes the dedicated background SQLite writer thread for the given database path.
@@ -34,12 +35,18 @@ pub fn init_db_writer(db_path: String) -> Result<(), Box<dyn std::error::Error +
             let mut conn = match open_db_conn(&db_path_clone) {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("Background DB writer failed to open connection to {}: {}", db_path_clone, e);
+                    eprintln!(
+                        "Background DB writer failed to open connection to {}: {}",
+                        db_path_clone, e
+                    );
                     return;
                 }
             };
 
-            println!("Background DB writer thread running for '{}'", db_path_clone);
+            println!(
+                "Background DB writer thread running for '{}'",
+                db_path_clone
+            );
 
             while let Ok(msg) = rx.recv() {
                 let res = (msg.task)(&mut conn);
@@ -47,7 +54,10 @@ pub fn init_db_writer(db_path: String) -> Result<(), Box<dyn std::error::Error +
                     let _ = responder.send(res);
                 }
             }
-            println!("Background DB writer thread exiting for '{}'.", db_path_clone);
+            println!(
+                "Background DB writer thread exiting for '{}'.",
+                db_path_clone
+            );
         })?;
 
     if let Ok(mut lock) = DB_WRITER.lock() {
@@ -76,12 +86,14 @@ where
                 responder: Some(resp_tx),
             };
             if writer.tx.send(msg).is_ok() {
-                let is_in_tokio = std::panic::catch_unwind(|| {
-                    tokio::runtime::Handle::try_current().is_ok()
-                }).unwrap_or(false);
+                let is_in_tokio =
+                    std::panic::catch_unwind(|| tokio::runtime::Handle::try_current().is_ok())
+                        .unwrap_or(false);
 
                 let recv_res = if is_in_tokio {
-                    tokio::task::block_in_place(|| resp_rx.recv_timeout(std::time::Duration::from_secs(30)))
+                    tokio::task::block_in_place(|| {
+                        resp_rx.recv_timeout(std::time::Duration::from_secs(30))
+                    })
                 } else {
                     resp_rx.recv_timeout(std::time::Duration::from_secs(30))
                 };
@@ -151,12 +163,14 @@ pub fn flush_pending_history_to_db(db_path: &str, retention_days: Option<u32>) -
 /// Opens a database connection with Write-Ahead Logging (WAL) and a 5-second busy timeout.
 pub fn open_db_conn<P: AsRef<Path>>(db_path: P) -> rusqlite::Result<Connection> {
     let conn = Connection::open(db_path)?;
-    let _ = conn.execute_batch("
+    let _ = conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA busy_timeout = 5000;
         PRAGMA synchronous = NORMAL;
         PRAGMA journal_size_limit = 67108864;
-    ");
+    ",
+    );
     Ok(conn)
 }
 
@@ -166,15 +180,21 @@ pub fn open_db_conn_read_only<P: AsRef<Path>>(db_path: P) -> rusqlite::Result<Co
         db_path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    let _ = conn.execute_batch("
+    let _ = conn.execute_batch(
+        "
         PRAGMA busy_timeout = 5000;
         PRAGMA query_only = ON;
-    ");
+    ",
+    );
     Ok(conn)
 }
 
 /// Flattens a serde_json::Value tree into dot-separated hierarchical key-value pairs.
-pub fn flatten_json_value(prefix: &str, val: &serde_json::Value, map: &mut std::collections::HashMap<String, String>) {
+pub fn flatten_json_value(
+    prefix: &str,
+    val: &serde_json::Value,
+    map: &mut std::collections::HashMap<String, String>,
+) {
     match val {
         serde_json::Value::Object(obj) => {
             for (k, v) in obj {
@@ -217,13 +237,15 @@ pub fn unflatten_json_map(map: &std::collections::HashMap<String, String>) -> se
             } else {
                 if let serde_json::Value::Object(m) = curr {
                     if !m.contains_key(*part) || !m.get(*part).unwrap().is_object() {
-                        m.insert(part.to_string(), serde_json::Value::Object(serde_json::Map::new()));
+                        m.insert(
+                            part.to_string(),
+                            serde_json::Value::Object(serde_json::Map::new()),
+                        );
                     }
                     curr = m.get_mut(*part).unwrap();
                 }
             }
         }
-
     }
 
     root
@@ -271,7 +293,9 @@ pub fn load_config_from_db(db_path: &str) -> Result<Config, Box<dyn std::error::
 
             if let Some(ref json) = json_str {
                 if let Ok(config) = serde_json::from_str::<Config>(json) {
-                    println!("Migrating legacy settings table to hierarchical config_kv key-value store...");
+                    println!(
+                        "Migrating legacy settings table to hierarchical config_kv key-value store..."
+                    );
                     save_config_to_db(db_path, &config)?;
                     let _ = conn.execute_batch("DROP TABLE settings;");
                     return Ok(config);
@@ -282,7 +306,6 @@ pub fn load_config_from_db(db_path: &str) -> Result<Config, Box<dyn std::error::
             let _ = conn.execute_batch("DROP TABLE settings;");
         }
     }
-
 
     // Query all key-value entries from config_kv
     let mut stmt = conn.prepare("SELECT key, value FROM config_kv")?;
@@ -313,16 +336,22 @@ pub fn save_config_with_conn(conn: &mut Connection, config: &Config) -> Result<(
             value TEXT NOT NULL
         )",
         [],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
 
     let val = serde_json::to_value(config).map_err(|e| e.to_string())?;
     let mut map = std::collections::HashMap::new();
     flatten_json_value("", &val, &mut map);
 
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
     {
-        tx.execute("DELETE FROM config_kv", []).map_err(|e| e.to_string())?;
-        let mut stmt = tx.prepare("INSERT INTO config_kv (key, value) VALUES (?1, ?2)").map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM config_kv", [])
+            .map_err(|e| e.to_string())?;
+        let mut stmt = tx
+            .prepare("INSERT INTO config_kv (key, value) VALUES (?1, ?2)")
+            .map_err(|e| e.to_string())?;
         for (k, v) in &map {
             stmt.execute(params![k, v]).map_err(|e| e.to_string())?;
         }
@@ -340,13 +369,15 @@ pub fn save_config_with_conn(conn: &mut Connection, config: &Config) -> Result<(
 /// Saves application configuration into hierarchical key-value database (config_kv).
 pub fn save_config_to_db(db_path: &str, config: &Config) -> Result<(), Box<dyn std::error::Error>> {
     let config = config.clone();
-    execute_write_op(db_path, move |conn| {
-        save_config_with_conn(conn, &config)
-    }).map_err(|e| e.into())
+    execute_write_op(db_path, move |conn| save_config_with_conn(conn, &config))
+        .map_err(|e| e.into())
 }
 
 /// Async variant to save application configuration without blocking Tokio runtime worker threads.
-pub async fn save_config_to_db_async(db_path: &str, config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn save_config_to_db_async(
+    db_path: &str,
+    config: Config,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let writer_opt = DB_WRITER.lock().ok().and_then(|guard| guard.clone());
     if let Some(ref writer) = writer_opt {
         if writer.db_path == db_path {
@@ -370,10 +401,16 @@ pub async fn save_config_to_db_async(db_path: &str, config: Config) -> Result<()
     save_config_with_conn(&mut conn, &config).map_err(|e| e.into())
 }
 
-
 /// Helper to get or create a topic_id in the telemetry_topics dictionary table.
-pub fn get_or_create_topic_id(conn: &rusqlite::Connection, topic: &str) -> Result<i64, rusqlite::Error> {
-    if let Ok(id) = conn.query_row("SELECT id FROM telemetry_topics WHERE topic = ?1", params![topic], |r| r.get(0)) {
+pub fn get_or_create_topic_id(
+    conn: &rusqlite::Connection,
+    topic: &str,
+) -> Result<i64, rusqlite::Error> {
+    if let Ok(id) = conn.query_row(
+        "SELECT id FROM telemetry_topics WHERE topic = ?1",
+        params![topic],
+        |r| r.get(0),
+    ) {
         return Ok(id);
     }
     let (device, field) = if let Some(idx) = topic.find('/') {
@@ -385,7 +422,11 @@ pub fn get_or_create_topic_id(conn: &rusqlite::Connection, topic: &str) -> Resul
         "INSERT OR IGNORE INTO telemetry_topics (topic, device, field) VALUES (?1, ?2, ?3)",
         params![topic, device, field],
     )?;
-    conn.query_row("SELECT id FROM telemetry_topics WHERE topic = ?1", params![topic], |r| r.get(0))
+    conn.query_row(
+        "SELECT id FROM telemetry_topics WHERE topic = ?1",
+        params![topic],
+        |r| r.get(0),
+    )
 }
 
 /// Initializes database tables and indices for telemetry history and solar forecasts.
@@ -447,8 +488,14 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
             [],
         )?;
         tx.execute("DROP TABLE telemetry_history", [])?;
-        tx.execute("ALTER TABLE telemetry_history_new RENAME TO telemetry_history", [])?;
-        tx.execute("CREATE INDEX IF NOT EXISTS idx_telemetry_history_ts ON telemetry_history (timestamp)", [])?;
+        tx.execute(
+            "ALTER TABLE telemetry_history_new RENAME TO telemetry_history",
+            [],
+        )?;
+        tx.execute(
+            "CREATE INDEX IF NOT EXISTS idx_telemetry_history_ts ON telemetry_history (timestamp)",
+            [],
+        )?;
         tx.commit()?;
         let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM;");
     } else {
@@ -499,7 +546,11 @@ pub fn init_history_db(db_path: &str) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-pub fn save_battery_energy_state_with_conn(conn: &mut Connection, energy_kwh: f64, total_cost_cents: f64) -> Result<(), String> {
+pub fn save_battery_energy_state_with_conn(
+    conn: &mut Connection,
+    energy_kwh: f64,
+    total_cost_cents: f64,
+) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -513,10 +564,15 @@ pub fn save_battery_energy_state_with_conn(conn: &mut Connection, energy_kwh: f6
 }
 
 /// Saves stored battery energy and total cost tracking state to database.
-pub fn save_battery_energy_state(db_path: &str, energy_kwh: f64, total_cost_cents: f64) -> Result<(), rusqlite::Error> {
+pub fn save_battery_energy_state(
+    db_path: &str,
+    energy_kwh: f64,
+    total_cost_cents: f64,
+) -> Result<(), rusqlite::Error> {
     execute_write_op(db_path, move |conn| {
         save_battery_energy_state_with_conn(conn, energy_kwh, total_cost_cents)
-    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
+    })
+    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 /// Loads the latest persisted stored battery energy and total cost tracking state from database.
@@ -530,7 +586,11 @@ pub fn load_battery_energy_state(db_path: &str) -> Option<(f64, f64)> {
     .ok()
 }
 
-pub fn save_inferred_battery_capacity_with_conn(conn: &mut Connection, inverter_name: &str, capacity_kwh: f64) -> Result<(), String> {
+pub fn save_inferred_battery_capacity_with_conn(
+    conn: &mut Connection,
+    inverter_name: &str,
+    capacity_kwh: f64,
+) -> Result<(), String> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -543,11 +603,16 @@ pub fn save_inferred_battery_capacity_with_conn(conn: &mut Connection, inverter_
 }
 
 /// Saves an inferred battery capacity reading for a specific inverter.
-pub fn save_inferred_battery_capacity(db_path: &str, inverter_name: &str, capacity_kwh: f64) -> Result<(), rusqlite::Error> {
+pub fn save_inferred_battery_capacity(
+    db_path: &str,
+    inverter_name: &str,
+    capacity_kwh: f64,
+) -> Result<(), rusqlite::Error> {
     let inverter_name = inverter_name.to_string();
     execute_write_op(db_path, move |conn| {
         save_inferred_battery_capacity_with_conn(conn, &inverter_name, capacity_kwh)
-    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
+    })
+    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 /// Retrieves the latest cached inferred battery capacity for an inverter.
@@ -562,14 +627,15 @@ pub fn get_latest_inferred_battery_capacity(db_path: &str, inverter_name: &str) 
 }
 
 /// Retrieves historical inferred battery capacity readings for degradation tracking over time.
-pub fn get_inferred_battery_capacity_history(db_path: &str, inverter_name: &str) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
+pub fn get_inferred_battery_capacity_history(
+    db_path: &str,
+    inverter_name: &str,
+) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
     let conn = open_db_conn_read_only(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT timestamp, capacity_kwh FROM inferred_battery_capacity WHERE inverter_name = ?1 ORDER BY timestamp ASC, id ASC",
     )?;
-    let rows = stmt.query_map(params![inverter_name], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    })?;
+    let rows = stmt.query_map(params![inverter_name], |row| Ok((row.get(0)?, row.get(1)?)))?;
 
     let mut result = Vec::new();
     for r in rows {
@@ -586,7 +652,9 @@ pub fn flush_history_with_conn(
     if records.is_empty() {
         return Ok(());
     }
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
     {
         let mut stmt = match tx.prepare_cached(
             "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
@@ -615,14 +683,19 @@ pub fn flush_history_with_conn(
     if let Some(days) = retention_days {
         let mut should_prune = false;
         if let Ok(mut lock) = LAST_PRUNE.lock() {
-            if lock.map_or(true, |t| t.elapsed() >= std::time::Duration::from_secs(24 * 3600)) {
+            if lock.map_or(true, |t| {
+                t.elapsed() >= std::time::Duration::from_secs(24 * 3600)
+            }) {
                 *lock = Some(std::time::Instant::now());
                 should_prune = true;
             }
         }
         if should_prune {
             let cutoff = chrono::Utc::now().timestamp() - (days as i64 * 24 * 3600);
-            if let Err(e) = conn.execute("DELETE FROM telemetry_history WHERE timestamp < ?1", params![cutoff]) {
+            if let Err(e) = conn.execute(
+                "DELETE FROM telemetry_history WHERE timestamp < ?1",
+                params![cutoff],
+            ) {
                 eprintln!("Failed to prune old telemetry records: {}", e);
             }
         }
@@ -637,7 +710,11 @@ pub fn flush_history_with_conn(
 }
 
 /// Flushes a batch of in-memory telemetry records to the history table and prunes old records.
-pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, retention_days: Option<u32>) {
+pub fn flush_history_to_db(
+    db_path: &str,
+    buffer: &mut Vec<HistoryRecord>,
+    retention_days: Option<u32>,
+) {
     if buffer.is_empty() {
         return;
     }
@@ -653,16 +730,18 @@ pub fn flush_history_to_db(db_path: &str, buffer: &mut Vec<HistoryRecord>, reten
 }
 
 /// Queries recent price telemetry values.
-pub fn get_price_history(db_path: &str, topic: &str, since_timestamp: i64) -> Result<Vec<f64>, rusqlite::Error> {
+pub fn get_price_history(
+    db_path: &str,
+    topic: &str,
+    since_timestamp: i64,
+) -> Result<Vec<f64>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT h.value FROM telemetry_history h
          JOIN telemetry_topics t ON h.topic_id = t.id
-         WHERE t.topic = ?1 AND h.timestamp >= ?2 ORDER BY h.timestamp ASC"
+         WHERE t.topic = ?1 AND h.timestamp >= ?2 ORDER BY h.timestamp ASC",
     )?;
-    let rows = stmt.query_map(params![topic, since_timestamp], |row| {
-        row.get(0)
-    })?;
+    let rows = stmt.query_map(params![topic, since_timestamp], |row| row.get(0))?;
     let mut values = Vec::new();
     for val in rows {
         if let Ok(v) = val {
@@ -682,8 +761,9 @@ pub fn check_telemetry_exists(db_path: &str, topic: &str, since_timestamp: i64) 
                 WHERE t.topic = ?1 AND h.timestamp >= ?2
              )",
             params![topic, since_timestamp],
-            |row| row.get(0)
-        ).unwrap_or(false)
+            |row| row.get(0),
+        )
+        .unwrap_or(false)
     } else {
         false
     }
@@ -697,20 +777,26 @@ pub fn get_avg_telemetry_value(db_path: &str, topic: &str, since_timestamp: i64)
              JOIN telemetry_topics t ON h.topic_id = t.id
              WHERE t.topic = ?1 AND h.timestamp >= ?2",
             params![topic, since_timestamp],
-            |row| row.get(0)
-        ).ok().flatten()
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten()
     } else {
         None
     }
 }
 
 /// Queries telemetry records ordered chronologically.
-pub fn get_telemetry_history(db_path: &str, topic: &str, since_timestamp: i64) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
+pub fn get_telemetry_history(
+    db_path: &str,
+    topic: &str,
+    since_timestamp: i64,
+) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT h.timestamp, h.value FROM telemetry_history h
          JOIN telemetry_topics t ON h.topic_id = t.id
-         WHERE t.topic = ?1 AND h.timestamp >= ?2 ORDER BY h.timestamp ASC"
+         WHERE t.topic = ?1 AND h.timestamp >= ?2 ORDER BY h.timestamp ASC",
     )?;
     let rows = stmt.query_map(params![topic, since_timestamp], |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, f64>(1)?))
@@ -725,15 +811,22 @@ pub fn get_telemetry_history(db_path: &str, topic: &str, since_timestamp: i64) -
 }
 
 /// Queries all telemetry records since a given timestamp.
-pub fn get_all_telemetry_since(db_path: &str, since_timestamp: i64) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
+pub fn get_all_telemetry_since(
+    db_path: &str,
+    since_timestamp: i64,
+) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT h.timestamp, t.topic, h.value FROM telemetry_history h
          JOIN telemetry_topics t ON h.topic_id = t.id
-         WHERE h.timestamp >= ?1 ORDER BY h.timestamp ASC"
+         WHERE h.timestamp >= ?1 ORDER BY h.timestamp ASC",
     )?;
     let rows = stmt.query_map(params![since_timestamp], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
     })?;
     let mut records = Vec::new();
     for r in rows {
@@ -745,15 +838,23 @@ pub fn get_all_telemetry_since(db_path: &str, since_timestamp: i64) -> Result<Ve
 }
 
 /// Queries all telemetry records in a specific window range.
-pub fn get_all_telemetry_in_range(db_path: &str, start_ts: i64, end_ts: i64) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
+pub fn get_all_telemetry_in_range(
+    db_path: &str,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
     let conn = open_db_conn(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT h.timestamp, t.topic, h.value FROM telemetry_history h
          JOIN telemetry_topics t ON h.topic_id = t.id
-         WHERE h.timestamp >= ?1 AND h.timestamp <= ?2 ORDER BY h.timestamp ASC"
+         WHERE h.timestamp >= ?1 AND h.timestamp <= ?2 ORDER BY h.timestamp ASC",
     )?;
     let rows = stmt.query_map(params![start_ts, end_ts], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
     })?;
     let mut records = Vec::new();
     for r in rows {
@@ -776,7 +877,8 @@ pub fn decimate_telemetry_records(
     }
 
     // Group records by topic
-    let mut topic_map: std::collections::HashMap<String, Vec<(i64, f64)>> = std::collections::HashMap::new();
+    let mut topic_map: std::collections::HashMap<String, Vec<(i64, f64)>> =
+        std::collections::HashMap::new();
     for (ts, topic, val) in records {
         topic_map.entry(topic).or_default().push((ts, val));
     }
@@ -795,7 +897,8 @@ pub fn decimate_telemetry_records(
         // Divide into buckets where each bucket outputs at most 2 points (min and max)
         let num_buckets = (max_pixels / 2).max(1);
         let bucket_width = duration / (num_buckets as f64);
-        let mut buckets: std::collections::BTreeMap<i64, Vec<(i64, f64)>> = std::collections::BTreeMap::new();
+        let mut buckets: std::collections::BTreeMap<i64, Vec<(i64, f64)>> =
+            std::collections::BTreeMap::new();
 
         for (ts, val) in points {
             let bucket_idx = (((ts - start_ts) as f64) / bucket_width).floor() as i64;
@@ -847,13 +950,17 @@ pub fn get_telemetry_in_range_filtered(
     if let Some(topic_list) = topics {
         if !topic_list.is_empty() {
             let placeholders = vec!["?"; topic_list.len()].join(",");
-            let sql = format!("SELECT id, topic FROM telemetry_topics WHERE topic IN ({})", placeholders);
+            let sql = format!(
+                "SELECT id, topic FROM telemetry_topics WHERE topic IN ({})",
+                placeholders
+            );
             let mut stmt = conn.prepare(&sql)?;
             let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
             for t in topic_list {
                 params_vec.push(Box::new(t.clone()));
             }
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params_vec.iter().map(|p| p.as_ref()).collect();
             let rows = stmt.query_map(params_refs.as_slice(), |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })?;
@@ -867,19 +974,34 @@ pub fn get_telemetry_in_range_filtered(
 
     if topic_map.is_empty() && (topics.is_none() || topics.map_or(false, |t| t.is_empty())) {
         let default_fields = [
-            "PV1 Power", "PV2 Power", "PV Power", "Solar Power",
-            "Battery Capacity", "Battery SOC", "SOC", "Battery Power",
-            "Total active power", "Grid Power", "Grid Power (P1)", "Grid Power (P2)", "Grid Power (P3)", "Measured Power",
-            "Usage"
+            "PV1 Power",
+            "PV2 Power",
+            "PV Power",
+            "Solar Power",
+            "Battery Capacity",
+            "Battery SOC",
+            "SOC",
+            "Battery Power",
+            "Total active power",
+            "Grid Power",
+            "Grid Power (P1)",
+            "Grid Power (P2)",
+            "Grid Power (P3)",
+            "Measured Power",
+            "Usage",
         ];
         let placeholders = vec!["?"; default_fields.len()].join(",");
-        let sql = format!("SELECT id, topic FROM telemetry_topics WHERE field IN ({})", placeholders);
+        let sql = format!(
+            "SELECT id, topic FROM telemetry_topics WHERE field IN ({})",
+            placeholders
+        );
         let mut stmt = conn.prepare(&sql)?;
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         for f in default_fields {
             params_vec.push(Box::new(f));
         }
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -913,7 +1035,11 @@ pub fn get_telemetry_in_range_filtered(
 
     let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
     let rows = stmt.query_map(params_refs.as_slice(), |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?, row.get::<_, f64>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
     })?;
 
     let mut records = Vec::new();
@@ -945,13 +1071,17 @@ pub fn get_decimated_telemetry_in_range_profiled(
     if let Some(topic_list) = topics {
         if !topic_list.is_empty() {
             let placeholders = vec!["?"; topic_list.len()].join(",");
-            let sql = format!("SELECT id, topic FROM telemetry_topics WHERE topic IN ({})", placeholders);
+            let sql = format!(
+                "SELECT id, topic FROM telemetry_topics WHERE topic IN ({})",
+                placeholders
+            );
             let mut stmt = conn.prepare(&sql)?;
             let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
             for t in topic_list {
                 params_vec.push(Box::new(t.clone()));
             }
-            let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+            let params_refs: Vec<&dyn rusqlite::ToSql> =
+                params_vec.iter().map(|p| p.as_ref()).collect();
             let rows = stmt.query_map(params_refs.as_slice(), |row| {
                 Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
             })?;
@@ -965,19 +1095,34 @@ pub fn get_decimated_telemetry_in_range_profiled(
 
     if topic_map.is_empty() && (topics.is_none() || topics.map_or(false, |t| t.is_empty())) {
         let default_fields = [
-            "PV1 Power", "PV2 Power", "PV Power", "Solar Power",
-            "Battery Capacity", "Battery SOC", "SOC", "Battery Power",
-            "Total active power", "Grid Power", "Grid Power (P1)", "Grid Power (P2)", "Grid Power (P3)", "Measured Power",
-            "Usage"
+            "PV1 Power",
+            "PV2 Power",
+            "PV Power",
+            "Solar Power",
+            "Battery Capacity",
+            "Battery SOC",
+            "SOC",
+            "Battery Power",
+            "Total active power",
+            "Grid Power",
+            "Grid Power (P1)",
+            "Grid Power (P2)",
+            "Grid Power (P3)",
+            "Measured Power",
+            "Usage",
         ];
         let placeholders = vec!["?"; default_fields.len()].join(",");
-        let sql = format!("SELECT id, topic FROM telemetry_topics WHERE field IN ({})", placeholders);
+        let sql = format!(
+            "SELECT id, topic FROM telemetry_topics WHERE field IN ({})",
+            placeholders
+        );
         let mut stmt = conn.prepare(&sql)?;
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
         for f in default_fields {
             params_vec.push(Box::new(f));
         }
-        let params_refs: Vec<&dyn rusqlite::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
         let rows = stmt.query_map(params_refs.as_slice(), |row| {
             Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -1080,7 +1225,8 @@ pub fn get_decimated_telemetry_in_range(
     end_ts: i64,
     max_pixels: usize,
 ) -> Result<Vec<(i64, String, f64)>, rusqlite::Error> {
-    let (decimated, _, _, _) = get_decimated_telemetry_in_range_profiled(db_path, start_ts, end_ts, max_pixels, None)?;
+    let (decimated, _, _, _) =
+        get_decimated_telemetry_in_range_profiled(db_path, start_ts, end_ts, max_pixels, None)?;
     Ok(decimated)
 }
 
@@ -1092,27 +1238,36 @@ pub fn get_monthly_peak_draw(db_path: &str, topic: &str, since_timestamp: i64) -
              JOIN telemetry_topics t ON h.topic_id = t.id
              WHERE t.topic = ?1 AND h.timestamp >= ?2",
             params![topic, since_timestamp],
-            |row| row.get::<_, f64>(0)
-        ).unwrap_or(0.0)
+            |row| row.get::<_, f64>(0),
+        )
+        .unwrap_or(0.0)
     } else {
         0.0
     }
 }
 
-pub fn delete_and_save_solar_forecast_with_conn(conn: &mut Connection, predictions: &[(i64, f64)]) -> Result<(), String> {
+pub fn delete_and_save_solar_forecast_with_conn(
+    conn: &mut Connection,
+    predictions: &[(i64, f64)],
+) -> Result<(), String> {
     conn.execute(
         "CREATE TABLE IF NOT EXISTS solar_forecast (
             timestamp INTEGER PRIMARY KEY,
             predicted_solar_w REAL NOT NULL
         )",
         [],
-    ).map_err(|e| e.to_string())?;
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
-    tx.execute("DELETE FROM solar_forecast", []).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM solar_forecast", [])
+        .map_err(|e| e.to_string())?;
     {
         let mut stmt = tx.prepare("INSERT OR REPLACE INTO solar_forecast (timestamp, predicted_solar_w) VALUES (?1, ?2)").map_err(|e| e.to_string())?;
         for (ts, predicted_w) in predictions {
-            stmt.execute(params![ts, *predicted_w]).map_err(|e| e.to_string())?;
+            stmt.execute(params![ts, *predicted_w])
+                .map_err(|e| e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -1120,15 +1275,23 @@ pub fn delete_and_save_solar_forecast_with_conn(conn: &mut Connection, predictio
 }
 
 /// Overwrites the solar forecast table with a new forecast dataset in a transaction.
-pub fn delete_and_save_solar_forecast(db_path: &str, predictions: &[(i64, f64)]) -> Result<(), rusqlite::Error> {
+pub fn delete_and_save_solar_forecast(
+    db_path: &str,
+    predictions: &[(i64, f64)],
+) -> Result<(), rusqlite::Error> {
     let predictions = predictions.to_vec();
     execute_write_op(db_path, move |conn| {
         delete_and_save_solar_forecast_with_conn(conn, &predictions)
-    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
+    })
+    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 /// Loads solar forecast predictions within a time range.
-pub fn load_solar_forecast_range(db_path: &str, start_ts: i64, end_ts: i64) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
+pub fn load_solar_forecast_range(
+    db_path: &str,
+    start_ts: i64,
+    end_ts: i64,
+) -> Result<Vec<(i64, f64)>, rusqlite::Error> {
     let conn = open_db_conn_read_only(db_path)?;
     let mut stmt = conn.prepare(
         "SELECT timestamp, predicted_solar_w FROM solar_forecast WHERE timestamp >= ?1 AND timestamp <= ?2 ORDER BY timestamp ASC"
@@ -1158,10 +1321,14 @@ pub fn get_telemetry_history_multiple_topics(
          FROM telemetry_history h
          JOIN telemetry_topics t ON h.topic_id = t.id
          WHERE (t.topic = ?1 OR t.topic = ?2) AND h.timestamp >= ?3 
-         ORDER BY h.timestamp ASC"
+         ORDER BY h.timestamp ASC",
     )?;
     let rows = stmt.query_map(params![topic1, topic2, since_timestamp], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?, row.get::<_, f64>(2)?))
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, f64>(2)?,
+        ))
     })?;
     let mut records = Vec::new();
     for r in rows {
@@ -1176,14 +1343,17 @@ pub fn insert_telemetry_history_batch_with_conn(
     conn: &mut Connection,
     records: &[(i64, String, f64)],
 ) -> Result<(), String> {
-    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(|e| e.to_string())?;
+    let tx = conn
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(|e| e.to_string())?;
     {
         for (ts, topic, val) in records {
             let topic_id = get_or_create_topic_id(&tx, topic).map_err(|e| e.to_string())?;
             let mut stmt = tx.prepare_cached(
                 "INSERT OR REPLACE INTO telemetry_history (timestamp, topic_id, value) VALUES (?1, ?2, ?3)"
             ).map_err(|e| e.to_string())?;
-            stmt.execute(params![*ts, topic_id, *val]).map_err(|e| e.to_string())?;
+            stmt.execute(params![*ts, topic_id, *val])
+                .map_err(|e| e.to_string())?;
         }
     }
     tx.commit().map_err(|e| e.to_string())?;
@@ -1198,7 +1368,8 @@ pub fn insert_telemetry_history_batch(
     let records = records.to_vec();
     execute_write_op(db_path, move |conn| {
         insert_telemetry_history_batch_with_conn(conn, &records)
-    }).map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
+    })
+    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(e.into()))
 }
 
 #[cfg(test)]
@@ -1209,7 +1380,7 @@ mod tests {
     fn test_database_init_errors() {
         // Using a directory path causes SQLite to fail with SQLITE_CANTOPEN/SQLITE_IOERR
         let invalid_path = "./tests/";
-        
+
         let res_cfg = save_config_to_db(invalid_path, &Config::default_empty());
         assert!(res_cfg.is_err());
 
@@ -1219,13 +1390,11 @@ mod tests {
 
     #[test]
     fn test_flush_history_errors() {
-        let mut buffer = vec![
-            HistoryRecord {
-                timestamp: 1000,
-                topic: "test/topic".to_string(),
-                value: 50.5,
-            }
-        ];
+        let mut buffer = vec![HistoryRecord {
+            timestamp: 1000,
+            topic: "test/topic".to_string(),
+            value: 50.5,
+        }];
         // Directory path will fail to open or start transaction
         flush_history_to_db("./tests/", &mut buffer, Some(30));
         // Buffer should remain unflushed because database write failed
@@ -1245,12 +1414,16 @@ mod tests {
         let db_path = "./test_hierarchical_config_db.db";
         let _ = std::fs::remove_file(db_path);
 
-        let cfg = Config::load_from_file("tests/test_config.toml").expect("failed to load test config file");
+        let cfg = Config::load_from_file("tests/test_config.toml")
+            .expect("failed to load test config file");
         save_config_to_db(db_path, &cfg).expect("failed to save config to db");
 
         let loaded = load_config_from_db(db_path).expect("failed to load config from db");
         assert_eq!(loaded.solax_modbus.is_some(), cfg.solax_modbus.is_some());
-        assert_eq!(loaded.solax_g3_modbus.is_some(), cfg.solax_g3_modbus.is_some());
+        assert_eq!(
+            loaded.solax_g3_modbus.is_some(),
+            cfg.solax_g3_modbus.is_some()
+        );
         assert_eq!(loaded.mqtt.is_some(), cfg.mqtt.is_some());
 
         let _ = std::fs::remove_file(db_path);
@@ -1274,14 +1447,14 @@ mod tests {
         conn.execute(
             "INSERT INTO settings (id, config_json) VALUES (1, ?1)",
             params![json_str],
-        ).unwrap();
-
-
+        )
+        .unwrap();
 
         drop(conn);
 
         // load_config_from_db should detect settings table, migrate to config_kv, and drop settings
-        let loaded = load_config_from_db(db_path).expect("failed to load and migrate legacy settings");
+        let loaded =
+            load_config_from_db(db_path).expect("failed to load and migrate legacy settings");
         assert_eq!(loaded.solax_g3_modbus.is_some(), true);
 
         // Verify settings table was dropped and config_kv table contains rows
@@ -1337,7 +1510,10 @@ mod tests {
         init_history_db(db_path).unwrap();
 
         // Initial check: empty
-        assert_eq!(get_latest_inferred_battery_capacity(db_path, "solax-1"), None);
+        assert_eq!(
+            get_latest_inferred_battery_capacity(db_path, "solax-1"),
+            None
+        );
 
         // Save two readings
         save_inferred_battery_capacity(db_path, "solax-1", 13.82).unwrap();
@@ -1481,4 +1657,3 @@ mod tests {
         let _ = std::fs::remove_file(db_path);
     }
 }
-

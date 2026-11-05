@@ -1,4 +1,4 @@
-use super::{SimRecord, SimConfig, SimTracker, is_time_in_window, calculate_demand_charges_total};
+use super::{SimConfig, SimRecord, SimTracker, calculate_demand_charges_total, is_time_in_window};
 use crate::power_manager::SimulationResultModel;
 use chrono::NaiveTime;
 use std::collections::HashMap;
@@ -48,39 +48,60 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             }
         }
 
-        let min_pct = active_period.map(|p| p.min_charge.max(config.min_charge_pct)).unwrap_or(config.min_charge_pct) as f64;
+        let min_pct = active_period
+            .map(|p| p.min_charge.max(config.min_charge_pct))
+            .unwrap_or(config.min_charge_pct) as f64;
         let grid_charge = active_period.map(|p| p.grid_charge).unwrap_or(false);
         let prefer_battery = active_period.map(|p| p.prefer_battery).unwrap_or(false);
         let force_discharge = active_period.and_then(|p| p.force_discharge);
 
         let bat_pct = (bat_soc / config.battery_capacity_kwh) * 100.0;
-        let hyst = active_period.and_then(|p| p.min_charge_hysteresis).or(config.min_charge_hysteresis).unwrap_or(3) as f64;
+        let hyst = active_period
+            .and_then(|p| p.min_charge_hysteresis)
+            .or(config.min_charge_hysteresis)
+            .unwrap_or(3) as f64;
         is_low_capacity = if is_low_capacity {
             bat_pct < min_pct + hyst
         } else {
             bat_pct < min_pct
         };
 
-        let is_high_price_discharge = config.high_price_discharge && r.export_price_cents >= config.high_price_threshold;
+        let is_high_price_discharge =
+            config.high_price_discharge && r.export_price_cents >= config.high_price_threshold;
 
         if is_high_price_discharge {
             let base_min_pct = config.min_charge_pct as f64;
-            let max_avail_discharge = ((bat_soc - (base_min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+            let max_avail_discharge =
+                ((bat_soc - (base_min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95)
+                    / r.duration_hours
+                    * 1000.0;
             discharge_w = config.max_power_w.min(max_avail_discharge);
         } else if let Some(fd_w) = force_discharge {
             if fd_w > 0.0 {
-                let max_avail_discharge = ((bat_soc - (min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                let max_avail_discharge =
+                    ((bat_soc - (min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95)
+                        / r.duration_hours
+                        * 1000.0;
                 discharge_w = fd_w.min(config.max_power_w).min(max_avail_discharge);
             } else if fd_w < 0.0 {
-                let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
+                let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0)
+                    / 0.95)
+                    / r.duration_hours
+                    * 1000.0;
                 charge_w = (-fd_w).min(config.max_power_w).min(max_avail_charge);
             }
         } else if grid_charge && is_low_capacity {
-            let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
+            let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0)
+                / 0.95)
+                / r.duration_hours
+                * 1000.0;
             charge_w = config.max_power_w.min(max_avail_charge);
         } else if prefer_battery && is_low_capacity {
             if net_w < 0.0 {
-                let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
+                let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0)
+                    / 0.95)
+                    / r.duration_hours
+                    * 1000.0;
                 charge_w = (-net_w).min(config.max_power_w).min(max_avail_charge);
             }
         } else {
@@ -90,11 +111,18 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
                     None => true,
                 };
                 if allow_discharge {
-                    let max_avail_discharge = ((bat_soc - (min_pct / 100.0) * config.battery_capacity_kwh).max(0.0) * 0.95) / r.duration_hours * 1000.0;
+                    let max_avail_discharge =
+                        ((bat_soc - (min_pct / 100.0) * config.battery_capacity_kwh).max(0.0)
+                            * 0.95)
+                            / r.duration_hours
+                            * 1000.0;
                     discharge_w = net_w.min(config.max_power_w).min(max_avail_discharge);
                 }
             } else {
-                let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0) / 0.95) / r.duration_hours * 1000.0;
+                let max_avail_charge = (((config.battery_capacity_kwh * 0.95) - bat_soc).max(0.0)
+                    / 0.95)
+                    / r.duration_hours
+                    * 1000.0;
                 charge_w = (-net_w).min(config.max_power_w).min(max_avail_charge);
             }
         }
@@ -143,7 +171,9 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         );
 
         if net_grid_w > 0.0 {
-            if config.demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+            if config.demand_window.map_or(false, |(start, end)| {
+                is_time_in_window(now_time, start, end)
+            }) {
                 let peak = auto_peaks.entry(month_key).or_insert(0.0);
                 if net_grid_w > *peak {
                     *peak = net_grid_w;
@@ -169,7 +199,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
 mod tests {
     use super::*;
     use crate::config::BatteryControlPeriod;
-    use chrono::{TimeZone, FixedOffset};
+    use chrono::{FixedOffset, TimeZone};
 
     #[test]
     fn test_auto_grid_charge_period() {
@@ -383,18 +413,16 @@ mod tests {
     fn test_auto_simulation_solar_and_grid_cost_apportionment() {
         let dt1 = chrono::DateTime::parse_from_rfc3339("2026-08-10T12:00:00+10:00").unwrap();
 
-        let records = vec![
-            SimRecord {
-                timestamp: dt1.timestamp(),
-                dt_local: dt1,
-                solar_power_w: 3000.0,
-                load_power_w: 1000.0,
-                import_price_cents: 30.0,
-                export_price_cents: 10.0,
-                duration_hours: 1.0,
-                day_solar_kwh: 3.0,
-            },
-        ];
+        let records = vec![SimRecord {
+            timestamp: dt1.timestamp(),
+            dt_local: dt1,
+            solar_power_w: 3000.0,
+            load_power_w: 1000.0,
+            import_price_cents: 30.0,
+            export_price_cents: 10.0,
+            duration_hours: 1.0,
+            day_solar_kwh: 3.0,
+        }];
 
         let config = SimConfig {
             battery_capacity_kwh: 10.0,
@@ -433,18 +461,16 @@ mod tests {
     fn test_auto_simulation_high_price_discharge_below_period_min_charge() {
         let dt1 = chrono::DateTime::parse_from_rfc3339("2026-08-10T15:30:00+10:00").unwrap();
 
-        let records = vec![
-            SimRecord {
-                timestamp: dt1.timestamp(),
-                dt_local: dt1,
-                solar_power_w: 0.0,
-                load_power_w: 0.0,
-                import_price_cents: 95.0,
-                export_price_cents: 80.0,
-                duration_hours: 1.0,
-                day_solar_kwh: 0.0,
-            },
-        ];
+        let records = vec![SimRecord {
+            timestamp: dt1.timestamp(),
+            dt_local: dt1,
+            solar_power_w: 0.0,
+            load_power_w: 0.0,
+            import_price_cents: 95.0,
+            export_price_cents: 80.0,
+            duration_hours: 1.0,
+            day_solar_kwh: 0.0,
+        }];
 
         let config = SimConfig {
             battery_capacity_kwh: 10.0,

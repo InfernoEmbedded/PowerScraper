@@ -92,7 +92,10 @@ pub async fn run_mqtt_meter_driver(
                                 };
 
                                 if let Some(metric_name) = target_metric {
-                                    if let Ok(num) = payload.parse::<f64>() {
+                                    if let Ok(mut num) = payload.parse::<f64>() {
+                                        if config.invert.unwrap_or(false) {
+                                            num = -num;
+                                        }
                                         let mut metrics = std::collections::HashMap::new();
                                         metrics.insert(metric_name.to_string(), num);
                                         let batch = crate::dispatch_manager::TelemetryBatch {
@@ -101,29 +104,35 @@ pub async fn run_mqtt_meter_driver(
                                             metrics,
                                         };
                                         let _ = tx_telemetry.try_send(batch);
-                                    }
 
-                                    if !discovered_metrics.contains(metric_name) {
-                                        crate::mqtt_helper::publish_home_assistant_discovery(
-                                            &mqtt_client,
-                                            &mqtt_config,
-                                            &meter_name,
-                                            metric_name,
-                                            false,
-                                        )
-                                        .await;
-                                        discovered_metrics.insert(metric_name.to_string());
-                                    }
+                                        if !discovered_metrics.contains(metric_name) {
+                                            crate::mqtt_helper::publish_home_assistant_discovery(
+                                                &mqtt_client,
+                                                &mqtt_config,
+                                                &meter_name,
+                                                metric_name,
+                                                false,
+                                            )
+                                            .await;
+                                            discovered_metrics.insert(metric_name.to_string());
+                                        }
 
-                                    let target_topic = format!("{}/{}/{}", base_topic, meter_name, metric_name);
-                                    if let Err(e) = mqtt_client
-                                        .publish(&target_topic, QoS::AtMostOnce, false, payload)
-                                        .await
-                                    {
-                                        println!(
-                                            "MQTT Meter [{}] failed to publish standard topic {}: {}",
-                                            meter_name, target_topic, e
-                                        );
+                                        let pub_payload = if config.invert.unwrap_or(false) {
+                                            format!("{:.3}", num)
+                                        } else {
+                                            payload
+                                        };
+
+                                        let target_topic = format!("{}/{}/{}", base_topic, meter_name, metric_name);
+                                        if let Err(e) = mqtt_client
+                                            .publish(&target_topic, QoS::AtMostOnce, false, pub_payload)
+                                            .await
+                                        {
+                                            println!(
+                                                "MQTT Meter [{}] failed to publish standard topic {}: {}",
+                                                meter_name, target_topic, e
+                                            );
+                                        }
                                     }
                                 }
                             }

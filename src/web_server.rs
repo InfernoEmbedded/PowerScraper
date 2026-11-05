@@ -6,7 +6,10 @@ use axum::{
     routing::{get, post},
 };
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex, OnceLock, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicBool, Ordering},
+};
 use tokio::sync::mpsc::Sender;
 use tower_http::cors::CorsLayer;
 
@@ -45,7 +48,10 @@ pub fn evaluate_inverter_errors(inv: &mut InverterStatus, now_secs: u64) {
     if let Some(last_upd) = inv.last_updated {
         if now_secs > last_upd && (now_secs - last_upd) > 15 {
             let age = now_secs - last_upd;
-            errors.push(format!("Offline / Communication Lost (no update for {}s)", age));
+            errors.push(format!(
+                "Offline / Communication Lost (no update for {}s)",
+                age
+            ));
         }
     } else {
         errors.push("Offline / Never Connected".to_string());
@@ -61,14 +67,17 @@ pub fn evaluate_inverter_errors(inv: &mut InverterStatus, now_secs: u64) {
 }
 
 pub static SYSTEM_STATUS: OnceLock<Mutex<SystemStatus>> = OnceLock::new();
-pub static PENDING_MODBUS_WRITES: OnceLock<Mutex<HashMap<String, VecDeque<(u16, u16)>>>> = OnceLock::new();
+pub static PENDING_MODBUS_WRITES: OnceLock<Mutex<HashMap<String, VecDeque<(u16, u16)>>>> =
+    OnceLock::new();
 
 pub fn get_system_status() -> &'static Mutex<SystemStatus> {
     SYSTEM_STATUS.get_or_init(|| Mutex::new(SystemStatus::default()))
 }
 
 pub fn get_system_status_lock() -> std::sync::MutexGuard<'static, SystemStatus> {
-    get_system_status().lock().unwrap_or_else(|e| e.into_inner())
+    get_system_status()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 pub fn get_pending_modbus_writes() -> &'static Mutex<HashMap<String, VecDeque<(u16, u16)>>> {
@@ -77,7 +86,9 @@ pub fn get_pending_modbus_writes() -> &'static Mutex<HashMap<String, VecDeque<(u
 
 pub fn enqueue_modbus_write(inverter: &str, register: u16, value: u16) {
     if let Ok(mut map) = get_pending_modbus_writes().lock() {
-        map.entry(inverter.to_string()).or_default().push_back((register, value));
+        map.entry(inverter.to_string())
+            .or_default()
+            .push_back((register, value));
     }
 }
 
@@ -183,287 +194,2393 @@ pub struct WriteRegisterRequest {
     pub value: u16,
 }
 
-pub fn build_inverter_register_details(inv_name: &str, inv: &InverterStatus) -> Vec<RegisterDetail> {
+pub fn build_inverter_register_details(
+    inv_name: &str,
+    inv: &InverterStatus,
+) -> Vec<RegisterDetail> {
     let solax_v250: &[(&str, u16, &str, &str, &str, bool, &str)] = &[
-        ("0x0000", 0, "Grid Voltage", "Grid", "V", false, "AC Mains Grid Line Voltage"),
-        ("0x0001", 1, "Grid Current", "Grid", "A", false, "AC Mains Grid Current"),
-        ("0x0002", 2, "Grid Power", "Grid", "W", false, "AC Mains Grid Active Power"),
-        ("0x0003", 3, "Inverter Power", "Inverter", "W", false, "Active Inverter Power Output"),
-        ("0x0004", 4, "PV1 Voltage", "Solar PV", "V", false, "PV String 1 DC Input Voltage"),
-        ("0x0005", 5, "PV2 Voltage", "Solar PV", "V", false, "PV String 2 DC Input Voltage"),
-        ("0x0006", 6, "PV2 Current", "Solar PV", "A", false, "PV String 2 DC Input Current"),
-        ("0x0007", 7, "Grid Frequency", "Grid", "Hz", false, "AC Mains Grid Frequency"),
-        ("0x0008", 8, "Inner Temp", "Status", "°C", false, "Inverter Internal Operating Temperature"),
-        ("0x0009", 9, "Run Mode", "Status", "", false, "Operating Mode: 0: Wait, 1: Check, 2: Normal, 3: Fault, 4: Permanent Fault, 7: EPS"),
-        ("0x000A", 10, "PV1 Power", "Solar PV", "W", false, "PV String 1 Active DC Generation"),
-        ("0x000B", 11, "PV2 Power", "Solar PV", "W", false, "PV String 2 Active DC Generation"),
-        ("0x000C", 12, "PV1 Current", "Solar PV", "A", false, "PV String 1 DC Input Current"),
-        ("0x000D", 13, "PV2 Current", "Solar PV", "A", false, "PV String 2 DC Input Current"),
-        ("0x000E", 14, "PV1 Power", "Solar PV", "W", false, "PV String 1 Active DC Generation"),
-        ("0x000F", 15, "PV2 Power", "Solar PV", "W", false, "PV String 2 Active DC Generation"),
-        ("0x0014", 20, "Battery Voltage", "Battery", "V", false, "Battery Bank Terminal DC Voltage"),
-        ("0x0015", 21, "Battery Current", "Battery", "A", false, "Battery Charge / Discharge Current"),
-        ("0x0016", 22, "Battery Power", "Battery", "W", false, "Battery Active Power (Positive = Charge, Negative = Discharge)"),
-        ("0x0017", 23, "Charger Board Temperature", "Battery", "°C", false, "Battery Charger Control Board Temperature"),
-        ("0x0018", 24, "Battery Temperature", "Battery", "°C", false, "Internal Battery Module Cell Temperature"),
-        ("0x0018", 24, "Charger Battery Temperature", "Battery", "°C", false, "Charger Battery Temperature Sensor"),
-        ("0x0019", 25, "Charger Boost Temperature", "Battery", "°C", false, "Charger Boost Stage Heatsink Temperature"),
-        ("0x001C", 28, "Battery Capacity", "Battery", "%", false, "Battery State of Charge (SOC)"),
-        ("0x001D", 29, "Battery Energy Discharged", "Battery", "kWh", false, "Lifetime Total Battery Energy Discharged"),
-        ("0x001F", 31, "BMS Warning", "Faults", "", false, "BMS Warning & Status Bitmask"),
-        ("0x0020", 32, "Battery Energy Charged", "Battery", "kWh", false, "Lifetime Total Battery Energy Charged"),
-        ("0x0023", 35, "Battery State of Health", "Battery", "%", false, "Battery Module Health Index (SOH)"),
-        ("0x0028", 40, "Battery State of Health", "Battery", "%", false, "Battery Module SOH Health Index"),
-        ("0x0040", 64, "Inverter Hardware Fault", "Faults", "", false, "Inverter Hardware Fault Bitmask"),
-        ("0x0040", 64, "Inverter Fault", "Faults", "", false, "Inverter Fault Bitmask"),
-        ("0x0042", 66, "Charger Fault", "Faults", "", false, "Charger Subsystem Fault Bitmask"),
-        ("0x0043", 67, "Manager Fault", "Faults", "", false, "Inverter Manager / Communication Fault Bitmask"),
-        ("0x0046", 70, "Measured Power", "Grid", "W", false, "External Grid CT / Meter Active Power Measurement"),
-        ("0x0048", 72, "Feed In Energy", "Grid", "kWh", false, "Lifetime Total Solar Grid Feed-in Energy"),
-        ("0x004A", 74, "Consumed Energy", "Grid", "kWh", false, "Lifetime Total Grid Consumed Energy"),
-        ("0x004C", 76, "EPS Voltage", "EPS", "V", false, "Emergency Power Supply Output Voltage"),
-        ("0x004D", 77, "EPS Current", "EPS", "A", false, "Emergency Power Supply Output Current"),
-        ("0x004E", 78, "EPS VA", "EPS", "VA", false, "Emergency Power Supply Apparent Power"),
-        ("0x004F", 79, "EPS Frequency", "EPS", "Hz", false, "Emergency Power Supply Output Frequency"),
-        ("0x0050", 80, "Energy Today", "Solar PV", "kWh", false, "Daily Solar PV Generation"),
-        ("0x0052", 82, "Energy Total", "Solar PV", "kWh", false, "Lifetime Total Solar PV Generation"),
-        ("0x0055", 85, "Battery Temperature", "Battery", "°C", false, "Battery Temperature (Extended Register)"),
-
+        (
+            "0x0000",
+            0,
+            "Grid Voltage",
+            "Grid",
+            "V",
+            false,
+            "AC Mains Grid Line Voltage",
+        ),
+        (
+            "0x0001",
+            1,
+            "Grid Current",
+            "Grid",
+            "A",
+            false,
+            "AC Mains Grid Current",
+        ),
+        (
+            "0x0002",
+            2,
+            "Grid Power",
+            "Grid",
+            "W",
+            false,
+            "AC Mains Grid Active Power",
+        ),
+        (
+            "0x0003",
+            3,
+            "Inverter Power",
+            "Inverter",
+            "W",
+            false,
+            "Active Inverter Power Output",
+        ),
+        (
+            "0x0004",
+            4,
+            "PV1 Voltage",
+            "Solar PV",
+            "V",
+            false,
+            "PV String 1 DC Input Voltage",
+        ),
+        (
+            "0x0005",
+            5,
+            "PV2 Voltage",
+            "Solar PV",
+            "V",
+            false,
+            "PV String 2 DC Input Voltage",
+        ),
+        (
+            "0x0006",
+            6,
+            "PV2 Current",
+            "Solar PV",
+            "A",
+            false,
+            "PV String 2 DC Input Current",
+        ),
+        (
+            "0x0007",
+            7,
+            "Grid Frequency",
+            "Grid",
+            "Hz",
+            false,
+            "AC Mains Grid Frequency",
+        ),
+        (
+            "0x0008",
+            8,
+            "Inner Temp",
+            "Status",
+            "°C",
+            false,
+            "Inverter Internal Operating Temperature",
+        ),
+        (
+            "0x0009",
+            9,
+            "Run Mode",
+            "Status",
+            "",
+            false,
+            "Operating Mode: 0: Wait, 1: Check, 2: Normal, 3: Fault, 4: Permanent Fault, 7: EPS",
+        ),
+        (
+            "0x000A",
+            10,
+            "PV1 Power",
+            "Solar PV",
+            "W",
+            false,
+            "PV String 1 Active DC Generation",
+        ),
+        (
+            "0x000B",
+            11,
+            "PV2 Power",
+            "Solar PV",
+            "W",
+            false,
+            "PV String 2 Active DC Generation",
+        ),
+        (
+            "0x000C",
+            12,
+            "PV1 Current",
+            "Solar PV",
+            "A",
+            false,
+            "PV String 1 DC Input Current",
+        ),
+        (
+            "0x000D",
+            13,
+            "PV2 Current",
+            "Solar PV",
+            "A",
+            false,
+            "PV String 2 DC Input Current",
+        ),
+        (
+            "0x000E",
+            14,
+            "PV1 Power",
+            "Solar PV",
+            "W",
+            false,
+            "PV String 1 Active DC Generation",
+        ),
+        (
+            "0x000F",
+            15,
+            "PV2 Power",
+            "Solar PV",
+            "W",
+            false,
+            "PV String 2 Active DC Generation",
+        ),
+        (
+            "0x0014",
+            20,
+            "Battery Voltage",
+            "Battery",
+            "V",
+            false,
+            "Battery Bank Terminal DC Voltage",
+        ),
+        (
+            "0x0015",
+            21,
+            "Battery Current",
+            "Battery",
+            "A",
+            false,
+            "Battery Charge / Discharge Current",
+        ),
+        (
+            "0x0016",
+            22,
+            "Battery Power",
+            "Battery",
+            "W",
+            false,
+            "Battery Active Power (Positive = Charge, Negative = Discharge)",
+        ),
+        (
+            "0x0017",
+            23,
+            "Charger Board Temperature",
+            "Battery",
+            "°C",
+            false,
+            "Battery Charger Control Board Temperature",
+        ),
+        (
+            "0x0018",
+            24,
+            "Battery Temperature",
+            "Battery",
+            "°C",
+            false,
+            "Internal Battery Module Cell Temperature",
+        ),
+        (
+            "0x0018",
+            24,
+            "Charger Battery Temperature",
+            "Battery",
+            "°C",
+            false,
+            "Charger Battery Temperature Sensor",
+        ),
+        (
+            "0x0019",
+            25,
+            "Charger Boost Temperature",
+            "Battery",
+            "°C",
+            false,
+            "Charger Boost Stage Heatsink Temperature",
+        ),
+        (
+            "0x001C",
+            28,
+            "Battery Capacity",
+            "Battery",
+            "%",
+            false,
+            "Battery State of Charge (SOC)",
+        ),
+        (
+            "0x001D",
+            29,
+            "Battery Energy Discharged",
+            "Battery",
+            "kWh",
+            false,
+            "Lifetime Total Battery Energy Discharged",
+        ),
+        (
+            "0x001F",
+            31,
+            "BMS Warning",
+            "Faults",
+            "",
+            false,
+            "BMS Warning & Status Bitmask",
+        ),
+        (
+            "0x0020",
+            32,
+            "Battery Energy Charged",
+            "Battery",
+            "kWh",
+            false,
+            "Lifetime Total Battery Energy Charged",
+        ),
+        (
+            "0x0023",
+            35,
+            "Battery State of Health",
+            "Battery",
+            "%",
+            false,
+            "Battery Module Health Index (SOH)",
+        ),
+        (
+            "0x0028",
+            40,
+            "Battery State of Health",
+            "Battery",
+            "%",
+            false,
+            "Battery Module SOH Health Index",
+        ),
+        (
+            "0x0040",
+            64,
+            "Inverter Hardware Fault",
+            "Faults",
+            "",
+            false,
+            "Inverter Hardware Fault Bitmask",
+        ),
+        (
+            "0x0040",
+            64,
+            "Inverter Fault",
+            "Faults",
+            "",
+            false,
+            "Inverter Fault Bitmask",
+        ),
+        (
+            "0x0042",
+            66,
+            "Charger Fault",
+            "Faults",
+            "",
+            false,
+            "Charger Subsystem Fault Bitmask",
+        ),
+        (
+            "0x0043",
+            67,
+            "Manager Fault",
+            "Faults",
+            "",
+            false,
+            "Inverter Manager / Communication Fault Bitmask",
+        ),
+        (
+            "0x0046",
+            70,
+            "Measured Power",
+            "Grid",
+            "W",
+            false,
+            "External Grid CT / Meter Active Power Measurement",
+        ),
+        (
+            "0x0048",
+            72,
+            "Feed In Energy",
+            "Grid",
+            "kWh",
+            false,
+            "Lifetime Total Solar Grid Feed-in Energy",
+        ),
+        (
+            "0x004A",
+            74,
+            "Consumed Energy",
+            "Grid",
+            "kWh",
+            false,
+            "Lifetime Total Grid Consumed Energy",
+        ),
+        (
+            "0x004C",
+            76,
+            "EPS Voltage",
+            "EPS",
+            "V",
+            false,
+            "Emergency Power Supply Output Voltage",
+        ),
+        (
+            "0x004D",
+            77,
+            "EPS Current",
+            "EPS",
+            "A",
+            false,
+            "Emergency Power Supply Output Current",
+        ),
+        (
+            "0x004E",
+            78,
+            "EPS VA",
+            "EPS",
+            "VA",
+            false,
+            "Emergency Power Supply Apparent Power",
+        ),
+        (
+            "0x004F",
+            79,
+            "EPS Frequency",
+            "EPS",
+            "Hz",
+            false,
+            "Emergency Power Supply Output Frequency",
+        ),
+        (
+            "0x0050",
+            80,
+            "Energy Today",
+            "Solar PV",
+            "kWh",
+            false,
+            "Daily Solar PV Generation",
+        ),
+        (
+            "0x0052",
+            82,
+            "Energy Total",
+            "Solar PV",
+            "kWh",
+            false,
+            "Lifetime Total Solar PV Generation",
+        ),
+        (
+            "0x0055",
+            85,
+            "Battery Temperature",
+            "Battery",
+            "°C",
+            false,
+            "Battery Temperature (Extended Register)",
+        ),
         // Configurable Holding Registers for SK-SU / Solax V2.50
-        ("0x0015", 21, "PV Start Voltage", "Settings", "V", true, "Launch Voltage Threshold (Write Reg 0x0001)"),
-        ("0x0016", 22, "Start Wait Time", "Settings", "s", true, "Launch Wait Time (Write Reg 0x0002)"),
-        ("0x0017", 23, "PV High Stop Voltage", "Settings", "V", true, "Input High Voltage Protect (Write Reg 0x0003)"),
-        ("0x0018", 24, "PV Low Stop Voltage", "Settings", "V", true, "Input Low Voltage Protect (Write Reg 0x0004)"),
-        ("0x0019", 25, "Min Grid Voltage Protect", "Settings", "V", true, "Allowed Minimum Grid Voltage (Write Reg 0x0005)"),
-        ("0x001A", 26, "Max Grid Voltage Protect", "Settings", "V", true, "Allowed Maximum Grid Voltage (Write Reg 0x0006)"),
-        ("0x001B", 27, "Min Grid Freq Protect", "Settings", "Hz", true, "Allowed Minimum Grid Frequency (Write Reg 0x0007)"),
-        ("0x001C", 28, "Max Grid Freq Protect", "Settings", "Hz", true, "Allowed Maximum Grid Frequency (Write Reg 0x0008)"),
-        ("0x001D", 29, "Safety Type", "Settings", "", true, "Grid Safety Code 0-18 (Write Reg 0x0009)"),
-        ("0x001E", 30, "PV Connection Mode", "Settings", "", true, "PV Mode: 1:Comm, 2:Multi (Write Reg 0x000A)"),
-        ("0x001F", 31, "10Min Overvoltage Protect", "Settings", "V", true, "10 Minute Average Overvoltage Protect (Write Reg 0x000B)"),
-        ("0x0020", 32, "Min Slow Grid Voltage Protect", "Settings", "V", true, "Min Slow Grid Voltage Protect (Write Reg 0x000C)"),
-        ("0x0021", 33, "Max Slow Grid Voltage Protect", "Settings", "V", true, "Max Slow Grid Voltage Protect (Write Reg 0x000D)"),
-        ("0x0022", 34, "Min Slow Grid Freq Protect", "Settings", "Hz", true, "Min Slow Grid Frequency Protect (Write Reg 0x000E)"),
-        ("0x0023", 35, "Max Slow Grid Freq Protect", "Settings", "Hz", true, "Max Slow Grid Frequency Protect (Write Reg 0x000F)"),
-        ("0x0024", 36, "DCI Limit", "Settings", "mA", true, "DC Component Current Limit (Write Reg 0x0010)"),
-        ("0x0025", 37, "Active Power Limit", "Settings", "%", true, "Output Active Power Limit Percent (Write Reg 0x0011)"),
-        ("0x007C", 124, "Power Manager Enable", "Remote Control", "", true, "Power Manager Enable (Write Reg 0x001B)"),
-        ("0x008B", 139, "Work Mode", "Battery Control", "", true, "Operating Mode: 0:Self Use, 1:Force Time, 2:Remote (Write Reg 0x001F)"),
-        ("0x008C", 140, "Battery Min Capacity", "Battery Control", "%", true, "Minimum Battery SOC Limit (Write Reg 0x0020)"),
-        ("0x008D", 141, "Battery Type", "Battery Control", "", true, "Battery Type: 0:Lead Acid, 1:Lithium (Write Reg 0x0021)"),
-        ("0x008E", 142, "Charge Cutoff Voltage", "Battery Control", "V", true, "Battery Charge Cutoff Voltage (Write Reg 0x0022)"),
-        ("0x008F", 143, "Discharge Cutoff Voltage", "Battery Control", "V", true, "Battery Discharge Cutoff Voltage (Write Reg 0x0023)"),
-        ("0x0090", 144, "Max Charge Current", "Battery Control", "A", true, "Max Battery Charge Current (Write Reg 0x0024)"),
-        ("0x0091", 145, "Max Discharge Current", "Battery Control", "A", true, "Max Battery Discharge Current (Write Reg 0x0025)"),
-        ("0x0092", 146, "Charge Window 1 Start", "Timer Windows", "HH:MM", true, "Charge Window 1 Start Time (Write Reg 0x0026)"),
-        ("0x0094", 148, "Charge Window 1 End", "Timer Windows", "HH:MM", true, "Charge Window 1 End Time (Write Reg 0x0027)"),
-        ("0x0096", 150, "Discharge Window 1 Start", "Timer Windows", "HH:MM", true, "Discharge Window 1 Start Time (Write Reg 0x0028)"),
-        ("0x0098", 152, "Discharge Window 1 End", "Timer Windows", "HH:MM", true, "Discharge Window 1 End Time (Write Reg 0x0029)"),
-        ("0x009A", 154, "Charge Window 2 Start", "Timer Windows", "HH:MM", true, "Charge Window 2 Start Time (Write Reg 0x002A)"),
-        ("0x009C", 156, "Charge Window 2 End", "Timer Windows", "HH:MM", true, "Charge Window 2 End Time (Write Reg 0x002B)"),
-        ("0x009E", 158, "Discharge Window 2 Start", "Timer Windows", "HH:MM", true, "Discharge Window 2 Start Time (Write Reg 0x002C)"),
-        ("0x00A0", 160, "Discharge Window 2 End", "Timer Windows", "HH:MM", true, "Discharge Window 2 End Time (Write Reg 0x002D)"),
-        ("0x00B4", 180, "Allow Grid Charge", "Battery Control", "", true, "Allow Charging from Grid: 0:Forbidden, 1:P1, 2:P2, 3:Both (Write Reg 0x0040)"),
-        ("0x00B5", 181, "Export Control Factory Limit", "Grid", "W", true, "Export Power Control Factory Limit (Write Reg 0x0041)"),
-        ("0x00B6", 182, "Export Control User Limit", "Grid", "W", true, "Export Power Control User Limit (Write Reg 0x0042)"),
-        ("0x00B7", 183, "EPS Mute", "EPS", "", true, "EPS Alarm Mute: 0:Off, 1:On (Write Reg 0x0043)"),
-        ("0x00B8", 184, "EPS Frequency", "EPS", "Hz", true, "EPS Nominal Frequency: 0:50Hz, 1:60Hz (Write Reg 0x0044)"),
-        ("0x00B9", 185, "EPS Discharge Voltage", "EPS", "V", true, "EPS Charger 1 Minimum Discharge Voltage (Write Reg 0x0045)"),
-        ("0x00BB", 187, "Language", "System Settings", "", true, "Display Language: 0:English, 1:German (Write Reg 0x0047)"),
-        ("0x00BC", 188, "IP Method", "System Settings", "", true, "IP Network Method: 0:DHCP, 1:Manual (Write Reg 0x0048)"),
-        ("0x00D6", 214, "Charge Absorption Voltage", "Battery Control", "V", true, "Battery Charge Absorption Stage Voltage (Write Reg 0x0053)"),
+        (
+            "0x0015",
+            21,
+            "PV Start Voltage",
+            "Settings",
+            "V",
+            true,
+            "Launch Voltage Threshold (Write Reg 0x0001)",
+        ),
+        (
+            "0x0016",
+            22,
+            "Start Wait Time",
+            "Settings",
+            "s",
+            true,
+            "Launch Wait Time (Write Reg 0x0002)",
+        ),
+        (
+            "0x0017",
+            23,
+            "PV High Stop Voltage",
+            "Settings",
+            "V",
+            true,
+            "Input High Voltage Protect (Write Reg 0x0003)",
+        ),
+        (
+            "0x0018",
+            24,
+            "PV Low Stop Voltage",
+            "Settings",
+            "V",
+            true,
+            "Input Low Voltage Protect (Write Reg 0x0004)",
+        ),
+        (
+            "0x0019",
+            25,
+            "Min Grid Voltage Protect",
+            "Settings",
+            "V",
+            true,
+            "Allowed Minimum Grid Voltage (Write Reg 0x0005)",
+        ),
+        (
+            "0x001A",
+            26,
+            "Max Grid Voltage Protect",
+            "Settings",
+            "V",
+            true,
+            "Allowed Maximum Grid Voltage (Write Reg 0x0006)",
+        ),
+        (
+            "0x001B",
+            27,
+            "Min Grid Freq Protect",
+            "Settings",
+            "Hz",
+            true,
+            "Allowed Minimum Grid Frequency (Write Reg 0x0007)",
+        ),
+        (
+            "0x001C",
+            28,
+            "Max Grid Freq Protect",
+            "Settings",
+            "Hz",
+            true,
+            "Allowed Maximum Grid Frequency (Write Reg 0x0008)",
+        ),
+        (
+            "0x001D",
+            29,
+            "Safety Type",
+            "Settings",
+            "",
+            true,
+            "Grid Safety Code 0-18 (Write Reg 0x0009)",
+        ),
+        (
+            "0x001E",
+            30,
+            "PV Connection Mode",
+            "Settings",
+            "",
+            true,
+            "PV Mode: 1:Comm, 2:Multi (Write Reg 0x000A)",
+        ),
+        (
+            "0x001F",
+            31,
+            "10Min Overvoltage Protect",
+            "Settings",
+            "V",
+            true,
+            "10 Minute Average Overvoltage Protect (Write Reg 0x000B)",
+        ),
+        (
+            "0x0020",
+            32,
+            "Min Slow Grid Voltage Protect",
+            "Settings",
+            "V",
+            true,
+            "Min Slow Grid Voltage Protect (Write Reg 0x000C)",
+        ),
+        (
+            "0x0021",
+            33,
+            "Max Slow Grid Voltage Protect",
+            "Settings",
+            "V",
+            true,
+            "Max Slow Grid Voltage Protect (Write Reg 0x000D)",
+        ),
+        (
+            "0x0022",
+            34,
+            "Min Slow Grid Freq Protect",
+            "Settings",
+            "Hz",
+            true,
+            "Min Slow Grid Frequency Protect (Write Reg 0x000E)",
+        ),
+        (
+            "0x0023",
+            35,
+            "Max Slow Grid Freq Protect",
+            "Settings",
+            "Hz",
+            true,
+            "Max Slow Grid Frequency Protect (Write Reg 0x000F)",
+        ),
+        (
+            "0x0024",
+            36,
+            "DCI Limit",
+            "Settings",
+            "mA",
+            true,
+            "DC Component Current Limit (Write Reg 0x0010)",
+        ),
+        (
+            "0x0025",
+            37,
+            "Active Power Limit",
+            "Settings",
+            "%",
+            true,
+            "Output Active Power Limit Percent (Write Reg 0x0011)",
+        ),
+        (
+            "0x007C",
+            124,
+            "Power Manager Enable",
+            "Remote Control",
+            "",
+            true,
+            "Power Manager Enable (Write Reg 0x001B)",
+        ),
+        (
+            "0x008B",
+            139,
+            "Work Mode",
+            "Battery Control",
+            "",
+            true,
+            "Operating Mode: 0:Self Use, 1:Force Time, 2:Remote (Write Reg 0x001F)",
+        ),
+        (
+            "0x008C",
+            140,
+            "Battery Min Capacity",
+            "Battery Control",
+            "%",
+            true,
+            "Minimum Battery SOC Limit (Write Reg 0x0020)",
+        ),
+        (
+            "0x008D",
+            141,
+            "Battery Type",
+            "Battery Control",
+            "",
+            true,
+            "Battery Type: 0:Lead Acid, 1:Lithium (Write Reg 0x0021)",
+        ),
+        (
+            "0x008E",
+            142,
+            "Charge Cutoff Voltage",
+            "Battery Control",
+            "V",
+            true,
+            "Battery Charge Cutoff Voltage (Write Reg 0x0022)",
+        ),
+        (
+            "0x008F",
+            143,
+            "Discharge Cutoff Voltage",
+            "Battery Control",
+            "V",
+            true,
+            "Battery Discharge Cutoff Voltage (Write Reg 0x0023)",
+        ),
+        (
+            "0x0090",
+            144,
+            "Max Charge Current",
+            "Battery Control",
+            "A",
+            true,
+            "Max Battery Charge Current (Write Reg 0x0024)",
+        ),
+        (
+            "0x0091",
+            145,
+            "Max Discharge Current",
+            "Battery Control",
+            "A",
+            true,
+            "Max Battery Discharge Current (Write Reg 0x0025)",
+        ),
+        (
+            "0x0092",
+            146,
+            "Charge Window 1 Start",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Charge Window 1 Start Time (Write Reg 0x0026)",
+        ),
+        (
+            "0x0094",
+            148,
+            "Charge Window 1 End",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Charge Window 1 End Time (Write Reg 0x0027)",
+        ),
+        (
+            "0x0096",
+            150,
+            "Discharge Window 1 Start",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Discharge Window 1 Start Time (Write Reg 0x0028)",
+        ),
+        (
+            "0x0098",
+            152,
+            "Discharge Window 1 End",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Discharge Window 1 End Time (Write Reg 0x0029)",
+        ),
+        (
+            "0x009A",
+            154,
+            "Charge Window 2 Start",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Charge Window 2 Start Time (Write Reg 0x002A)",
+        ),
+        (
+            "0x009C",
+            156,
+            "Charge Window 2 End",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Charge Window 2 End Time (Write Reg 0x002B)",
+        ),
+        (
+            "0x009E",
+            158,
+            "Discharge Window 2 Start",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Discharge Window 2 Start Time (Write Reg 0x002C)",
+        ),
+        (
+            "0x00A0",
+            160,
+            "Discharge Window 2 End",
+            "Timer Windows",
+            "HH:MM",
+            true,
+            "Discharge Window 2 End Time (Write Reg 0x002D)",
+        ),
+        (
+            "0x00B4",
+            180,
+            "Allow Grid Charge",
+            "Battery Control",
+            "",
+            true,
+            "Allow Charging from Grid: 0:Forbidden, 1:P1, 2:P2, 3:Both (Write Reg 0x0040)",
+        ),
+        (
+            "0x00B5",
+            181,
+            "Export Control Factory Limit",
+            "Grid",
+            "W",
+            true,
+            "Export Power Control Factory Limit (Write Reg 0x0041)",
+        ),
+        (
+            "0x00B6",
+            182,
+            "Export Control User Limit",
+            "Grid",
+            "W",
+            true,
+            "Export Power Control User Limit (Write Reg 0x0042)",
+        ),
+        (
+            "0x00B7",
+            183,
+            "EPS Mute",
+            "EPS",
+            "",
+            true,
+            "EPS Alarm Mute: 0:Off, 1:On (Write Reg 0x0043)",
+        ),
+        (
+            "0x00B8",
+            184,
+            "EPS Frequency",
+            "EPS",
+            "Hz",
+            true,
+            "EPS Nominal Frequency: 0:50Hz, 1:60Hz (Write Reg 0x0044)",
+        ),
+        (
+            "0x00B9",
+            185,
+            "EPS Discharge Voltage",
+            "EPS",
+            "V",
+            true,
+            "EPS Charger 1 Minimum Discharge Voltage (Write Reg 0x0045)",
+        ),
+        (
+            "0x00BB",
+            187,
+            "Language",
+            "System Settings",
+            "",
+            true,
+            "Display Language: 0:English, 1:German (Write Reg 0x0047)",
+        ),
+        (
+            "0x00BC",
+            188,
+            "IP Method",
+            "System Settings",
+            "",
+            true,
+            "IP Network Method: 0:DHCP, 1:Manual (Write Reg 0x0048)",
+        ),
+        (
+            "0x00D6",
+            214,
+            "Charge Absorption Voltage",
+            "Battery Control",
+            "V",
+            true,
+            "Battery Charge Absorption Stage Voltage (Write Reg 0x0053)",
+        ),
         // Additional Write-Only or Obscure Registers added for complete coverage
-        ("0x0012", 18, "Adjust PV1 Current", "Settings", "", true, "Adjust PV1 Current (Write Reg 0x0012)"),
-        ("0x0013", 19, "Adjust PV2 Current", "Settings", "", true, "Adjust PV2 Current (Write Reg 0x0013)"),
-        ("0x0014", 20, "Adjust PV1 Volt", "Settings", "", true, "Adjust PV1 Voltage (Write Reg 0x0014)"),
-        ("0x0015", 21, "Adjust PV2 Volt", "Settings", "", true, "Adjust PV2 Voltage (Write Reg 0x0015)"),
-        ("0x0016", 22, "Adjust AC Current", "Settings", "", true, "Adjust AC Current (Write Reg 0x0016)"),
-        ("0x0017", 23, "Adjust AC Volt", "Settings", "", true, "Adjust AC Voltage (Write Reg 0x0017)"),
-        ("0x001C", 28, "Remote Switch", "Remote Control", "", true, "1: Start, 0: Stop (Write Reg 0x001C)"),
-        ("0x001D", 29, "Inverter Reset E2PROM", "Settings", "", true, "Write 1 to Reset (Write Reg 0x001D)"),
-        ("0x001E", 30, "Inverter Clear History", "Settings", "", true, "Write 1 to Clear (Write Reg 0x001E)"),
-        ("0x0046", 70, "EPS Charger1 Min Capacity", "EPS", "%", true, "EPS Charger 1 Min Capacity (Write Reg 0x0046)"),
-        ("0x0054", 84, "Self Test Start", "Settings", "", true, "Write 1 to Start (Write Reg 0x0054)"),
-        ("0x0055", 85, "Clear Overload Fault", "Settings", "", true, "Write 1 to Clear (Write Reg 0x0055)"),
-        ("0x0056", 86, "Battery Awaken", "Battery Control", "", true, "Write 1 to Awaken (Write Reg 0x0056)"),
-        ("0x005F", 95, "Reset Manager EEPROM", "Settings", "", true, "1: Reset Normal, 2: Reset All (Write Reg 0x005F)"),
-        ("0x0064", 100, "Relay 1 Match", "Relay", "", true, "Relay 1 Match (Write Reg 0x0064)"),
-        ("0x0065", 101, "Relay 1 Trigger Power", "Relay", "W", true, "Relay 1 Trigger Power (Write Reg 0x0065)"),
-        ("0x0074", 116, "Relay 2 Match", "Relay", "", true, "Relay 2 Match (Write Reg 0x0074)"),
-        ("0x0075", 117, "Relay 2 Trigger Power", "Relay", "W", true, "Relay 2 Trigger Power (Write Reg 0x0075)"),
-        ("0x0084", 132, "Relay 3 Match", "Relay", "", true, "Relay 3 Match (Write Reg 0x0084)"),
-        ("0x0085", 133, "Relay 3 Trigger Power", "Relay", "W", true, "Relay 3 Trigger Power (Write Reg 0x0085)"),
-        ("0x0090", 144, "Remote Wakeup", "Remote Control", "", true, "Wake up Idle 1:Enable (Write Reg 0x0090)"),
+        (
+            "0x0012",
+            18,
+            "Adjust PV1 Current",
+            "Settings",
+            "",
+            true,
+            "Adjust PV1 Current (Write Reg 0x0012)",
+        ),
+        (
+            "0x0013",
+            19,
+            "Adjust PV2 Current",
+            "Settings",
+            "",
+            true,
+            "Adjust PV2 Current (Write Reg 0x0013)",
+        ),
+        (
+            "0x0014",
+            20,
+            "Adjust PV1 Volt",
+            "Settings",
+            "",
+            true,
+            "Adjust PV1 Voltage (Write Reg 0x0014)",
+        ),
+        (
+            "0x0015",
+            21,
+            "Adjust PV2 Volt",
+            "Settings",
+            "",
+            true,
+            "Adjust PV2 Voltage (Write Reg 0x0015)",
+        ),
+        (
+            "0x0016",
+            22,
+            "Adjust AC Current",
+            "Settings",
+            "",
+            true,
+            "Adjust AC Current (Write Reg 0x0016)",
+        ),
+        (
+            "0x0017",
+            23,
+            "Adjust AC Volt",
+            "Settings",
+            "",
+            true,
+            "Adjust AC Voltage (Write Reg 0x0017)",
+        ),
+        (
+            "0x001C",
+            28,
+            "Remote Switch",
+            "Remote Control",
+            "",
+            true,
+            "1: Start, 0: Stop (Write Reg 0x001C)",
+        ),
+        (
+            "0x001D",
+            29,
+            "Inverter Reset E2PROM",
+            "Settings",
+            "",
+            true,
+            "Write 1 to Reset (Write Reg 0x001D)",
+        ),
+        (
+            "0x001E",
+            30,
+            "Inverter Clear History",
+            "Settings",
+            "",
+            true,
+            "Write 1 to Clear (Write Reg 0x001E)",
+        ),
+        (
+            "0x0046",
+            70,
+            "EPS Charger1 Min Capacity",
+            "EPS",
+            "%",
+            true,
+            "EPS Charger 1 Min Capacity (Write Reg 0x0046)",
+        ),
+        (
+            "0x0054",
+            84,
+            "Self Test Start",
+            "Settings",
+            "",
+            true,
+            "Write 1 to Start (Write Reg 0x0054)",
+        ),
+        (
+            "0x0055",
+            85,
+            "Clear Overload Fault",
+            "Settings",
+            "",
+            true,
+            "Write 1 to Clear (Write Reg 0x0055)",
+        ),
+        (
+            "0x0056",
+            86,
+            "Battery Awaken",
+            "Battery Control",
+            "",
+            true,
+            "Write 1 to Awaken (Write Reg 0x0056)",
+        ),
+        (
+            "0x005F",
+            95,
+            "Reset Manager EEPROM",
+            "Settings",
+            "",
+            true,
+            "1: Reset Normal, 2: Reset All (Write Reg 0x005F)",
+        ),
+        (
+            "0x0064",
+            100,
+            "Relay 1 Match",
+            "Relay",
+            "",
+            true,
+            "Relay 1 Match (Write Reg 0x0064)",
+        ),
+        (
+            "0x0065",
+            101,
+            "Relay 1 Trigger Power",
+            "Relay",
+            "W",
+            true,
+            "Relay 1 Trigger Power (Write Reg 0x0065)",
+        ),
+        (
+            "0x0074",
+            116,
+            "Relay 2 Match",
+            "Relay",
+            "",
+            true,
+            "Relay 2 Match (Write Reg 0x0074)",
+        ),
+        (
+            "0x0075",
+            117,
+            "Relay 2 Trigger Power",
+            "Relay",
+            "W",
+            true,
+            "Relay 2 Trigger Power (Write Reg 0x0075)",
+        ),
+        (
+            "0x0084",
+            132,
+            "Relay 3 Match",
+            "Relay",
+            "",
+            true,
+            "Relay 3 Match (Write Reg 0x0084)",
+        ),
+        (
+            "0x0085",
+            133,
+            "Relay 3 Trigger Power",
+            "Relay",
+            "W",
+            true,
+            "Relay 3 Trigger Power (Write Reg 0x0085)",
+        ),
+        (
+            "0x0090",
+            144,
+            "Remote Wakeup",
+            "Remote Control",
+            "",
+            true,
+            "Wake up Idle 1:Enable (Write Reg 0x0090)",
+        ),
     ];
 
     let solax_v321: &[(&str, u16, &str, &str, &str, bool, &str)] = &[
-        ("0x0000", 0, "Grid Voltage", "Grid", "V", false, "AC Mains Grid Line Voltage"),
-        ("0x0000", 0, "Grid Voltage X1", "Grid", "V", false, "AC Mains Grid Line Voltage (Phase 1)"),
-        ("0x0001", 1, "Grid Current", "Grid", "A", false, "AC Mains Grid Current"),
-        ("0x0001", 1, "Grid Current X1", "Grid", "A", false, "AC Mains Grid Current (Phase 1)"),
-        ("0x0002", 2, "Inverter Power", "Inverter", "W", false, "Inverter AC Active Power Output"),
-        ("0x0002", 2, "Inverter Power X1", "Inverter", "W", false, "Inverter AC Active Power Output (Phase 1)"),
-        ("0x0003", 3, "PV1 Voltage", "Solar PV", "V", false, "PV String 1 DC Input Voltage"),
-        ("0x0003", 3, "PV1 Voltage Hybrid", "Solar PV", "V", false, "PV String 1 DC Input Voltage (Hybrid)"),
-        ("0x0004", 4, "PV2 Voltage", "Solar PV", "V", false, "PV String 2 DC Input Voltage"),
-        ("0x0004", 4, "PV2 Voltage Hybrid", "Solar PV", "V", false, "PV String 2 DC Input Voltage (Hybrid)"),
-        ("0x0005", 5, "PV1 Current", "Solar PV", "A", false, "PV String 1 DC Input Current"),
-        ("0x0005", 5, "PV1 Current Hybrid", "Solar PV", "A", false, "PV String 1 DC Input Current (Hybrid)"),
-        ("0x0006", 6, "PV2 Current", "Solar PV", "A", false, "PV String 2 DC Input Current"),
-        ("0x0006", 6, "PV2 Current Hybrid", "Solar PV", "A", false, "PV String 2 DC Input Current (Hybrid)"),
-        ("0x0007", 7, "Grid Frequency", "Grid", "Hz", false, "AC Mains Grid Frequency"),
-        ("0x0007", 7, "Grid Frequency X1", "Grid", "Hz", false, "AC Mains Grid Frequency (Phase 1)"),
-        ("0x0008", 8, "Inner Temp", "Status", "°C", false, "Inverter Internal Operating Temperature"),
-        ("0x0009", 9, "Run Mode", "Status", "", false, "Operating Mode: 0: Wait, 1: Check, 2: Normal, 3: Fault, 4: Permanent Fault, 7: EPS"),
-        ("0x000A", 10, "PV1 Power", "Solar PV", "W", false, "PV String 1 Active DC Generation"),
-        ("0x000B", 11, "PV2 Power", "Solar PV", "W", false, "PV String 2 Active DC Generation"),
-        ("0x0014", 20, "Battery Voltage", "Battery", "V", false, "Battery Bank Terminal DC Voltage"),
-        ("0x0015", 21, "Battery Current", "Battery", "A", false, "Battery Charge / Discharge Current"),
-        ("0x0016", 22, "Battery Power", "Battery", "W", false, "Battery Active Power (Positive = Charge, Negative = Discharge)"),
-        ("0x0017", 23, "BMS Connect State", "Battery", "", false, "Battery Management System Connection State"),
-        ("0x0018", 24, "Battery Temperature", "Battery", "°C", false, "Internal Battery Module Cell Temperature"),
-        ("0x0019", 25, "Charger Boost Temperature", "Battery", "°C", false, "Charger Boost Stage Heatsink Temperature"),
-        ("0x001C", 28, "Battery Capacity", "Battery", "%", false, "Battery State of Charge (SOC)"),
-        ("0x001D", 29, "Battery Energy Discharged", "Battery", "kWh", false, "Lifetime Total Battery Energy Discharged"),
-        ("0x001F", 31, "BMS Warning", "Faults", "", false, "BMS Warning & Status Bitmask"),
-        ("0x0020", 32, "Battery Energy Discharged Today", "Battery", "kWh", false, "Daily Battery Discharged Energy"),
-        ("0x0021", 33, "Battery Energy Charged", "Battery", "kWh", false, "Lifetime Total Battery Energy Charged"),
-        ("0x0023", 35, "Battery Energy Charged Today", "Battery", "kWh", false, "Daily Battery Charged Energy"),
-        ("0x0024", 36, "BMS Max Charge Current", "Battery", "A", false, "BMS Maximum Allowed Charge Current Limit"),
-        ("0x0025", 37, "BMS Max Discharge Current", "Battery", "A", false, "BMS Maximum Allowed Discharge Current Limit"),
-        ("0x0028", 40, "Battery State of Health", "Battery", "%", false, "Battery Module Health Index (SOH)"),
-        ("0x0040", 64, "Inverter Fault", "Faults", "", false, "Inverter Fault Bitmask"),
-        ("0x0042", 66, "Charger Fault", "Faults", "", false, "Charger Subsystem Fault Bitmask"),
-        ("0x0043", 67, "Manager Fault", "Faults", "", false, "Inverter Manager / Communication Fault Bitmask"),
-        ("0x0046", 70, "Measured Power", "Grid", "W", false, "External Grid CT / Meter Active Power Measurement"),
-        ("0x0048", 72, "Feed In Energy", "Grid", "kWh", false, "Lifetime Total Solar Grid Feed-in Energy"),
-        ("0x004A", 74, "Consumed Energy", "Grid", "kWh", false, "Lifetime Total Grid Consumed Energy"),
-        ("0x004C", 76, "EPS Voltage", "EPS", "V", false, "Emergency Power Supply Output Voltage"),
-        ("0x004D", 77, "EPS Current", "EPS", "A", false, "Emergency Power Supply Output Current"),
-        ("0x004E", 78, "EPS VA", "EPS", "VA", false, "Emergency Power Supply Apparent Power"),
-        ("0x004F", 79, "EPS Frequency", "EPS", "Hz", false, "Emergency Power Supply Output Frequency"),
-        ("0x0050", 80, "Energy Today", "Solar PV", "kWh", false, "Daily Solar PV Generation"),
-        ("0x0052", 82, "Energy Total", "Solar PV", "kWh", false, "Lifetime Total Solar PV Generation"),
-        ("0x0066", 102, "Bus Voltage", "Status", "V", false, "Internal DC Bus Voltage"),
-        ("0x0067", 103, "DC Voltage Fault", "Faults", "V", false, "DC Bus Overvoltage Fault Threshold"),
-        ("0x0068", 104, "Overload Fault", "Faults", "", false, "Inverter Overload Fault Status"),
-        ("0x0069", 105, "Battery Voltage Fault", "Faults", "", false, "Battery Over/Undervoltage Fault Status"),
+        (
+            "0x0000",
+            0,
+            "Grid Voltage",
+            "Grid",
+            "V",
+            false,
+            "AC Mains Grid Line Voltage",
+        ),
+        (
+            "0x0000",
+            0,
+            "Grid Voltage X1",
+            "Grid",
+            "V",
+            false,
+            "AC Mains Grid Line Voltage (Phase 1)",
+        ),
+        (
+            "0x0001",
+            1,
+            "Grid Current",
+            "Grid",
+            "A",
+            false,
+            "AC Mains Grid Current",
+        ),
+        (
+            "0x0001",
+            1,
+            "Grid Current X1",
+            "Grid",
+            "A",
+            false,
+            "AC Mains Grid Current (Phase 1)",
+        ),
+        (
+            "0x0002",
+            2,
+            "Inverter Power",
+            "Inverter",
+            "W",
+            false,
+            "Inverter AC Active Power Output",
+        ),
+        (
+            "0x0002",
+            2,
+            "Inverter Power X1",
+            "Inverter",
+            "W",
+            false,
+            "Inverter AC Active Power Output (Phase 1)",
+        ),
+        (
+            "0x0003",
+            3,
+            "PV1 Voltage",
+            "Solar PV",
+            "V",
+            false,
+            "PV String 1 DC Input Voltage",
+        ),
+        (
+            "0x0003",
+            3,
+            "PV1 Voltage Hybrid",
+            "Solar PV",
+            "V",
+            false,
+            "PV String 1 DC Input Voltage (Hybrid)",
+        ),
+        (
+            "0x0004",
+            4,
+            "PV2 Voltage",
+            "Solar PV",
+            "V",
+            false,
+            "PV String 2 DC Input Voltage",
+        ),
+        (
+            "0x0004",
+            4,
+            "PV2 Voltage Hybrid",
+            "Solar PV",
+            "V",
+            false,
+            "PV String 2 DC Input Voltage (Hybrid)",
+        ),
+        (
+            "0x0005",
+            5,
+            "PV1 Current",
+            "Solar PV",
+            "A",
+            false,
+            "PV String 1 DC Input Current",
+        ),
+        (
+            "0x0005",
+            5,
+            "PV1 Current Hybrid",
+            "Solar PV",
+            "A",
+            false,
+            "PV String 1 DC Input Current (Hybrid)",
+        ),
+        (
+            "0x0006",
+            6,
+            "PV2 Current",
+            "Solar PV",
+            "A",
+            false,
+            "PV String 2 DC Input Current",
+        ),
+        (
+            "0x0006",
+            6,
+            "PV2 Current Hybrid",
+            "Solar PV",
+            "A",
+            false,
+            "PV String 2 DC Input Current (Hybrid)",
+        ),
+        (
+            "0x0007",
+            7,
+            "Grid Frequency",
+            "Grid",
+            "Hz",
+            false,
+            "AC Mains Grid Frequency",
+        ),
+        (
+            "0x0007",
+            7,
+            "Grid Frequency X1",
+            "Grid",
+            "Hz",
+            false,
+            "AC Mains Grid Frequency (Phase 1)",
+        ),
+        (
+            "0x0008",
+            8,
+            "Inner Temp",
+            "Status",
+            "°C",
+            false,
+            "Inverter Internal Operating Temperature",
+        ),
+        (
+            "0x0009",
+            9,
+            "Run Mode",
+            "Status",
+            "",
+            false,
+            "Operating Mode: 0: Wait, 1: Check, 2: Normal, 3: Fault, 4: Permanent Fault, 7: EPS",
+        ),
+        (
+            "0x000A",
+            10,
+            "PV1 Power",
+            "Solar PV",
+            "W",
+            false,
+            "PV String 1 Active DC Generation",
+        ),
+        (
+            "0x000B",
+            11,
+            "PV2 Power",
+            "Solar PV",
+            "W",
+            false,
+            "PV String 2 Active DC Generation",
+        ),
+        (
+            "0x0014",
+            20,
+            "Battery Voltage",
+            "Battery",
+            "V",
+            false,
+            "Battery Bank Terminal DC Voltage",
+        ),
+        (
+            "0x0015",
+            21,
+            "Battery Current",
+            "Battery",
+            "A",
+            false,
+            "Battery Charge / Discharge Current",
+        ),
+        (
+            "0x0016",
+            22,
+            "Battery Power",
+            "Battery",
+            "W",
+            false,
+            "Battery Active Power (Positive = Charge, Negative = Discharge)",
+        ),
+        (
+            "0x0017",
+            23,
+            "BMS Connect State",
+            "Battery",
+            "",
+            false,
+            "Battery Management System Connection State",
+        ),
+        (
+            "0x0018",
+            24,
+            "Battery Temperature",
+            "Battery",
+            "°C",
+            false,
+            "Internal Battery Module Cell Temperature",
+        ),
+        (
+            "0x0019",
+            25,
+            "Charger Boost Temperature",
+            "Battery",
+            "°C",
+            false,
+            "Charger Boost Stage Heatsink Temperature",
+        ),
+        (
+            "0x001C",
+            28,
+            "Battery Capacity",
+            "Battery",
+            "%",
+            false,
+            "Battery State of Charge (SOC)",
+        ),
+        (
+            "0x001D",
+            29,
+            "Battery Energy Discharged",
+            "Battery",
+            "kWh",
+            false,
+            "Lifetime Total Battery Energy Discharged",
+        ),
+        (
+            "0x001F",
+            31,
+            "BMS Warning",
+            "Faults",
+            "",
+            false,
+            "BMS Warning & Status Bitmask",
+        ),
+        (
+            "0x0020",
+            32,
+            "Battery Energy Discharged Today",
+            "Battery",
+            "kWh",
+            false,
+            "Daily Battery Discharged Energy",
+        ),
+        (
+            "0x0021",
+            33,
+            "Battery Energy Charged",
+            "Battery",
+            "kWh",
+            false,
+            "Lifetime Total Battery Energy Charged",
+        ),
+        (
+            "0x0023",
+            35,
+            "Battery Energy Charged Today",
+            "Battery",
+            "kWh",
+            false,
+            "Daily Battery Charged Energy",
+        ),
+        (
+            "0x0024",
+            36,
+            "BMS Max Charge Current",
+            "Battery",
+            "A",
+            false,
+            "BMS Maximum Allowed Charge Current Limit",
+        ),
+        (
+            "0x0025",
+            37,
+            "BMS Max Discharge Current",
+            "Battery",
+            "A",
+            false,
+            "BMS Maximum Allowed Discharge Current Limit",
+        ),
+        (
+            "0x0028",
+            40,
+            "Battery State of Health",
+            "Battery",
+            "%",
+            false,
+            "Battery Module Health Index (SOH)",
+        ),
+        (
+            "0x0040",
+            64,
+            "Inverter Fault",
+            "Faults",
+            "",
+            false,
+            "Inverter Fault Bitmask",
+        ),
+        (
+            "0x0042",
+            66,
+            "Charger Fault",
+            "Faults",
+            "",
+            false,
+            "Charger Subsystem Fault Bitmask",
+        ),
+        (
+            "0x0043",
+            67,
+            "Manager Fault",
+            "Faults",
+            "",
+            false,
+            "Inverter Manager / Communication Fault Bitmask",
+        ),
+        (
+            "0x0046",
+            70,
+            "Measured Power",
+            "Grid",
+            "W",
+            false,
+            "External Grid CT / Meter Active Power Measurement",
+        ),
+        (
+            "0x0048",
+            72,
+            "Feed In Energy",
+            "Grid",
+            "kWh",
+            false,
+            "Lifetime Total Solar Grid Feed-in Energy",
+        ),
+        (
+            "0x004A",
+            74,
+            "Consumed Energy",
+            "Grid",
+            "kWh",
+            false,
+            "Lifetime Total Grid Consumed Energy",
+        ),
+        (
+            "0x004C",
+            76,
+            "EPS Voltage",
+            "EPS",
+            "V",
+            false,
+            "Emergency Power Supply Output Voltage",
+        ),
+        (
+            "0x004D",
+            77,
+            "EPS Current",
+            "EPS",
+            "A",
+            false,
+            "Emergency Power Supply Output Current",
+        ),
+        (
+            "0x004E",
+            78,
+            "EPS VA",
+            "EPS",
+            "VA",
+            false,
+            "Emergency Power Supply Apparent Power",
+        ),
+        (
+            "0x004F",
+            79,
+            "EPS Frequency",
+            "EPS",
+            "Hz",
+            false,
+            "Emergency Power Supply Output Frequency",
+        ),
+        (
+            "0x0050",
+            80,
+            "Energy Today",
+            "Solar PV",
+            "kWh",
+            false,
+            "Daily Solar PV Generation",
+        ),
+        (
+            "0x0052",
+            82,
+            "Energy Total",
+            "Solar PV",
+            "kWh",
+            false,
+            "Lifetime Total Solar PV Generation",
+        ),
+        (
+            "0x0066",
+            102,
+            "Bus Voltage",
+            "Status",
+            "V",
+            false,
+            "Internal DC Bus Voltage",
+        ),
+        (
+            "0x0067",
+            103,
+            "DC Voltage Fault",
+            "Faults",
+            "V",
+            false,
+            "DC Bus Overvoltage Fault Threshold",
+        ),
+        (
+            "0x0068",
+            104,
+            "Overload Fault",
+            "Faults",
+            "",
+            false,
+            "Inverter Overload Fault Status",
+        ),
+        (
+            "0x0069",
+            105,
+            "Battery Voltage Fault",
+            "Faults",
+            "",
+            false,
+            "Battery Over/Undervoltage Fault Status",
+        ),
         // Write registers (Function Code 0x06)
-        ("0x0000", 0, "UnlockPassword", "Settings", "", true, "Installer Password Unlock (Write Reg 0x0000)"),
-        ("0x0001", 1, "PV Start Voltage", "Settings", "V", true, "PV Start Voltage Threshold (Write Reg 0x0001)"),
-        ("0x0002", 2, "Start Wait Time", "Settings", "s", true, "Start Waiting Time (Write Reg 0x0002)"),
-        ("0x0003", 3, "PV High Voltage Cutoff", "Settings", "V", true, "PV High Voltage Cutoff (Write Reg 0x0003)"),
-        ("0x0004", 4, "PV Low Voltage Cutoff", "Settings", "V", true, "PV Low Voltage Cutoff (Write Reg 0x0004)"),
-        ("0x0005", 5, "Min Grid Voltage Protect", "Settings", "V", true, "Minimum AC Voltage Limit (Write Reg 0x0005)"),
-        ("0x0006", 6, "Max Grid Voltage Protect", "Settings", "V", true, "Maximum AC Voltage Limit (Write Reg 0x0006)"),
-        ("0x0007", 7, "Min Grid Freq Protect", "Settings", "Hz", true, "Minimum AC Frequency Limit (Write Reg 0x0007)"),
-        ("0x0008", 8, "Max Grid Freq Protect", "Settings", "Hz", true, "Maximum AC Frequency Limit (Write Reg 0x0008)"),
-        ("0x0009", 9, "Safety Type", "Settings", "", true, "Safety Grid Code Selection (Write Reg 0x0009)"),
-        ("0x001C", 28, "Remote Switch", "Remote Control", "", true, "Remote Inverter Switch (Write Reg 0x001C)"),
-        ("0x001D", 29, "Inverter Reset E2PROM", "Settings", "", true, "1: Execute EEPROM reset (Write Reg 0x001D)"),
-        ("0x001E", 30, "Inverter Clear History", "Settings", "", true, "1: Execute history log clear (Write Reg 0x001E)"),
-        ("0x001F", 31, "SolarChargerUseMode", "Settings", "", true, "Operating Mode (Write Reg 0x001F)"),
-        ("0x0020", 32, "Battery Min Capacity", "Battery", "%", true, "Battery Reserved Minimum Capacity (Write Reg 0x0020)"),
-        ("0x0021", 33, "Battery Type", "Battery", "", true, "Battery Type (Write Reg 0x0021)"),
-        ("0x0022", 34, "Charge Float Voltage", "Battery", "V", true, "Charge Float Voltage (Write Reg 0x0022)"),
-        ("0x0023", 35, "Discharge Cutoff Voltage", "Battery", "V", true, "Battery Discharge Cutoff Voltage (Write Reg 0x0023)"),
-        ("0x0024", 36, "Max Charge Current", "Battery", "A", true, "Battery Maximum Charge Current (Write Reg 0x0024)"),
-        ("0x0025", 37, "Max Discharge Current", "Battery", "A", true, "Battery Maximum Discharge Current (Write Reg 0x0025)"),
-        ("0x0026", 38, "Charge Window 1 Start", "Battery", "HH:MM", true, "Period 1 Start Time (Write Reg 0x0026)"),
-        ("0x0027", 39, "Charge Window 1 End", "Battery", "HH:MM", true, "Period 1 End Time (Write Reg 0x0027)"),
-        ("0x002A", 42, "Charge Window 2 Start", "Battery", "HH:MM", true, "Period 2 Start Time (Write Reg 0x002A)"),
-        ("0x002B", 43, "Charge Window 2 End", "Battery", "HH:MM", true, "Period 2 End Time (Write Reg 0x002B)"),
-        ("0x0040", 64, "Allow Grid Charge", "Settings", "", true, "0: Forbidden, 1: P1, 2: P2, 3: Both (Write Reg 0x0040)"),
-        ("0x0041", 65, "Export Control Factory Limit", "Settings", "W", true, "Factory Export Power Limit (Write Reg 0x0041)"),
-        ("0x0042", 66, "Export Control User Limit", "Settings", "W", true, "User Export Power Limit (Write Reg 0x0042)"),
-        ("0x0043", 67, "EPS Mute", "Settings", "", true, "EPS Mute (Write Reg 0x0043)"),
-        ("0x0044", 68, "EPS Frequency", "Settings", "", true, "EPS Frequency (Write Reg 0x0044)"),
-        ("0x0051", 81, "ModbusPowerControl", "Remote Control", "", true, "Remote Power Control Enable (Write Reg 0x0051)"),
-        ("0x0052", 82, "Modbus ActivePower", "Remote Control", "W", true, "Remote Active Power Target (Write Reg 0x0052)"),
-        ("0x0053", 83, "Modbus ReactivePower", "Remote Control", "VAr", true, "Remote Reactive Power Target (Write Reg 0x0053)"),
-        ("0x0054", 84, "Self Test start", "Settings", "", true, "Self Test start (Write Reg 0x0054)"),
-        ("0x009F", 159, "PowerControl_timeout", "Remote Control", "s", true, "Remote Control Watchdog Timeout (Write Reg 0x009F)"),
+        (
+            "0x0000",
+            0,
+            "UnlockPassword",
+            "Settings",
+            "",
+            true,
+            "Installer Password Unlock (Write Reg 0x0000)",
+        ),
+        (
+            "0x0001",
+            1,
+            "PV Start Voltage",
+            "Settings",
+            "V",
+            true,
+            "PV Start Voltage Threshold (Write Reg 0x0001)",
+        ),
+        (
+            "0x0002",
+            2,
+            "Start Wait Time",
+            "Settings",
+            "s",
+            true,
+            "Start Waiting Time (Write Reg 0x0002)",
+        ),
+        (
+            "0x0003",
+            3,
+            "PV High Voltage Cutoff",
+            "Settings",
+            "V",
+            true,
+            "PV High Voltage Cutoff (Write Reg 0x0003)",
+        ),
+        (
+            "0x0004",
+            4,
+            "PV Low Voltage Cutoff",
+            "Settings",
+            "V",
+            true,
+            "PV Low Voltage Cutoff (Write Reg 0x0004)",
+        ),
+        (
+            "0x0005",
+            5,
+            "Min Grid Voltage Protect",
+            "Settings",
+            "V",
+            true,
+            "Minimum AC Voltage Limit (Write Reg 0x0005)",
+        ),
+        (
+            "0x0006",
+            6,
+            "Max Grid Voltage Protect",
+            "Settings",
+            "V",
+            true,
+            "Maximum AC Voltage Limit (Write Reg 0x0006)",
+        ),
+        (
+            "0x0007",
+            7,
+            "Min Grid Freq Protect",
+            "Settings",
+            "Hz",
+            true,
+            "Minimum AC Frequency Limit (Write Reg 0x0007)",
+        ),
+        (
+            "0x0008",
+            8,
+            "Max Grid Freq Protect",
+            "Settings",
+            "Hz",
+            true,
+            "Maximum AC Frequency Limit (Write Reg 0x0008)",
+        ),
+        (
+            "0x0009",
+            9,
+            "Safety Type",
+            "Settings",
+            "",
+            true,
+            "Safety Grid Code Selection (Write Reg 0x0009)",
+        ),
+        (
+            "0x001C",
+            28,
+            "Remote Switch",
+            "Remote Control",
+            "",
+            true,
+            "Remote Inverter Switch (Write Reg 0x001C)",
+        ),
+        (
+            "0x001D",
+            29,
+            "Inverter Reset E2PROM",
+            "Settings",
+            "",
+            true,
+            "1: Execute EEPROM reset (Write Reg 0x001D)",
+        ),
+        (
+            "0x001E",
+            30,
+            "Inverter Clear History",
+            "Settings",
+            "",
+            true,
+            "1: Execute history log clear (Write Reg 0x001E)",
+        ),
+        (
+            "0x001F",
+            31,
+            "SolarChargerUseMode",
+            "Settings",
+            "",
+            true,
+            "Operating Mode (Write Reg 0x001F)",
+        ),
+        (
+            "0x0020",
+            32,
+            "Battery Min Capacity",
+            "Battery",
+            "%",
+            true,
+            "Battery Reserved Minimum Capacity (Write Reg 0x0020)",
+        ),
+        (
+            "0x0021",
+            33,
+            "Battery Type",
+            "Battery",
+            "",
+            true,
+            "Battery Type (Write Reg 0x0021)",
+        ),
+        (
+            "0x0022",
+            34,
+            "Charge Float Voltage",
+            "Battery",
+            "V",
+            true,
+            "Charge Float Voltage (Write Reg 0x0022)",
+        ),
+        (
+            "0x0023",
+            35,
+            "Discharge Cutoff Voltage",
+            "Battery",
+            "V",
+            true,
+            "Battery Discharge Cutoff Voltage (Write Reg 0x0023)",
+        ),
+        (
+            "0x0024",
+            36,
+            "Max Charge Current",
+            "Battery",
+            "A",
+            true,
+            "Battery Maximum Charge Current (Write Reg 0x0024)",
+        ),
+        (
+            "0x0025",
+            37,
+            "Max Discharge Current",
+            "Battery",
+            "A",
+            true,
+            "Battery Maximum Discharge Current (Write Reg 0x0025)",
+        ),
+        (
+            "0x0026",
+            38,
+            "Charge Window 1 Start",
+            "Battery",
+            "HH:MM",
+            true,
+            "Period 1 Start Time (Write Reg 0x0026)",
+        ),
+        (
+            "0x0027",
+            39,
+            "Charge Window 1 End",
+            "Battery",
+            "HH:MM",
+            true,
+            "Period 1 End Time (Write Reg 0x0027)",
+        ),
+        (
+            "0x002A",
+            42,
+            "Charge Window 2 Start",
+            "Battery",
+            "HH:MM",
+            true,
+            "Period 2 Start Time (Write Reg 0x002A)",
+        ),
+        (
+            "0x002B",
+            43,
+            "Charge Window 2 End",
+            "Battery",
+            "HH:MM",
+            true,
+            "Period 2 End Time (Write Reg 0x002B)",
+        ),
+        (
+            "0x0040",
+            64,
+            "Allow Grid Charge",
+            "Settings",
+            "",
+            true,
+            "0: Forbidden, 1: P1, 2: P2, 3: Both (Write Reg 0x0040)",
+        ),
+        (
+            "0x0041",
+            65,
+            "Export Control Factory Limit",
+            "Settings",
+            "W",
+            true,
+            "Factory Export Power Limit (Write Reg 0x0041)",
+        ),
+        (
+            "0x0042",
+            66,
+            "Export Control User Limit",
+            "Settings",
+            "W",
+            true,
+            "User Export Power Limit (Write Reg 0x0042)",
+        ),
+        (
+            "0x0043",
+            67,
+            "EPS Mute",
+            "Settings",
+            "",
+            true,
+            "EPS Mute (Write Reg 0x0043)",
+        ),
+        (
+            "0x0044",
+            68,
+            "EPS Frequency",
+            "Settings",
+            "",
+            true,
+            "EPS Frequency (Write Reg 0x0044)",
+        ),
+        (
+            "0x0051",
+            81,
+            "ModbusPowerControl",
+            "Remote Control",
+            "",
+            true,
+            "Remote Power Control Enable (Write Reg 0x0051)",
+        ),
+        (
+            "0x0052",
+            82,
+            "Modbus ActivePower",
+            "Remote Control",
+            "W",
+            true,
+            "Remote Active Power Target (Write Reg 0x0052)",
+        ),
+        (
+            "0x0053",
+            83,
+            "Modbus ReactivePower",
+            "Remote Control",
+            "VAr",
+            true,
+            "Remote Reactive Power Target (Write Reg 0x0053)",
+        ),
+        (
+            "0x0054",
+            84,
+            "Self Test start",
+            "Settings",
+            "",
+            true,
+            "Self Test start (Write Reg 0x0054)",
+        ),
+        (
+            "0x009F",
+            159,
+            "PowerControl_timeout",
+            "Remote Control",
+            "s",
+            true,
+            "Remote Control Watchdog Timeout (Write Reg 0x009F)",
+        ),
     ];
 
     let solax_g4: &[(&str, u16, &str, &str, &str, bool, &str)] = &[
-        ("0x0000", 0, "Grid Voltage", "Grid", "V", false, "AC Mains Grid Line Voltage"),
-        ("0x0004", 4, "Grid Frequency", "Grid", "Hz", false, "AC Mains Grid Frequency"),
-        ("0x000A", 10, "PV1 Power", "Solar PV", "W", false, "PV String 1 Active DC Generation"),
-        ("0x0014", 20, "Battery Voltage", "Battery", "V", false, "Battery Bank Terminal DC Voltage"),
-        ("0x0016", 22, "Battery Power", "Battery", "W", false, "Battery Active Power"),
-        ("0x001C", 28, "Battery Capacity", "Battery", "%", false, "Battery State of Charge (SOC)"),
-        ("0x007C", 124, "Modbus Power Control", "Remote Control", "", true, "Gen 4 Modbus Power Control Enable Register"),
-        ("0x007D", 125, "Target Set Type", "Remote Control", "", true, "Gen 4 Target Control Type Register"),
-        ("0x007E", 126, "Remote Power Setpoint", "Remote Control", "W", true, "Gen 4 Remote Power Setpoint (32-bit int)"),
-        ("0x0088", 136, "Remote Control Timeout", "Remote Control", "s", true, "Gen 4 Remote Control Timeout Register"),
+        (
+            "0x0000",
+            0,
+            "Grid Voltage",
+            "Grid",
+            "V",
+            false,
+            "AC Mains Grid Line Voltage",
+        ),
+        (
+            "0x0004",
+            4,
+            "Grid Frequency",
+            "Grid",
+            "Hz",
+            false,
+            "AC Mains Grid Frequency",
+        ),
+        (
+            "0x000A",
+            10,
+            "PV1 Power",
+            "Solar PV",
+            "W",
+            false,
+            "PV String 1 Active DC Generation",
+        ),
+        (
+            "0x0014",
+            20,
+            "Battery Voltage",
+            "Battery",
+            "V",
+            false,
+            "Battery Bank Terminal DC Voltage",
+        ),
+        (
+            "0x0016",
+            22,
+            "Battery Power",
+            "Battery",
+            "W",
+            false,
+            "Battery Active Power",
+        ),
+        (
+            "0x001C",
+            28,
+            "Battery Capacity",
+            "Battery",
+            "%",
+            false,
+            "Battery State of Charge (SOC)",
+        ),
+        (
+            "0x007C",
+            124,
+            "Modbus Power Control",
+            "Remote Control",
+            "",
+            true,
+            "Gen 4 Modbus Power Control Enable Register",
+        ),
+        (
+            "0x007D",
+            125,
+            "Target Set Type",
+            "Remote Control",
+            "",
+            true,
+            "Gen 4 Target Control Type Register",
+        ),
+        (
+            "0x007E",
+            126,
+            "Remote Power Setpoint",
+            "Remote Control",
+            "W",
+            true,
+            "Gen 4 Remote Power Setpoint (32-bit int)",
+        ),
+        (
+            "0x0088",
+            136,
+            "Remote Control Timeout",
+            "Remote Control",
+            "s",
+            true,
+            "Gen 4 Remote Control Timeout Register",
+        ),
     ];
 
     let sdm630_map: &[(&str, u16, &str, &str, &str, bool, &str)] = &[
-        ("0x0000", 0, "Phase 1 line to neutral volts", "Grid", "V", false, "Line to neutral voltage Phase 1"),
-        ("0x0002", 2, "Phase 2 line to neutral volts", "Grid", "V", false, "Line to neutral voltage Phase 2"),
-        ("0x0004", 4, "Phase 3 line to neutral volts", "Grid", "V", false, "Line to neutral voltage Phase 3"),
-        ("0x0006", 6, "Phase 1 current", "Grid", "A", false, "Line current Phase 1"),
-        ("0x0008", 8, "Phase 2 current", "Grid", "A", false, "Line current Phase 2"),
-        ("0x000A", 10, "Phase 3 current", "Grid", "A", false, "Line current Phase 3"),
-        ("0x000C", 12, "Phase 1 power", "Grid", "W", false, "Active power Phase 1"),
-        ("0x000E", 14, "Phase 2 power", "Grid", "W", false, "Active power Phase 2"),
-        ("0x0010", 16, "Phase 3 power", "Grid", "W", false, "Active power Phase 3"),
-        ("0x0012", 18, "Phase 1 volt amps", "Grid", "VA", false, "Apparent power Phase 1"),
-        ("0x0014", 20, "Phase 2 volt amps", "Grid", "VA", false, "Apparent power Phase 2"),
-        ("0x0016", 22, "Phase 3 volt amps", "Grid", "VA", false, "Apparent power Phase 3"),
-        ("0x0018", 24, "Phase 1 volt amps reactive", "Grid", "VAr", false, "Reactive power Phase 1"),
-        ("0x001A", 26, "Phase 2 volt amps reactive", "Grid", "VAr", false, "Reactive power Phase 2"),
-        ("0x001C", 28, "Phase 3 volt amps reactive", "Grid", "VAr", false, "Reactive power Phase 3"),
-        ("0x001E", 30, "Phase 1 power factor", "Grid", "PF", false, "Power factor Phase 1"),
-        ("0x0020", 32, "Phase 2 power factor", "Grid", "PF", false, "Power factor Phase 2"),
-        ("0x0022", 34, "Phase 3 power factor", "Grid", "PF", false, "Power factor Phase 3"),
-        ("0x0024", 36, "Phase 1 phase angle", "Grid", "°", false, "Phase angle Phase 1"),
-        ("0x0026", 38, "Phase 2 phase angle", "Grid", "°", false, "Phase angle Phase 2"),
-        ("0x0028", 40, "Phase 3 phase angle", "Grid", "°", false, "Phase angle Phase 3"),
-        ("0x002A", 42, "Average line to neutral volts", "Grid", "V", false, "Average line to neutral voltage"),
-        ("0x002E", 46, "Average line current", "Grid", "A", false, "Average line current"),
-        ("0x0030", 48, "Sum of line currents", "Grid", "A", false, "Sum of line currents"),
-        ("0x0034", 52, "Total system power", "Grid", "W", false, "Total active system power"),
-        ("0x0038", 56, "Total system volt amps", "Grid", "VA", false, "Total apparent power"),
-        ("0x003C", 60, "Total system VAr", "Grid", "VAr", false, "Total reactive power"),
-        ("0x003E", 62, "Total system power factor", "Grid", "PF", false, "Total system power factor"),
-        ("0x0042", 66, "Frequency of supply voltages", "Grid", "Hz", false, "AC Mains grid supply frequency"),
-        ("0x0048", 72, "Total import kWh", "Grid", "kWh", false, "Lifetime total grid imported energy"),
-        ("0x004A", 74, "Total export kWh", "Grid", "kWh", false, "Lifetime total grid exported energy"),
-        ("0x004C", 76, "Total import kvarh", "Grid", "kVArh", false, "Lifetime total imported reactive energy"),
-        ("0x004E", 78, "Total export kvarh", "Grid", "kVArh", false, "Lifetime total exported reactive energy"),
-        ("0x0050", 80, "Total VAh", "Grid", "VAh", false, "Lifetime total apparent energy"),
-        ("0x0052", 82, "Ah", "Grid", "Ah", false, "Lifetime total Ampere hours"),
-        ("0x0054", 84, "Total system power demand", "Grid", "W", false, "Total system active power demand"),
-        ("0x0056", 86, "Maximum total system power demand", "Grid", "W", false, "Maximum total system active power demand"),
-        ("0x0064", 100, "Total system VA demand", "Grid", "VA", false, "Total system apparent power demand"),
-        ("0x0066", 102, "Maximum total system VA demand", "Grid", "VA", false, "Maximum total system apparent power demand"),
-        ("0x006E", 110, "Neutral current demand", "Grid", "A", false, "Neutral current demand"),
-        ("0x0070", 112, "Maximum neutral current demand", "Grid", "A", false, "Maximum neutral current demand"),
-        ("0x00C8", 200, "Phase 1 to Phase 2 volts", "Grid", "V", false, "Line-to-line voltage Phase 1-2"),
-        ("0x00CA", 202, "Phase 2 to Phase 3 volts", "Grid", "V", false, "Line-to-line voltage Phase 2-3"),
-        ("0x00CC", 204, "Phase 3 to Phase 1 volts", "Grid", "V", false, "Line-to-line voltage Phase 3-1"),
-        ("0x00CE", 206, "Average line to line volts", "Grid", "V", false, "Average line-to-line voltage"),
-        ("0x00E0", 224, "Neutral current", "Grid", "A", false, "Calculated neutral current"),
-        ("0x00EA", 234, "Phase 1 current THD", "Grid", "%", false, "Current Total Harmonic Distortion Phase 1"),
-        ("0x00EC", 236, "Phase 2 current THD", "Grid", "%", false, "Current Total Harmonic Distortion Phase 2"),
-        ("0x00EE", 238, "Phase 3 current THD", "Grid", "%", false, "Current Total Harmonic Distortion Phase 3"),
-        ("0x00F0", 240, "Phase 1 voltage THD", "Grid", "%", false, "Voltage Total Harmonic Distortion Phase 1"),
-        ("0x00F2", 242, "Phase 2 voltage THD", "Grid", "%", false, "Voltage Total Harmonic Distortion Phase 2"),
-        ("0x00F4", 244, "Phase 3 voltage THD", "Grid", "%", false, "Voltage Total Harmonic Distortion Phase 3"),
-        ("0x0156", 342, "Total kWh", "Grid", "kWh", false, "Lifetime total active energy"),
-        ("0x0158", 344, "Total kvarh", "Grid", "kVArh", false, "Lifetime total reactive energy"),
+        (
+            "0x0000",
+            0,
+            "Phase 1 line to neutral volts",
+            "Grid",
+            "V",
+            false,
+            "Line to neutral voltage Phase 1",
+        ),
+        (
+            "0x0002",
+            2,
+            "Phase 2 line to neutral volts",
+            "Grid",
+            "V",
+            false,
+            "Line to neutral voltage Phase 2",
+        ),
+        (
+            "0x0004",
+            4,
+            "Phase 3 line to neutral volts",
+            "Grid",
+            "V",
+            false,
+            "Line to neutral voltage Phase 3",
+        ),
+        (
+            "0x0006",
+            6,
+            "Phase 1 current",
+            "Grid",
+            "A",
+            false,
+            "Line current Phase 1",
+        ),
+        (
+            "0x0008",
+            8,
+            "Phase 2 current",
+            "Grid",
+            "A",
+            false,
+            "Line current Phase 2",
+        ),
+        (
+            "0x000A",
+            10,
+            "Phase 3 current",
+            "Grid",
+            "A",
+            false,
+            "Line current Phase 3",
+        ),
+        (
+            "0x000C",
+            12,
+            "Phase 1 power",
+            "Grid",
+            "W",
+            false,
+            "Active power Phase 1",
+        ),
+        (
+            "0x000E",
+            14,
+            "Phase 2 power",
+            "Grid",
+            "W",
+            false,
+            "Active power Phase 2",
+        ),
+        (
+            "0x0010",
+            16,
+            "Phase 3 power",
+            "Grid",
+            "W",
+            false,
+            "Active power Phase 3",
+        ),
+        (
+            "0x0012",
+            18,
+            "Phase 1 volt amps",
+            "Grid",
+            "VA",
+            false,
+            "Apparent power Phase 1",
+        ),
+        (
+            "0x0014",
+            20,
+            "Phase 2 volt amps",
+            "Grid",
+            "VA",
+            false,
+            "Apparent power Phase 2",
+        ),
+        (
+            "0x0016",
+            22,
+            "Phase 3 volt amps",
+            "Grid",
+            "VA",
+            false,
+            "Apparent power Phase 3",
+        ),
+        (
+            "0x0018",
+            24,
+            "Phase 1 volt amps reactive",
+            "Grid",
+            "VAr",
+            false,
+            "Reactive power Phase 1",
+        ),
+        (
+            "0x001A",
+            26,
+            "Phase 2 volt amps reactive",
+            "Grid",
+            "VAr",
+            false,
+            "Reactive power Phase 2",
+        ),
+        (
+            "0x001C",
+            28,
+            "Phase 3 volt amps reactive",
+            "Grid",
+            "VAr",
+            false,
+            "Reactive power Phase 3",
+        ),
+        (
+            "0x001E",
+            30,
+            "Phase 1 power factor",
+            "Grid",
+            "PF",
+            false,
+            "Power factor Phase 1",
+        ),
+        (
+            "0x0020",
+            32,
+            "Phase 2 power factor",
+            "Grid",
+            "PF",
+            false,
+            "Power factor Phase 2",
+        ),
+        (
+            "0x0022",
+            34,
+            "Phase 3 power factor",
+            "Grid",
+            "PF",
+            false,
+            "Power factor Phase 3",
+        ),
+        (
+            "0x0024",
+            36,
+            "Phase 1 phase angle",
+            "Grid",
+            "°",
+            false,
+            "Phase angle Phase 1",
+        ),
+        (
+            "0x0026",
+            38,
+            "Phase 2 phase angle",
+            "Grid",
+            "°",
+            false,
+            "Phase angle Phase 2",
+        ),
+        (
+            "0x0028",
+            40,
+            "Phase 3 phase angle",
+            "Grid",
+            "°",
+            false,
+            "Phase angle Phase 3",
+        ),
+        (
+            "0x002A",
+            42,
+            "Average line to neutral volts",
+            "Grid",
+            "V",
+            false,
+            "Average line to neutral voltage",
+        ),
+        (
+            "0x002E",
+            46,
+            "Average line current",
+            "Grid",
+            "A",
+            false,
+            "Average line current",
+        ),
+        (
+            "0x0030",
+            48,
+            "Sum of line currents",
+            "Grid",
+            "A",
+            false,
+            "Sum of line currents",
+        ),
+        (
+            "0x0034",
+            52,
+            "Total system power",
+            "Grid",
+            "W",
+            false,
+            "Total active system power",
+        ),
+        (
+            "0x0038",
+            56,
+            "Total system volt amps",
+            "Grid",
+            "VA",
+            false,
+            "Total apparent power",
+        ),
+        (
+            "0x003C",
+            60,
+            "Total system VAr",
+            "Grid",
+            "VAr",
+            false,
+            "Total reactive power",
+        ),
+        (
+            "0x003E",
+            62,
+            "Total system power factor",
+            "Grid",
+            "PF",
+            false,
+            "Total system power factor",
+        ),
+        (
+            "0x0042",
+            66,
+            "Frequency of supply voltages",
+            "Grid",
+            "Hz",
+            false,
+            "AC Mains grid supply frequency",
+        ),
+        (
+            "0x0048",
+            72,
+            "Total import kWh",
+            "Grid",
+            "kWh",
+            false,
+            "Lifetime total grid imported energy",
+        ),
+        (
+            "0x004A",
+            74,
+            "Total export kWh",
+            "Grid",
+            "kWh",
+            false,
+            "Lifetime total grid exported energy",
+        ),
+        (
+            "0x004C",
+            76,
+            "Total import kvarh",
+            "Grid",
+            "kVArh",
+            false,
+            "Lifetime total imported reactive energy",
+        ),
+        (
+            "0x004E",
+            78,
+            "Total export kvarh",
+            "Grid",
+            "kVArh",
+            false,
+            "Lifetime total exported reactive energy",
+        ),
+        (
+            "0x0050",
+            80,
+            "Total VAh",
+            "Grid",
+            "VAh",
+            false,
+            "Lifetime total apparent energy",
+        ),
+        (
+            "0x0052",
+            82,
+            "Ah",
+            "Grid",
+            "Ah",
+            false,
+            "Lifetime total Ampere hours",
+        ),
+        (
+            "0x0054",
+            84,
+            "Total system power demand",
+            "Grid",
+            "W",
+            false,
+            "Total system active power demand",
+        ),
+        (
+            "0x0056",
+            86,
+            "Maximum total system power demand",
+            "Grid",
+            "W",
+            false,
+            "Maximum total system active power demand",
+        ),
+        (
+            "0x0064",
+            100,
+            "Total system VA demand",
+            "Grid",
+            "VA",
+            false,
+            "Total system apparent power demand",
+        ),
+        (
+            "0x0066",
+            102,
+            "Maximum total system VA demand",
+            "Grid",
+            "VA",
+            false,
+            "Maximum total system apparent power demand",
+        ),
+        (
+            "0x006E",
+            110,
+            "Neutral current demand",
+            "Grid",
+            "A",
+            false,
+            "Neutral current demand",
+        ),
+        (
+            "0x0070",
+            112,
+            "Maximum neutral current demand",
+            "Grid",
+            "A",
+            false,
+            "Maximum neutral current demand",
+        ),
+        (
+            "0x00C8",
+            200,
+            "Phase 1 to Phase 2 volts",
+            "Grid",
+            "V",
+            false,
+            "Line-to-line voltage Phase 1-2",
+        ),
+        (
+            "0x00CA",
+            202,
+            "Phase 2 to Phase 3 volts",
+            "Grid",
+            "V",
+            false,
+            "Line-to-line voltage Phase 2-3",
+        ),
+        (
+            "0x00CC",
+            204,
+            "Phase 3 to Phase 1 volts",
+            "Grid",
+            "V",
+            false,
+            "Line-to-line voltage Phase 3-1",
+        ),
+        (
+            "0x00CE",
+            206,
+            "Average line to line volts",
+            "Grid",
+            "V",
+            false,
+            "Average line-to-line voltage",
+        ),
+        (
+            "0x00E0",
+            224,
+            "Neutral current",
+            "Grid",
+            "A",
+            false,
+            "Calculated neutral current",
+        ),
+        (
+            "0x00EA",
+            234,
+            "Phase 1 current THD",
+            "Grid",
+            "%",
+            false,
+            "Current Total Harmonic Distortion Phase 1",
+        ),
+        (
+            "0x00EC",
+            236,
+            "Phase 2 current THD",
+            "Grid",
+            "%",
+            false,
+            "Current Total Harmonic Distortion Phase 2",
+        ),
+        (
+            "0x00EE",
+            238,
+            "Phase 3 current THD",
+            "Grid",
+            "%",
+            false,
+            "Current Total Harmonic Distortion Phase 3",
+        ),
+        (
+            "0x00F0",
+            240,
+            "Phase 1 voltage THD",
+            "Grid",
+            "%",
+            false,
+            "Voltage Total Harmonic Distortion Phase 1",
+        ),
+        (
+            "0x00F2",
+            242,
+            "Phase 2 voltage THD",
+            "Grid",
+            "%",
+            false,
+            "Voltage Total Harmonic Distortion Phase 2",
+        ),
+        (
+            "0x00F4",
+            244,
+            "Phase 3 voltage THD",
+            "Grid",
+            "%",
+            false,
+            "Voltage Total Harmonic Distortion Phase 3",
+        ),
+        (
+            "0x0156",
+            342,
+            "Total kWh",
+            "Grid",
+            "kWh",
+            false,
+            "Lifetime total active energy",
+        ),
+        (
+            "0x0158",
+            344,
+            "Total kvarh",
+            "Grid",
+            "kVArh",
+            false,
+            "Lifetime total reactive energy",
+        ),
     ];
 
     let dtsu666_map: &[(&str, u16, &str, &str, &str, bool, &str)] = &[
-        ("0x2000", 8192, "Phase A Voltage", "Grid", "V", false, "Phase A AC Line Voltage"),
-        ("0x2002", 8194, "Phase A Current", "Grid", "A", false, "Phase A AC Current"),
-        ("0x2004", 8196, "Active Power", "Grid", "W", false, "Total Active Grid Power"),
-        ("0x2006", 8198, "Reactive Power", "Grid", "VAr", false, "Total Reactive Grid Power"),
-        ("0x200A", 8202, "Power Factor", "Grid", "PF", false, "System Power Factor"),
-        ("0x200E", 8206, "Frequency", "Grid", "Hz", false, "AC Mains Grid Frequency"),
-        ("0x4000", 16384, "Import Active Energy", "Grid", "kWh", false, "Total Imported Active Energy"),
-        ("0x4002", 16386, "Export Active Energy", "Grid", "kWh", false, "Total Exported Active Energy"),
+        (
+            "0x2000",
+            8192,
+            "Phase A Voltage",
+            "Grid",
+            "V",
+            false,
+            "Phase A AC Line Voltage",
+        ),
+        (
+            "0x2002",
+            8194,
+            "Phase A Current",
+            "Grid",
+            "A",
+            false,
+            "Phase A AC Current",
+        ),
+        (
+            "0x2004",
+            8196,
+            "Active Power",
+            "Grid",
+            "W",
+            false,
+            "Total Active Grid Power",
+        ),
+        (
+            "0x2006",
+            8198,
+            "Reactive Power",
+            "Grid",
+            "VAr",
+            false,
+            "Total Reactive Grid Power",
+        ),
+        (
+            "0x200A",
+            8202,
+            "Power Factor",
+            "Grid",
+            "PF",
+            false,
+            "System Power Factor",
+        ),
+        (
+            "0x200E",
+            8206,
+            "Frequency",
+            "Grid",
+            "Hz",
+            false,
+            "AC Mains Grid Frequency",
+        ),
+        (
+            "0x4000",
+            16384,
+            "Import Active Energy",
+            "Grid",
+            "kWh",
+            false,
+            "Total Imported Active Energy",
+        ),
+        (
+            "0x4002",
+            16386,
+            "Export Active Energy",
+            "Grid",
+            "kWh",
+            false,
+            "Total Exported Active Energy",
+        ),
     ];
 
     let empty_map: &[(&str, u16, &str, &str, &str, bool, &str)] = &[];
@@ -561,17 +2678,23 @@ pub fn build_inverter_register_details(inv_name: &str, inv: &InverterStatus) -> 
         }
     }
 
-    let mut unmapped: Vec<(&String, &String)> = inv.raw_metrics.iter()
+    let mut unmapped: Vec<(&String, &String)> = inv
+        .raw_metrics
+        .iter()
         .filter(|(k, _)| !mapped_keys.contains(*k))
         .collect();
     unmapped.sort_by(|a, b| a.0.cmp(b.0));
 
     for (key, val) in unmapped {
-        let (hex_label, desc) = if key == "Power Budget" || key == "Usage" || key == "Requested Battery Power" {
-            ("Calculated", "Derived software calculation (no single hardware Modbus register)".to_string())
-        } else {
-            ("Derived", "Software / driver telemetry metric".to_string())
-        };
+        let (hex_label, desc) =
+            if key == "Power Budget" || key == "Usage" || key == "Requested Battery Power" {
+                (
+                    "Calculated",
+                    "Derived software calculation (no single hardware Modbus register)".to_string(),
+                )
+            } else {
+                ("Derived", "Software / driver telemetry metric".to_string())
+            };
 
         registers.push(RegisterDetail {
             address_hex: hex_label.to_string(),
@@ -599,10 +2722,13 @@ pub async fn handle_get_inverter_registers(
     })?;
 
     let status = get_system_status_lock().clone();
-    
+
     if let Some(inv) = status.inverters.get(name) {
         let regs = build_inverter_register_details(name, inv);
-        let driver_type = inv.driver_type.clone().unwrap_or_else(|| "Unknown".to_string());
+        let driver_type = inv
+            .driver_type
+            .clone()
+            .unwrap_or_else(|| "Unknown".to_string());
         return Ok(Json(InverterRegistersResponse {
             name: name.clone(),
             driver_type,
@@ -615,9 +2741,17 @@ pub async fn handle_get_inverter_registers(
 
     // Try meters map (direct match or stripped /dev/tty match or case-insensitive)
     let clean_name = name.replace("/dev/tty", "").replace("/dev/", "");
-    let meter_entry = status.meters.get(name)
+    let meter_entry = status
+        .meters
+        .get(name)
         .or_else(|| status.meters.get(&clean_name))
-        .or_else(|| status.meters.iter().find(|(k, _)| k.eq_ignore_ascii_case(name) || k.eq_ignore_ascii_case(&clean_name)).map(|(_, v)| v));
+        .or_else(|| {
+            status
+                .meters
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(name) || k.eq_ignore_ascii_case(&clean_name))
+                .map(|(_, v)| v)
+        });
 
     if let Some(meter) = meter_entry {
         let dummy_inv = InverterStatus {
@@ -629,7 +2763,10 @@ pub async fn handle_get_inverter_registers(
             ..Default::default()
         };
         let regs = build_inverter_register_details(name, &dummy_inv);
-        let driver_type = meter.driver_type.clone().unwrap_or_else(|| "Meter".to_string());
+        let driver_type = meter
+            .driver_type
+            .clone()
+            .unwrap_or_else(|| "Meter".to_string());
         return Ok(Json(InverterRegistersResponse {
             name: name.clone(),
             driver_type,
@@ -756,9 +2893,16 @@ pub async fn get_health_status(db_path: &str) -> (axum::http::StatusCode, Json<s
 #[derive(serde::Serialize, Clone)]
 #[serde(tag = "type")]
 pub enum SimProgressUpdate {
-    Progress { percent: f64, eta_seconds: f64 },
-    Result { response: crate::power_manager::SimulationResponse },
-    Error { message: String },
+    Progress {
+        percent: f64,
+        eta_seconds: f64,
+    },
+    Result {
+        response: crate::power_manager::SimulationResponse,
+    },
+    Error {
+        message: String,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -782,13 +2926,21 @@ pub struct BackupDump {
 }
 
 fn export_backup_dump(db_path: &str) -> Result<BackupDump, (axum::http::StatusCode, String)> {
-    let cfg = Config::load_from_db(db_path)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load config: {}", e)))?;
+    let cfg = Config::load_from_db(db_path).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to load config: {}", e),
+        )
+    })?;
 
     let _ = crate::database::init_history_db(db_path);
 
-    let history_rows = crate::database::get_all_telemetry_since(db_path, 0)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to query telemetry history: {}", e)))?;
+    let history_rows = crate::database::get_all_telemetry_since(db_path, 0).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to query telemetry history: {}", e),
+        )
+    })?;
 
     let telemetry_history = history_rows
         .into_iter()
@@ -807,17 +2959,28 @@ fn export_backup_dump(db_path: &str) -> Result<BackupDump, (axum::http::StatusCo
     })
 }
 
-fn export_telemetry_csv(db_path: &str) -> Result<([(header::HeaderName, String); 2], Vec<u8>), (axum::http::StatusCode, String)> {
+fn export_telemetry_csv(
+    db_path: &str,
+) -> Result<([(header::HeaderName, String); 2], Vec<u8>), (axum::http::StatusCode, String)> {
     let _ = crate::database::init_history_db(db_path);
 
     let cfg = Config::load_from_db(db_path).unwrap_or_else(|_| Config::default_empty());
-    let tz_offset = crate::power_manager::get_timezone_offset(cfg.battery_control.as_ref().and_then(|bc| bc.timezone.as_deref()));
+    let tz_offset = crate::power_manager::get_timezone_offset(
+        cfg.battery_control
+            .as_ref()
+            .and_then(|bc| bc.timezone.as_deref()),
+    );
 
-    let history_rows = crate::database::get_all_telemetry_since(db_path, 0)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to query telemetry history: {}", e)))?;
+    let history_rows = crate::database::get_all_telemetry_since(db_path, 0).map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to query telemetry history: {}", e),
+        )
+    })?;
 
     let mut topics_set = std::collections::BTreeSet::new();
-    let mut time_map: std::collections::BTreeMap<i64, std::collections::HashMap<String, f64>> = std::collections::BTreeMap::new();
+    let mut time_map: std::collections::BTreeMap<i64, std::collections::HashMap<String, f64>> =
+        std::collections::BTreeMap::new();
 
     for (ts, topic, val) in history_rows {
         topics_set.insert(topic.clone());
@@ -832,7 +2995,10 @@ fn export_telemetry_csv(db_path: &str) -> Result<([(header::HeaderName, String);
     header_row.extend(topics.clone());
 
     if let Err(e) = wtr.write_record(&header_row) {
-        return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV write header error: {}", e)));
+        return Err((
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("CSV write header error: {}", e),
+        ));
     }
 
     for (ts, vals) in time_map {
@@ -854,14 +3020,24 @@ fn export_telemetry_csv(db_path: &str) -> Result<([(header::HeaderName, String);
         }
 
         if let Err(e) = wtr.write_record(&row) {
-            return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV write record error: {}", e)));
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("CSV write record error: {}", e),
+            ));
         }
     }
 
-    let csv_bytes = wtr.into_inner()
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("CSV flush error: {}", e)))?;
+    let csv_bytes = wtr.into_inner().map_err(|e| {
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("CSV flush error: {}", e),
+        )
+    })?;
 
-    let now_str = chrono::Utc::now().with_timezone(&tz_offset).format("%Y%m%d_%H%M%S").to_string();
+    let now_str = chrono::Utc::now()
+        .with_timezone(&tz_offset)
+        .format("%Y%m%d_%H%M%S")
+        .to_string();
     let filename = format!("powerscraper_telemetry_{}.csv", now_str);
 
     let headers = [
@@ -1575,7 +3751,8 @@ pub struct TuningLogEvent {
 
 pub static TUNING_PROGRESS: OnceLock<Mutex<TuningProgress>> = OnceLock::new();
 pub static ACTIVE_CHILD: OnceLock<Mutex<Option<std::process::Child>>> = OnceLock::new();
-pub static TUNING_CHANNEL: OnceLock<tokio::sync::broadcast::Sender<TuningLogEvent>> = OnceLock::new();
+pub static TUNING_CHANNEL: OnceLock<tokio::sync::broadcast::Sender<TuningLogEvent>> =
+    OnceLock::new();
 
 pub fn get_tuning_progress() -> &'static Mutex<TuningProgress> {
     TUNING_PROGRESS.get_or_init(|| Mutex::new(TuningProgress::default()))
@@ -1616,7 +3793,10 @@ pub async fn handle_start_training(
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let mut progress = get_tuning_progress().lock().unwrap();
     if progress.is_running {
-        return Err((axum::http::StatusCode::CONFLICT, "Training is already running".to_string()));
+        return Err((
+            axum::http::StatusCode::CONFLICT,
+            "Training is already running".to_string(),
+        ));
     }
 
     // Parse seed if requested
@@ -1650,28 +3830,29 @@ pub async fn handle_start_training(
 
     // Spawn tuning thread
     tokio::task::spawn_blocking(move || {
-        let (records, sim_config) = match crate::power_manager::load_sim_records(&db_path_clone, "all") {
-            Ok(res) => res,
-            Err(e) => {
-                let mut progress = get_tuning_progress().lock().unwrap();
-                progress.is_running = false;
-                progress.error = Some(e.clone());
-                let _ = tx.send(TuningLogEvent {
-                    percent: 0.0,
-                    gen_num: 0,
-                    total_gens: req_generations,
-                    best_cost: 0.0,
-                    bill: 0.0,
-                    cycles: 0.0,
-                    log_line: format!("Error loading data: {}", e),
-                    done: true,
-                    error: Some(e),
-                    best_params: None,
-                    best_params_monthly: None,
-                });
-                return;
-            }
-        };
+        let (records, sim_config) =
+            match crate::power_manager::load_sim_records(&db_path_clone, "all") {
+                Ok(res) => res,
+                Err(e) => {
+                    let mut progress = get_tuning_progress().lock().unwrap();
+                    progress.is_running = false;
+                    progress.error = Some(e.clone());
+                    let _ = tx.send(TuningLogEvent {
+                        percent: 0.0,
+                        gen_num: 0,
+                        total_gens: req_generations,
+                        best_cost: 0.0,
+                        bill: 0.0,
+                        cycles: 0.0,
+                        log_line: format!("Error loading data: {}", e),
+                        done: true,
+                        error: Some(e),
+                        best_params: None,
+                        best_params_monthly: None,
+                    });
+                    return;
+                }
+            };
 
         let progress_tx = tx.clone();
         let progress_cb = move |event: crate::simulation::tuning::TuningProgressEvent| -> bool {
@@ -1725,7 +3906,7 @@ pub async fn handle_start_training(
                 if CANCEL_TUNING.load(Ordering::Relaxed) {
                     return;
                 }
-                
+
                 let mut progress = get_tuning_progress().lock().unwrap();
                 progress.is_running = false;
                 progress.best_params_monthly = Some(best_params_monthly.clone());
@@ -1804,7 +3985,12 @@ pub async fn handle_apply_training(
 ) -> Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
     let mut cfg = match Config::load_from_db(&db_path) {
         Ok(c) => c,
-        Err(e) => return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to load config: {}", e))),
+        Err(e) => {
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to load config: {}", e),
+            ));
+        }
     };
 
     if let Some(ref mut bc) = cfg.battery_control {
@@ -1817,11 +4003,17 @@ pub async fn handle_apply_training(
             }
         }
     } else {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Battery control config not initialized in database settings.".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "Battery control config not initialized in database settings.".to_string(),
+        ));
     }
 
     if let Err(e) = cfg.save_to_db_async(&db_path).await {
-        return Err((axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to save config: {}", e)));
+        return Err((
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to save config: {}", e),
+        ));
     }
 
     let _ = reload_tx.send(()).await;
@@ -1830,45 +4022,54 @@ pub async fn handle_apply_training(
 
 pub async fn handle_training_progress() -> impl IntoResponse {
     let rx = get_tuning_channel().subscribe();
-    
+
     let logs = {
         let prog = get_tuning_progress().lock().unwrap();
         prog.logs.clone()
     };
 
-    let stream = futures_util::stream::unfold((rx, logs, 0), |(mut rx, logs, mut sent_logs_idx)| async move {
-        if sent_logs_idx < logs.len() {
-            let log_line = logs[sent_logs_idx].clone();
-            let event = TuningLogEvent {
-                percent: 0.0,
-                gen_num: 0,
-                total_gens: 0,
-                best_cost: 0.0,
-                bill: 0.0,
-                cycles: 0.0,
-                log_line,
-                done: false,
-                error: None,
-                best_params: None,
-                best_params_monthly: None,
-            };
-            sent_logs_idx += 1;
-            return Some((Ok::<axum::response::sse::Event, std::convert::Infallible>(
-                axum::response::sse::Event::default().json_data(event).unwrap()
-            ), (rx, logs, sent_logs_idx)));
-        }
-
-        match rx.recv().await {
-            Ok(item) => {
-                let ev = axum::response::sse::Event::default().json_data(item).unwrap();
-                Some((Ok(ev), (rx, logs, sent_logs_idx)))
+    let stream = futures_util::stream::unfold(
+        (rx, logs, 0),
+        |(mut rx, logs, mut sent_logs_idx)| async move {
+            if sent_logs_idx < logs.len() {
+                let log_line = logs[sent_logs_idx].clone();
+                let event = TuningLogEvent {
+                    percent: 0.0,
+                    gen_num: 0,
+                    total_gens: 0,
+                    best_cost: 0.0,
+                    bill: 0.0,
+                    cycles: 0.0,
+                    log_line,
+                    done: false,
+                    error: None,
+                    best_params: None,
+                    best_params_monthly: None,
+                };
+                sent_logs_idx += 1;
+                return Some((
+                    Ok::<axum::response::sse::Event, std::convert::Infallible>(
+                        axum::response::sse::Event::default()
+                            .json_data(event)
+                            .unwrap(),
+                    ),
+                    (rx, logs, sent_logs_idx),
+                ));
             }
-            Err(_) => None,
-        }
-    });
 
-    axum::response::Sse::new(stream)
-        .keep_alive(axum::response::sse::KeepAlive::default())
+            match rx.recv().await {
+                Ok(item) => {
+                    let ev = axum::response::sse::Event::default()
+                        .json_data(item)
+                        .unwrap();
+                    Some((Ok(ev), (rx, logs, sent_logs_idx)))
+                }
+                Err(_) => None,
+            }
+        },
+    );
+
+    axum::response::Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
 }
 
 pub async fn run_web_server(
@@ -1885,7 +4086,10 @@ pub async fn run_web_server(
             Ok(l) => break l,
             Err(e) => {
                 retries += 1;
-                eprintln!("[Web Server] Failed to bind 0.0.0.0:3000 (attempt {}): {}. Retrying in 1s...", retries, e);
+                eprintln!(
+                    "[Web Server] Failed to bind 0.0.0.0:3000 (attempt {}): {}. Retrying in 1s...",
+                    retries, e
+                );
                 tokio::select! {
                     _ = cancel_token.cancelled() => return,
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
@@ -1937,11 +4141,14 @@ async fn handle_mqtt_test(
 
     let (client, mut eventloop) = crate::mqtt_helper::create_mqtt_client(&client_id, &config);
 
-    let base_topic = config.base_topic.clone().unwrap_or_else(|| "sensors".to_string());
+    let base_topic = config
+        .base_topic
+        .clone()
+        .unwrap_or_else(|| "sensors".to_string());
     let wildcard_topic = format!("{}/#", base_topic);
     let pubsub_topic = format!("{}/test/pubsub", base_topic);
     let wildcard_test_topic = format!("{}/test/wildcard-only", base_topic);
-    
+
     let ha_enabled = config.is_ha_discovery_enabled();
     let ha_prefix = config.ha_discovery_prefix();
     let ha_test_topic = format!("{}/sensor/test/config", ha_prefix);
@@ -1951,7 +4158,10 @@ async fn handle_mqtt_test(
     let ha_token = format!("token-ha-{}", client_id);
 
     // Attempt subscriptions
-    if let Err(e) = client.subscribe(&wildcard_topic, rumqttc::QoS::AtLeastOnce).await {
+    if let Err(e) = client
+        .subscribe(&wildcard_topic, rumqttc::QoS::AtLeastOnce)
+        .await
+    {
         return Json(MqttTestResponse {
             connected: false,
             error: Some(format!("Failed to initiate wildcard subscription: {}", e)),
@@ -1961,7 +4171,10 @@ async fn handle_mqtt_test(
         });
     }
 
-    if let Err(e) = client.subscribe(&pubsub_topic, rumqttc::QoS::AtLeastOnce).await {
+    if let Err(e) = client
+        .subscribe(&pubsub_topic, rumqttc::QoS::AtLeastOnce)
+        .await
+    {
         return Json(MqttTestResponse {
             connected: false,
             error: Some(format!("Failed to initiate pubsub subscription: {}", e)),
@@ -1972,10 +4185,16 @@ async fn handle_mqtt_test(
     }
 
     if ha_enabled {
-        if let Err(e) = client.subscribe(&ha_test_topic, rumqttc::QoS::AtLeastOnce).await {
+        if let Err(e) = client
+            .subscribe(&ha_test_topic, rumqttc::QoS::AtLeastOnce)
+            .await
+        {
             return Json(MqttTestResponse {
                 connected: false,
-                error: Some(format!("Failed to initiate HA discovery subscription: {}", e)),
+                error: Some(format!(
+                    "Failed to initiate HA discovery subscription: {}",
+                    e
+                )),
                 wildcard_subscription: false,
                 base_pub_sub: false,
                 ha_discovery: Some(false),
@@ -1984,7 +4203,15 @@ async fn handle_mqtt_test(
     }
 
     // Attempt publications
-    if let Err(e) = client.publish(&wildcard_test_topic, rumqttc::QoS::AtLeastOnce, false, wildcard_token.clone()).await {
+    if let Err(e) = client
+        .publish(
+            &wildcard_test_topic,
+            rumqttc::QoS::AtLeastOnce,
+            false,
+            wildcard_token.clone(),
+        )
+        .await
+    {
         return Json(MqttTestResponse {
             connected: false,
             error: Some(format!("Failed to publish to wildcard test topic: {}", e)),
@@ -1994,7 +4221,15 @@ async fn handle_mqtt_test(
         });
     }
 
-    if let Err(e) = client.publish(&pubsub_topic, rumqttc::QoS::AtLeastOnce, false, pubsub_token.clone()).await {
+    if let Err(e) = client
+        .publish(
+            &pubsub_topic,
+            rumqttc::QoS::AtLeastOnce,
+            false,
+            pubsub_token.clone(),
+        )
+        .await
+    {
         return Json(MqttTestResponse {
             connected: false,
             error: Some(format!("Failed to publish to pubsub topic: {}", e)),
@@ -2005,7 +4240,15 @@ async fn handle_mqtt_test(
     }
 
     if ha_enabled {
-        if let Err(e) = client.publish(&ha_test_topic, rumqttc::QoS::AtLeastOnce, false, ha_token.clone()).await {
+        if let Err(e) = client
+            .publish(
+                &ha_test_topic,
+                rumqttc::QoS::AtLeastOnce,
+                false,
+                ha_token.clone(),
+            )
+            .await
+        {
             return Json(MqttTestResponse {
                 connected: false,
                 error: Some(format!("Failed to publish to HA discovery topic: {}", e)),
@@ -2026,7 +4269,8 @@ async fn handle_mqtt_test(
     let timeout_duration = std::time::Duration::from_secs(3);
 
     while start_time.elapsed() < timeout_duration {
-        let done = wildcard_subscription && base_pub_sub && (!ha_enabled || ha_discovery == Some(true));
+        let done =
+            wildcard_subscription && base_pub_sub && (!ha_enabled || ha_discovery == Some(true));
         if done {
             break;
         }
@@ -2086,7 +4330,10 @@ async fn handle_mqtt_test(
             missing.push(format!("HA discovery pub/sub ({})", ha_test_topic));
         }
         if !missing.is_empty() {
-            error = Some(format!("Permission denied or message delivery failed for: {}", missing.join(", ")));
+            error = Some(format!(
+                "Permission denied or message delivery failed for: {}",
+                missing.join(", ")
+            ));
         }
     } else if !connected && error.is_none() {
         error = Some("Connection timed out".to_string());
@@ -2116,26 +4363,36 @@ mod tests {
         let temp_db = "temp_test_web_server.db";
         let _ = std::fs::remove_file(temp_db);
 
-        crate::config::Config::default_empty().save_to_db(temp_db).unwrap();
+        crate::config::Config::default_empty()
+            .save_to_db(temp_db)
+            .unwrap();
 
         let app = build_web_app(reload_tx, temp_db.to_string());
 
         // 1. Test GET / (Dashboard)
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         // 2. Test GET /nonexistent (404)
-        let response = app.clone()
-            .oneshot(Request::builder().uri("/nonexistent").body(Body::empty()).unwrap())
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/nonexistent")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
 
         // 3. Test POST /api/config/import with invalid TOML syntax (400)
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -2149,7 +4406,8 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 
         // 4. Test POST /api/config with malformed JSON body (422 or 400)
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -2160,10 +4418,14 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(response.status() == StatusCode::UNPROCESSABLE_ENTITY || response.status() == StatusCode::BAD_REQUEST);
+        assert!(
+            response.status() == StatusCode::UNPROCESSABLE_ENTITY
+                || response.status() == StatusCode::BAD_REQUEST
+        );
 
         // 5. Test POST /api/config with unsupported content type (415)
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -2177,15 +4439,27 @@ mod tests {
         assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
 
         // 6. Test GET /api/backup/export
-        let response = app.clone()
-            .oneshot(Request::builder().uri("/api/backup/export").body(Body::empty()).unwrap())
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/backup/export")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
 
         // 7. Test GET /api/backup/download
-        let response = app.clone()
-            .oneshot(Request::builder().uri("/api/backup/download").body(Body::empty()).unwrap())
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/backup/download")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -2203,7 +4477,8 @@ mod tests {
         let raw_json_bytes = dump_json.to_string().into_bytes();
 
         // 8a. Test uncompressed JSON import
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -2219,7 +4494,8 @@ mod tests {
         // 8b. Test XZ compressed backup import
         let mut xz_bytes = Vec::new();
         lzma_rs::xz_compress(&mut std::io::Cursor::new(raw_json_bytes), &mut xz_bytes).unwrap();
-        let response = app.clone()
+        let response = app
+            .clone()
             .oneshot(
                 Request::builder()
                     .method("POST")
@@ -2233,17 +4509,32 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
 
         // 9. Test GET /api/telemetry/export.csv
-        let response = app.clone()
-            .oneshot(Request::builder().uri("/api/telemetry/export.csv").body(Body::empty()).unwrap())
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/telemetry/export.csv")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers().get("content-type").unwrap(), "text/csv; charset=utf-8");
+        assert_eq!(
+            response.headers().get("content-type").unwrap(),
+            "text/csv; charset=utf-8"
+        );
         assert!(response.headers().contains_key("content-disposition"));
 
         // 10. Test GET /api/debug and /debug
-        let response = app.clone()
-            .oneshot(Request::builder().uri("/api/debug").body(Body::empty()).unwrap())
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/debug")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -2251,37 +4542,68 @@ mod tests {
         // 11. Test GET /api/health and /health
         {
             get_system_status().lock().unwrap().inverters.clear();
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
             let cfg = Config::load_from_db(temp_db).unwrap_or_else(|_| Config::default_empty());
             let target_invs = cfg.get_configured_battery_inverters();
-            let target_invs = if target_invs.is_empty() { vec!["solax-x1".to_string()] } else { target_invs };
+            let target_invs = if target_invs.is_empty() {
+                vec!["solax-x1".to_string()]
+            } else {
+                target_invs
+            };
             for inv in &target_invs {
-                get_system_status().lock().unwrap().inverters.insert(inv.clone(), InverterStatus {
-                    last_updated: Some(now - 5),
-                    ..Default::default()
-                });
+                get_system_status().lock().unwrap().inverters.insert(
+                    inv.clone(),
+                    InverterStatus {
+                        last_updated: Some(now - 5),
+                        ..Default::default()
+                    },
+                );
             }
 
-            let response = app.clone()
-                .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/health")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
 
-            let response = app.clone()
-                .oneshot(Request::builder().uri("/health").body(Body::empty()).unwrap())
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/health")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK);
 
             // Test stale inverter (>60s ago)
-            get_system_status().lock().unwrap().inverters.insert("solax-x1".to_string(), InverterStatus {
-                last_updated: Some(now - 120),
-                ..Default::default()
-            });
+            get_system_status().lock().unwrap().inverters.insert(
+                "solax-x1".to_string(),
+                InverterStatus {
+                    last_updated: Some(now - 120),
+                    ..Default::default()
+                },
+            );
 
-            let response = app.clone()
-                .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/api/health")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
@@ -2290,5 +4612,3 @@ mod tests {
         let _ = std::fs::remove_file(temp_db);
     }
 }
-
-

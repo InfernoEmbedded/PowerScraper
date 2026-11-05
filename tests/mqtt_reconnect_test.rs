@@ -1,4 +1,6 @@
-use PowerScraper::config::{MQTTInverterDeviceConfig, MQTTPowerMeterDeviceConfig, MqttBrokerConfig};
+use PowerScraper::config::{
+    MQTTInverterDeviceConfig, MQTTPowerMeterDeviceConfig, MqttBrokerConfig,
+};
 use PowerScraper::dispatch_manager::DriverCommand;
 use PowerScraper::drivers;
 use PowerScraper::forwarders::MQTTForwarder;
@@ -33,16 +35,17 @@ impl MosquittoServer {
 
         let mosquitto_bin = format!("target/mosquitto_bin_{}", port);
         if let Err(e) = std::fs::copy("/usr/sbin/mosquitto", &mosquitto_bin) {
-            eprintln!("Warning: Failed to copy mosquitto to {}: {}", mosquitto_bin, e);
+            eprintln!(
+                "Warning: Failed to copy mosquitto to {}: {}",
+                mosquitto_bin, e
+            );
         }
 
         let child = Command::new(&mosquitto_bin)
             .arg("-c")
             .arg(&conf_path)
             .spawn()
-            .or_else(|_| {
-                Command::new("mosquitto").arg("-c").arg(&conf_path).spawn()
-            })
+            .or_else(|_| Command::new("mosquitto").arg("-c").arg(&conf_path).spawn())
             .expect("Failed to start mosquitto broker");
 
         MosquittoServer {
@@ -62,7 +65,10 @@ impl MosquittoServer {
             .arg(&self.conf_path)
             .spawn()
             .or_else(|_| {
-                Command::new("mosquitto").arg("-c").arg(&self.conf_path).spawn()
+                Command::new("mosquitto")
+                    .arg("-c")
+                    .arg(&self.conf_path)
+                    .spawn()
             })
             .expect("Failed to restart mosquitto broker");
     }
@@ -153,16 +159,19 @@ async fn test_mqtt_inverter_status_and_reconnect() {
 
     // Verify initial status entry has driver_type set
     {
-        let status = PowerScraper::web_server::get_system_status().lock().unwrap();
-        let inv = status.inverters.get(&inverter_name).expect("Inverter should be seeded in status");
+        let status = PowerScraper::web_server::get_system_status()
+            .lock()
+            .unwrap();
+        let inv = status
+            .inverters
+            .get(&inverter_name)
+            .expect("Inverter should be seeded in status");
         assert_eq!(inv.driver_type.as_deref(), Some("MQTTInverter"));
     }
 
     // Connect test publisher
     let (test_client, mut test_eventloop) = create_publisher("test-pub-inverter-1", port);
-    tokio::spawn(async move {
-        while let Ok(_) = test_eventloop.poll().await {}
-    });
+    tokio::spawn(async move { while let Ok(_) = test_eventloop.poll().await {} });
 
     // 1. Publish initial metrics
     test_client
@@ -181,7 +190,9 @@ async fn test_mqtt_inverter_status_and_reconnect() {
     // Verify telemetry received
     let mut received_metrics = std::collections::HashMap::new();
     for _ in 0..15 {
-        if let Ok(Some(batch)) = tokio::time::timeout(Duration::from_millis(500), rx_telemetry.recv()).await {
+        if let Ok(Some(batch)) =
+            tokio::time::timeout(Duration::from_millis(500), rx_telemetry.recv()).await
+        {
             for (k, v) in batch.metrics {
                 received_metrics.insert(k, v);
             }
@@ -197,15 +208,26 @@ async fn test_mqtt_inverter_status_and_reconnect() {
 
     // Verify status struct consistency
     {
-        let status = PowerScraper::web_server::get_system_status().lock().unwrap();
+        let status = PowerScraper::web_server::get_system_status()
+            .lock()
+            .unwrap();
         let inv = status.inverters.get(&inverter_name).unwrap();
         assert_eq!(inv.driver_type.as_deref(), Some("MQTTInverter"));
         assert_eq!(inv.pv_power, 3450);
         assert_eq!(inv.battery_capacity, 88);
         assert_eq!(inv.battery_power, -1250);
-        assert_eq!(inv.raw_metrics.get("PV1 Power").map(|s| s.as_str()), Some("3450.0"));
-        assert_eq!(inv.raw_metrics.get("Battery Capacity").map(|s| s.as_str()), Some("88"));
-        assert_eq!(inv.raw_metrics.get("Battery Power").map(|s| s.as_str()), Some("-1250.0"));
+        assert_eq!(
+            inv.raw_metrics.get("PV1 Power").map(|s| s.as_str()),
+            Some("3450.0")
+        );
+        assert_eq!(
+            inv.raw_metrics.get("Battery Capacity").map(|s| s.as_str()),
+            Some("88")
+        );
+        assert_eq!(
+            inv.raw_metrics.get("Battery Power").map(|s| s.as_str()),
+            Some("-1250.0")
+        );
     }
 
     // 2. Restart Mosquitto broker (simulating network bounce / broker restart)
@@ -215,9 +237,7 @@ async fn test_mqtt_inverter_status_and_reconnect() {
 
     // Connect new test publisher after broker restart
     let (test_client2, mut test_eventloop2) = create_publisher("test-pub-inverter-2", port);
-    tokio::spawn(async move {
-        while let Ok(_) = test_eventloop2.poll().await {}
-    });
+    tokio::spawn(async move { while let Ok(_) = test_eventloop2.poll().await {} });
     sleep(Duration::from_millis(500)).await;
 
     // Publish new metrics after reconnect in a loop until received
@@ -226,7 +246,9 @@ async fn test_mqtt_inverter_status_and_reconnect() {
         let _ = test_client2
             .publish("test_inv/pv1", QoS::AtLeastOnce, false, "4500.0")
             .await;
-        if let Ok(Some(batch)) = tokio::time::timeout(Duration::from_millis(300), rx_telemetry.recv()).await {
+        if let Ok(Some(batch)) =
+            tokio::time::timeout(Duration::from_millis(300), rx_telemetry.recv()).await
+        {
             if let Some(val) = batch.metrics.get("PV1 Power") {
                 if *val == 4500.0 {
                     post_reconnect_pv1 = Some(*val);
@@ -245,10 +267,15 @@ async fn test_mqtt_inverter_status_and_reconnect() {
 
     // Verify status struct updated after reconnect
     {
-        let status = PowerScraper::web_server::get_system_status().lock().unwrap();
+        let status = PowerScraper::web_server::get_system_status()
+            .lock()
+            .unwrap();
         let inv = status.inverters.get(&inverter_name).unwrap();
         assert_eq!(inv.pv_power, 4500);
-        assert_eq!(inv.raw_metrics.get("PV1 Power").map(|s| s.as_str()), Some("4500.0"));
+        assert_eq!(
+            inv.raw_metrics.get("PV1 Power").map(|s| s.as_str()),
+            Some("4500.0")
+        );
     }
 
     cancel_token.cancel();
@@ -305,9 +332,7 @@ async fn test_mqtt_meter_reconnect() {
     sleep(Duration::from_millis(600)).await;
 
     let (test_client, mut test_eventloop) = create_publisher("test-pub-meter-1", port);
-    tokio::spawn(async move {
-        while let Ok(_) = test_eventloop.poll().await {}
-    });
+    tokio::spawn(async move { while let Ok(_) = test_eventloop.poll().await {} });
 
     test_client
         .publish("meter/total", QoS::AtLeastOnce, false, "2500.0")
@@ -316,7 +341,9 @@ async fn test_mqtt_meter_reconnect() {
 
     let mut initial_val = None;
     for _ in 0..15 {
-        if let Ok(Some(batch)) = tokio::time::timeout(Duration::from_millis(500), rx_telemetry.recv()).await {
+        if let Ok(Some(batch)) =
+            tokio::time::timeout(Duration::from_millis(500), rx_telemetry.recv()).await
+        {
             if let Some(v) = batch.metrics.get("Total system power") {
                 initial_val = Some(*v);
                 break;
@@ -331,9 +358,7 @@ async fn test_mqtt_meter_reconnect() {
     sleep(Duration::from_millis(1500)).await;
 
     let (test_client2, mut test_eventloop2) = create_publisher("test-pub-meter-2", port);
-    tokio::spawn(async move {
-        while let Ok(_) = test_eventloop2.poll().await {}
-    });
+    tokio::spawn(async move { while let Ok(_) = test_eventloop2.poll().await {} });
     sleep(Duration::from_millis(500)).await;
 
     let mut post_reconnect_val = None;
@@ -341,7 +366,9 @@ async fn test_mqtt_meter_reconnect() {
         let _ = test_client2
             .publish("meter/total", QoS::AtLeastOnce, false, "3100.0")
             .await;
-        if let Ok(Some(batch)) = tokio::time::timeout(Duration::from_millis(300), rx_telemetry.recv()).await {
+        if let Ok(Some(batch)) =
+            tokio::time::timeout(Duration::from_millis(300), rx_telemetry.recv()).await
+        {
             if let Some(v) = batch.metrics.get("Total system power") {
                 if *v == 3100.0 {
                     post_reconnect_val = Some(*v);
@@ -392,16 +419,21 @@ async fn test_mqtt_forwarder_reconnect() {
     sleep(Duration::from_millis(600)).await;
 
     let (test_client, mut test_eventloop) = create_publisher("test-pub-fwd-1", port);
-    tokio::spawn(async move {
-        while let Ok(_) = test_eventloop.poll().await {}
-    });
+    tokio::spawn(async move { while let Ok(_) = test_eventloop.poll().await {} });
 
     let mut received_cmd = None;
     for _ in 0..20 {
         let _ = test_client
-            .publish("sensors/power_manager/command/mode", QoS::AtLeastOnce, false, "ChargeBatteries")
+            .publish(
+                "sensors/power_manager/command/mode",
+                QoS::AtLeastOnce,
+                false,
+                "ChargeBatteries",
+            )
             .await;
-        if let Ok(Some(cmd)) = tokio::time::timeout(Duration::from_millis(300), cmd_receiver.recv()).await {
+        if let Ok(Some(cmd)) =
+            tokio::time::timeout(Duration::from_millis(300), cmd_receiver.recv()).await
+        {
             received_cmd = Some(cmd);
             break;
         }
@@ -419,17 +451,22 @@ async fn test_mqtt_forwarder_reconnect() {
     sleep(Duration::from_millis(1500)).await;
 
     let (test_client2, mut test_eventloop2) = create_publisher("test-pub-fwd-2", port);
-    tokio::spawn(async move {
-        while let Ok(_) = test_eventloop2.poll().await {}
-    });
+    tokio::spawn(async move { while let Ok(_) = test_eventloop2.poll().await {} });
     sleep(Duration::from_millis(500)).await;
 
     let mut post_reconnect_cmd = None;
     for _ in 0..20 {
         let _ = test_client2
-            .publish("sensors/power_manager/command/mode", QoS::AtLeastOnce, false, "Auto")
+            .publish(
+                "sensors/power_manager/command/mode",
+                QoS::AtLeastOnce,
+                false,
+                "Auto",
+            )
             .await;
-        if let Ok(Some(cmd)) = tokio::time::timeout(Duration::from_millis(300), cmd_receiver.recv()).await {
+        if let Ok(Some(cmd)) =
+            tokio::time::timeout(Duration::from_millis(300), cmd_receiver.recv()).await
+        {
             post_reconnect_cmd = Some(cmd);
             break;
         }
@@ -438,7 +475,10 @@ async fn test_mqtt_forwarder_reconnect() {
 
     match post_reconnect_cmd {
         Some(DriverCommand::SetMode { mode }) => assert_eq!(mode, "Auto"),
-        other => panic!("Expected SetMode Auto after broker reconnect, got {:?}", other),
+        other => panic!(
+            "Expected SetMode Auto after broker reconnect, got {:?}",
+            other
+        ),
     }
 
     cancel_token.cancel();

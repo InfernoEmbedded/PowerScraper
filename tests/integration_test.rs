@@ -351,7 +351,9 @@ async fn test_integration_loop() {
     }
 
     let db_path = format!("config_{}.db", mqtt_port);
-    let _db_guard = DbGuard { path: db_path.clone() };
+    let _db_guard = DbGuard {
+        path: db_path.clone(),
+    };
     let _ = std::fs::remove_file(&db_path);
     config
         .save_to_db(&db_path)
@@ -361,7 +363,13 @@ async fn test_integration_loop() {
     let db_path_clone = db_path.clone();
     let web_cancel_token = tokio_util::sync::CancellationToken::new();
     tokio::spawn(async move {
-        PowerScraper::web_server::run_web_server_with_listener(reload_tx, db_path_clone, web_listener, web_cancel_token).await;
+        PowerScraper::web_server::run_web_server_with_listener(
+            reload_tx,
+            db_path_clone,
+            web_listener,
+            web_cancel_token,
+        )
+        .await;
     });
     sleep(Duration::from_millis(500)).await; // Allow server to start
 
@@ -388,20 +396,27 @@ async fn test_integration_loop() {
                 let mut lock = act_token_clone.lock().unwrap();
                 *lock = token.clone();
             }
-            let (tx_driver_telemetry, rx_driver_telemetry) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
-            let (tx_command, rx_command) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::DriverCommand>(1024);
-            let (tx_power_manager, rx_power_manager) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(2048);
-            let (tx_mqtt, rx_mqtt) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            let (tx_driver_telemetry, rx_driver_telemetry) =
+                tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            let (tx_command, rx_command) =
+                tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::DriverCommand>(1024);
+            let (tx_power_manager, rx_power_manager) =
+                tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(2048);
+            let (tx_mqtt, rx_mqtt) =
+                tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
 
             let mut forwarder_senders = vec![tx_mqtt];
-            let mqtt_fwd = forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
+            let mqtt_fwd =
+                forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
             let cancel_mqtt = token.clone();
             tokio::spawn(async move {
                 mqtt_fwd.run(cancel_mqtt).await;
             });
 
             if let Some(ref emon_cfg) = current_cfg.emoncms {
-                let (tx_emon, rx_emon) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+                let (tx_emon, rx_emon) = tokio::sync::mpsc::channel::<
+                    PowerScraper::dispatch_manager::TelemetryBatch,
+                >(4096);
                 forwarder_senders.push(tx_emon);
                 let emon_fwd = forwarders::EmonCMSForwarder::new(emon_cfg.clone(), rx_emon);
                 let cancel_emon = token.clone();
@@ -411,7 +426,9 @@ async fn test_integration_loop() {
             }
 
             if let Some(ref influx_cfg) = current_cfg.influx {
-                let (tx_influx, rx_influx) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+                let (tx_influx, rx_influx) = tokio::sync::mpsc::channel::<
+                    PowerScraper::dispatch_manager::TelemetryBatch,
+                >(4096);
                 forwarder_senders.push(tx_influx);
                 let influx_fwd = forwarders::InfluxForwarder::new(influx_cfg.clone(), rx_influx);
                 let cancel_influx = token.clone();
@@ -434,7 +451,11 @@ async fn test_integration_loop() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
                 let tx_telemetry = tx_driver_telemetry.clone();
-                let hostname = wifi_cfg.inverters.first().cloned().unwrap_or_else(|| format!("127.0.0.1:{}", wifi_port));
+                let hostname = wifi_cfg
+                    .inverters
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| format!("127.0.0.1:{}", wifi_port));
                 tokio::spawn(async move {
                     drivers::solax_wifi::run_solax_wifi_driver(
                         hostname,
@@ -451,7 +472,12 @@ async fn test_integration_loop() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
                 let tx_telemetry = tx_driver_telemetry.clone();
-                let hostname = modbus_cfg.hostnames.as_ref().and_then(|h| h.first()).cloned().unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
+                let hostname = modbus_cfg
+                    .hostnames
+                    .as_ref()
+                    .and_then(|h| h.first())
+                    .cloned()
+                    .unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
                 tokio::spawn(async move {
                     drivers::solax_modbus::run_solax_modbus_driver(
                         "solax-modbus".to_string(),
@@ -469,7 +495,12 @@ async fn test_integration_loop() {
                 let token_clone = token.clone();
                 let mqtt_clone = mqtt_config.clone();
                 let tx_telemetry = tx_driver_telemetry.clone();
-                let hostname = g3_cfg.hostnames.as_ref().and_then(|h| h.first()).cloned().unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
+                let hostname = g3_cfg
+                    .hostnames
+                    .as_ref()
+                    .and_then(|h| h.first())
+                    .cloned()
+                    .unwrap_or_else(|| format!("127.0.0.1:{}", modbus_port));
                 tokio::spawn(async move {
                     drivers::solax_g3::run_solax_g3_driver(
                         "solax-xhybrid".to_string(),
@@ -763,7 +794,8 @@ async fn test_integration_loop() {
                 success_max_feedin_writes_hyb = true;
             }
         }
-        if success_max_feedin_mode && success_max_feedin_writes_std && success_max_feedin_writes_hyb {
+        if success_max_feedin_mode && success_max_feedin_writes_std && success_max_feedin_writes_hyb
+        {
             break;
         }
     }
@@ -916,12 +948,12 @@ async fn test_integration_loop() {
 #[tokio::test]
 async fn test_sync_on_kill_exits_cleanly() {
     use std::os::unix::process::CommandExt;
-    
+
     let temp_dir = std::env::temp_dir().join(format!("powerscraper_test_{}", std::process::id()));
     std::fs::create_dir_all(&temp_dir).unwrap();
-    
+
     let db_path = temp_dir.join("config.db");
-    
+
     let mut config = Config::default_empty();
     config.mqtt = Some(PowerScraper::config::MqttBrokerConfig {
         enabled: Some(false),
@@ -933,22 +965,22 @@ async fn test_sync_on_kill_exits_cleanly() {
         home_assistant_discovery: Some(false),
         home_assistant_prefix: None,
     });
-    
+
     PowerScraper::database::save_config_to_db(db_path.to_str().unwrap(), &config).unwrap();
-    
+
     let mut child = Command::new(env!("CARGO_BIN_EXE_PowerScraper"))
         .current_dir(&temp_dir)
         .spawn()
         .expect("Failed to start PowerScraper binary");
-        
+
     // Allow process to start up
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    
+
     // Send SIGTERM
     unsafe {
         libc::kill(child.id() as i32, libc::SIGTERM);
     }
-    
+
     // Wait for exit with a timeout
     let exit_status = tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
@@ -957,9 +989,14 @@ async fn test_sync_on_kill_exits_cleanly() {
             }
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
-    }).await.expect("Process did not exit within 5 seconds of SIGTERM (shutdown hang)");
-    
-    assert!(exit_status.success() || exit_status.code() == Some(0), "Process did not exit with code 0");
-    
+    })
+    .await
+    .expect("Process did not exit within 5 seconds of SIGTERM (shutdown hang)");
+
+    assert!(
+        exit_status.success() || exit_status.code() == Some(0),
+        "Process did not exit with code 0"
+    );
+
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

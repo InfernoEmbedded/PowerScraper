@@ -40,7 +40,10 @@ fn systemd_notify(state: &str) {
     };
 
     if let Err(e) = sock.send_to(state.as_bytes(), &addr) {
-        eprintln!("systemd_notify: failed to send '{}' to {}: {}", state, socket_path, e);
+        eprintln!(
+            "systemd_notify: failed to send '{}' to {}: {}",
+            state, socket_path, e
+        );
     }
 }
 
@@ -63,8 +66,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("Starting PowerScraper (v{})...", env!("CARGO_PKG_VERSION"));
-
-
 
     let db_path = "config.db".to_string();
 
@@ -91,7 +92,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(0);
     }
 
-
     // Create channel for reload trigger
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(1);
 
@@ -112,10 +112,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let start_time = std::time::Instant::now();
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-            
+
             // Load config to check if a source is configured
             if let Ok(cfg) = Config::load_from_db(&db_path_wd) {
-                if let Some(source) = cfg.battery_control.as_ref().and_then(|bc| bc.source.as_ref()) {
+                if let Some(source) = cfg
+                    .battery_control
+                    .as_ref()
+                    .and_then(|bc| bc.source.as_ref())
+                {
                     let mut custom_timeout = None;
                     if let Some(ref sdm) = cfg.sdm630_modbus_v2 {
                         for port in &sdm.ports {
@@ -151,24 +155,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             None
                         }
                     };
-                    
+
                     let now_secs = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs();
-                        
+
                     match last_update {
                         Some(ts) => {
                             if now_secs > ts && now_secs - ts > timeout_limit {
-                                eprintln!("WATCHDOG: MainsMeter has not updated for {} seconds. Exiting for systemd restart...", now_secs - ts);
+                                eprintln!(
+                                    "WATCHDOG: MainsMeter has not updated for {} seconds. Exiting for systemd restart...",
+                                    now_secs - ts
+                                );
                                 std::process::exit(1);
                             }
                             // Telemetry is healthy — ping the systemd watchdog
                             systemd_notify("WATCHDOG=1");
                         }
                         None => {
-                            if start_time.elapsed() > tokio::time::Duration::from_secs(startup_limit) {
-                                eprintln!("WATCHDOG: MainsMeter has failed to update since startup ({} seconds ago). Exiting for systemd restart...", startup_limit);
+                            if start_time.elapsed()
+                                > tokio::time::Duration::from_secs(startup_limit)
+                            {
+                                eprintln!(
+                                    "WATCHDOG: MainsMeter has failed to update since startup ({} seconds ago). Exiting for systemd restart...",
+                                    startup_limit
+                                );
                                 std::process::exit(1);
                             }
                             // Still in startup grace period — ping watchdog to prevent premature kill
@@ -218,22 +230,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         systemd_notify("READY=1");
 
         // 1. Data Source Telemetry Output Queue (drivers -> DispatchManager)
-        let (tx_driver_telemetry, rx_driver_telemetry) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+        let (tx_driver_telemetry, rx_driver_telemetry) =
+            tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
 
         // 2. Command Queue (MQTT Forwarder -> PowerManager)
-        let (tx_command, rx_command) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::DriverCommand>(1024);
+        let (tx_command, rx_command) =
+            tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::DriverCommand>(1024);
 
         // 3. PowerManager Input Queue (DispatchManager -> PowerManager)
-        let (tx_power_manager, rx_power_manager) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(2048);
+        let (tx_power_manager, rx_power_manager) =
+            tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(2048);
 
         // 4. Forwarder Input Queues
         let mut forwarder_senders = Vec::new();
 
         // 4a. MQTT Forwarder
         if mqtt_config.is_enabled() {
-            let (tx_mqtt, rx_mqtt) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            let (tx_mqtt, rx_mqtt) =
+                tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
             forwarder_senders.push(tx_mqtt);
-            let mqtt_fwd = forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
+            let mqtt_fwd =
+                forwarders::MQTTForwarder::new(mqtt_config.clone(), rx_mqtt, tx_command.clone());
             let cancel_mqtt = cancel_token.clone();
             tokio::spawn(async move {
                 mqtt_fwd.run(cancel_mqtt).await;
@@ -242,7 +259,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // 4b. EmonCMS Forwarder
         if let Some(ref emon_cfg) = config.emoncms {
-            let (tx_emon, rx_emon) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            let (tx_emon, rx_emon) =
+                tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
             forwarder_senders.push(tx_emon);
             let emon_fwd = forwarders::EmonCMSForwarder::new(emon_cfg.clone(), rx_emon);
             let cancel_emon = cancel_token.clone();
@@ -253,7 +271,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // 4c. InfluxDB Forwarder
         if let Some(ref influx_cfg) = config.influx {
-            let (tx_influx, rx_influx) = tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
+            let (tx_influx, rx_influx) =
+                tokio::sync::mpsc::channel::<PowerScraper::dispatch_manager::TelemetryBatch>(4096);
             forwarder_senders.push(tx_influx);
             let influx_fwd = forwarders::InfluxForwarder::new(influx_cfg.clone(), rx_influx);
             let cancel_influx = cancel_token.clone();
@@ -391,7 +410,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 let device_name = port_clone.replace("/dev/tty", "");
-                
+
                 std::thread::Builder::new()
                     .name(format!("sdm630-{}", device_name))
                     .spawn(move || {
@@ -399,7 +418,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .enable_all()
                             .build()
                             .unwrap();
-                            
+
                         rt.block_on(async {
                             drivers::sdm630::run_sdm630_driver(
                                 port_clone,
@@ -423,7 +442,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let tx_telemetry = tx_driver_telemetry.clone();
                 let cancel_clone = cancel_token.clone();
                 let device_name = port_clone.replace("/dev/tty", "");
-                
+
                 std::thread::Builder::new()
                     .name(format!("dtsu666-{}", device_name))
                     .spawn(move || {
@@ -431,7 +450,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .enable_all()
                             .build()
                             .unwrap();
-                            
+
                         rt.block_on(async {
                             drivers::dtsu666::run_dtsu666_driver(
                                 port_clone,

@@ -79,7 +79,9 @@ impl DispatchManager {
             let meter_status = status.meters.entry(batch.device_name.clone()).or_default();
             meter_status.last_updated = Some(now_ts as u64);
             for (k, &v) in &batch.metrics {
-                meter_status.raw_metrics.insert(k.clone(), format!("{:.3}", v));
+                meter_status
+                    .raw_metrics
+                    .insert(k.clone(), format!("{:.3}", v));
             }
             let lower = batch.device_name.to_lowercase();
             if lower.contains("sdm") || lower.contains("mains") {
@@ -121,7 +123,10 @@ impl DispatchManager {
                 metrics: useful_metrics,
             };
             if let Err(e) = self.power_manager_sender.try_send(filtered_batch) {
-                eprintln!("DispatchManager: WARNING: Telemetry queue to PowerManager full: {}", e);
+                eprintln!(
+                    "DispatchManager: WARNING: Telemetry queue to PowerManager full: {}",
+                    e
+                );
             }
         }
     }

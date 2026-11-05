@@ -1,14 +1,14 @@
+use super::{SimConfig, SimRecord};
 use crate::config::EvolvedHeuristicConfig;
-use super::{SimRecord, SimConfig};
-use std::collections::HashMap;
 use chrono::Datelike;
+use std::collections::HashMap;
 
 #[cfg(unix)]
 fn lower_current_thread_priority() {
     unsafe {
         // Set nice value to 19 (lowest standard nice priority)
         let _ = libc::setpriority(libc::PRIO_PROCESS, 0, 19);
-        
+
         // On Linux, set scheduling policy to SCHED_IDLE (absolute lowest priority class)
         #[cfg(target_os = "linux")]
         {
@@ -112,34 +112,87 @@ pub struct Individual {
 impl Individual {
     pub fn random(rng: &mut SimpleRng, bounds: &Bounds) -> Self {
         Self {
-            neg_price_threshold: rng.range(bounds.neg_price_threshold.0, bounds.neg_price_threshold.1),
-            export_dump_threshold: rng.range(bounds.export_dump_threshold.0, bounds.export_dump_threshold.1),
-            dump_reserve_demand: rng.range(bounds.dump_reserve_demand.0, bounds.dump_reserve_demand.1),
-            dump_reserve_normal: rng.range(bounds.dump_reserve_normal.0, bounds.dump_reserve_normal.1),
-            pre_charge_price_threshold: rng.range(bounds.pre_charge_price_threshold.0, bounds.pre_charge_price_threshold.1),
-            pre_charge_soc_limit: rng.range(bounds.pre_charge_soc_limit.0, bounds.pre_charge_soc_limit.1),
-            pre_charge_start_hour: rng.range(bounds.pre_charge_start_hour.0, bounds.pre_charge_start_hour.1),
-            use_adaptive_shaving: rng.range(bounds.use_adaptive_shaving.0, bounds.use_adaptive_shaving.1),
-            adaptive_safety_buffer: rng.range(bounds.adaptive_safety_buffer.0, bounds.adaptive_safety_buffer.1),
-            forecast_solar_weight: rng.range(bounds.forecast_solar_weight.0, bounds.forecast_solar_weight.1),
-            tier2_export_dump_threshold: rng.range(bounds.tier2_export_dump_threshold.0, bounds.tier2_export_dump_threshold.1),
+            neg_price_threshold: rng
+                .range(bounds.neg_price_threshold.0, bounds.neg_price_threshold.1),
+            export_dump_threshold: rng.range(
+                bounds.export_dump_threshold.0,
+                bounds.export_dump_threshold.1,
+            ),
+            dump_reserve_demand: rng
+                .range(bounds.dump_reserve_demand.0, bounds.dump_reserve_demand.1),
+            dump_reserve_normal: rng
+                .range(bounds.dump_reserve_normal.0, bounds.dump_reserve_normal.1),
+            pre_charge_price_threshold: rng.range(
+                bounds.pre_charge_price_threshold.0,
+                bounds.pre_charge_price_threshold.1,
+            ),
+            pre_charge_soc_limit: rng
+                .range(bounds.pre_charge_soc_limit.0, bounds.pre_charge_soc_limit.1),
+            pre_charge_start_hour: rng.range(
+                bounds.pre_charge_start_hour.0,
+                bounds.pre_charge_start_hour.1,
+            ),
+            use_adaptive_shaving: rng
+                .range(bounds.use_adaptive_shaving.0, bounds.use_adaptive_shaving.1),
+            adaptive_safety_buffer: rng.range(
+                bounds.adaptive_safety_buffer.0,
+                bounds.adaptive_safety_buffer.1,
+            ),
+            forecast_solar_weight: rng.range(
+                bounds.forecast_solar_weight.0,
+                bounds.forecast_solar_weight.1,
+            ),
+            tier2_export_dump_threshold: rng.range(
+                bounds.tier2_export_dump_threshold.0,
+                bounds.tier2_export_dump_threshold.1,
+            ),
             tier2_dump_reserve: rng.range(bounds.tier2_dump_reserve.0, bounds.tier2_dump_reserve.1),
         }
     }
 
     pub fn clamp(&mut self, bounds: &Bounds) {
-        self.neg_price_threshold = self.neg_price_threshold.clamp(bounds.neg_price_threshold.0, bounds.neg_price_threshold.1);
-        self.export_dump_threshold = self.export_dump_threshold.clamp(bounds.export_dump_threshold.0, bounds.export_dump_threshold.1);
-        self.dump_reserve_demand = self.dump_reserve_demand.clamp(bounds.dump_reserve_demand.0, bounds.dump_reserve_demand.1);
-        self.dump_reserve_normal = self.dump_reserve_normal.clamp(bounds.dump_reserve_normal.0, bounds.dump_reserve_normal.1);
-        self.pre_charge_price_threshold = self.pre_charge_price_threshold.clamp(bounds.pre_charge_price_threshold.0, bounds.pre_charge_price_threshold.1);
-        self.pre_charge_soc_limit = self.pre_charge_soc_limit.clamp(bounds.pre_charge_soc_limit.0, bounds.pre_charge_soc_limit.1);
-        self.pre_charge_start_hour = self.pre_charge_start_hour.clamp(bounds.pre_charge_start_hour.0, bounds.pre_charge_start_hour.1);
-        self.use_adaptive_shaving = self.use_adaptive_shaving.clamp(bounds.use_adaptive_shaving.0, bounds.use_adaptive_shaving.1);
-        self.adaptive_safety_buffer = self.adaptive_safety_buffer.clamp(bounds.adaptive_safety_buffer.0, bounds.adaptive_safety_buffer.1);
-        self.forecast_solar_weight = self.forecast_solar_weight.clamp(bounds.forecast_solar_weight.0, bounds.forecast_solar_weight.1);
-        self.tier2_export_dump_threshold = self.tier2_export_dump_threshold.clamp(bounds.tier2_export_dump_threshold.0, bounds.tier2_export_dump_threshold.1);
-        self.tier2_dump_reserve = self.tier2_dump_reserve.clamp(bounds.tier2_dump_reserve.0, bounds.tier2_dump_reserve.1);
+        self.neg_price_threshold = self
+            .neg_price_threshold
+            .clamp(bounds.neg_price_threshold.0, bounds.neg_price_threshold.1);
+        self.export_dump_threshold = self.export_dump_threshold.clamp(
+            bounds.export_dump_threshold.0,
+            bounds.export_dump_threshold.1,
+        );
+        self.dump_reserve_demand = self
+            .dump_reserve_demand
+            .clamp(bounds.dump_reserve_demand.0, bounds.dump_reserve_demand.1);
+        self.dump_reserve_normal = self
+            .dump_reserve_normal
+            .clamp(bounds.dump_reserve_normal.0, bounds.dump_reserve_normal.1);
+        self.pre_charge_price_threshold = self.pre_charge_price_threshold.clamp(
+            bounds.pre_charge_price_threshold.0,
+            bounds.pre_charge_price_threshold.1,
+        );
+        self.pre_charge_soc_limit = self
+            .pre_charge_soc_limit
+            .clamp(bounds.pre_charge_soc_limit.0, bounds.pre_charge_soc_limit.1);
+        self.pre_charge_start_hour = self.pre_charge_start_hour.clamp(
+            bounds.pre_charge_start_hour.0,
+            bounds.pre_charge_start_hour.1,
+        );
+        self.use_adaptive_shaving = self
+            .use_adaptive_shaving
+            .clamp(bounds.use_adaptive_shaving.0, bounds.use_adaptive_shaving.1);
+        self.adaptive_safety_buffer = self.adaptive_safety_buffer.clamp(
+            bounds.adaptive_safety_buffer.0,
+            bounds.adaptive_safety_buffer.1,
+        );
+        self.forecast_solar_weight = self.forecast_solar_weight.clamp(
+            bounds.forecast_solar_weight.0,
+            bounds.forecast_solar_weight.1,
+        );
+        self.tier2_export_dump_threshold = self.tier2_export_dump_threshold.clamp(
+            bounds.tier2_export_dump_threshold.0,
+            bounds.tier2_export_dump_threshold.1,
+        );
+        self.tier2_dump_reserve = self
+            .tier2_dump_reserve
+            .clamp(bounds.tier2_dump_reserve.0, bounds.tier2_dump_reserve.1);
     }
 
     pub fn mutate(&mut self, rng: &mut SimpleRng, bounds: &Bounds, rate: f64) {
@@ -150,17 +203,61 @@ impl Individual {
             }
         };
 
-        mutate_param(&mut self.neg_price_threshold, bounds.neg_price_threshold, rng);
-        mutate_param(&mut self.export_dump_threshold, bounds.export_dump_threshold, rng);
-        mutate_param(&mut self.dump_reserve_demand, bounds.dump_reserve_demand, rng);
-        mutate_param(&mut self.dump_reserve_normal, bounds.dump_reserve_normal, rng);
-        mutate_param(&mut self.pre_charge_price_threshold, bounds.pre_charge_price_threshold, rng);
-        mutate_param(&mut self.pre_charge_soc_limit, bounds.pre_charge_soc_limit, rng);
-        mutate_param(&mut self.pre_charge_start_hour, bounds.pre_charge_start_hour, rng);
-        mutate_param(&mut self.use_adaptive_shaving, bounds.use_adaptive_shaving, rng);
-        mutate_param(&mut self.adaptive_safety_buffer, bounds.adaptive_safety_buffer, rng);
-        mutate_param(&mut self.forecast_solar_weight, bounds.forecast_solar_weight, rng);
-        mutate_param(&mut self.tier2_export_dump_threshold, bounds.tier2_export_dump_threshold, rng);
+        mutate_param(
+            &mut self.neg_price_threshold,
+            bounds.neg_price_threshold,
+            rng,
+        );
+        mutate_param(
+            &mut self.export_dump_threshold,
+            bounds.export_dump_threshold,
+            rng,
+        );
+        mutate_param(
+            &mut self.dump_reserve_demand,
+            bounds.dump_reserve_demand,
+            rng,
+        );
+        mutate_param(
+            &mut self.dump_reserve_normal,
+            bounds.dump_reserve_normal,
+            rng,
+        );
+        mutate_param(
+            &mut self.pre_charge_price_threshold,
+            bounds.pre_charge_price_threshold,
+            rng,
+        );
+        mutate_param(
+            &mut self.pre_charge_soc_limit,
+            bounds.pre_charge_soc_limit,
+            rng,
+        );
+        mutate_param(
+            &mut self.pre_charge_start_hour,
+            bounds.pre_charge_start_hour,
+            rng,
+        );
+        mutate_param(
+            &mut self.use_adaptive_shaving,
+            bounds.use_adaptive_shaving,
+            rng,
+        );
+        mutate_param(
+            &mut self.adaptive_safety_buffer,
+            bounds.adaptive_safety_buffer,
+            rng,
+        );
+        mutate_param(
+            &mut self.forecast_solar_weight,
+            bounds.forecast_solar_weight,
+            rng,
+        );
+        mutate_param(
+            &mut self.tier2_export_dump_threshold,
+            bounds.tier2_export_dump_threshold,
+            rng,
+        );
         mutate_param(&mut self.tier2_dump_reserve, bounds.tier2_dump_reserve, rng);
 
         self.clamp(bounds);
@@ -177,18 +274,78 @@ impl Individual {
         };
 
         Self {
-            neg_price_threshold: crossover_param(parent1.neg_price_threshold, parent2.neg_price_threshold, bounds.neg_price_threshold, rng),
-            export_dump_threshold: crossover_param(parent1.export_dump_threshold, parent2.export_dump_threshold, bounds.export_dump_threshold, rng),
-            dump_reserve_demand: crossover_param(parent1.dump_reserve_demand, parent2.dump_reserve_demand, bounds.dump_reserve_demand, rng),
-            dump_reserve_normal: crossover_param(parent1.dump_reserve_normal, parent2.dump_reserve_normal, bounds.dump_reserve_normal, rng),
-            pre_charge_price_threshold: crossover_param(parent1.pre_charge_price_threshold, parent2.pre_charge_price_threshold, bounds.pre_charge_price_threshold, rng),
-            pre_charge_soc_limit: crossover_param(parent1.pre_charge_soc_limit, parent2.pre_charge_soc_limit, bounds.pre_charge_soc_limit, rng),
-            pre_charge_start_hour: crossover_param(parent1.pre_charge_start_hour, parent2.pre_charge_start_hour, bounds.pre_charge_start_hour, rng),
-            use_adaptive_shaving: crossover_param(parent1.use_adaptive_shaving, parent2.use_adaptive_shaving, bounds.use_adaptive_shaving, rng),
-            adaptive_safety_buffer: crossover_param(parent1.adaptive_safety_buffer, parent2.adaptive_safety_buffer, bounds.adaptive_safety_buffer, rng),
-            forecast_solar_weight: crossover_param(parent1.forecast_solar_weight, parent2.forecast_solar_weight, bounds.forecast_solar_weight, rng),
-            tier2_export_dump_threshold: crossover_param(parent1.tier2_export_dump_threshold, parent2.tier2_export_dump_threshold, bounds.tier2_export_dump_threshold, rng),
-            tier2_dump_reserve: crossover_param(parent1.tier2_dump_reserve, parent2.tier2_dump_reserve, bounds.tier2_dump_reserve, rng),
+            neg_price_threshold: crossover_param(
+                parent1.neg_price_threshold,
+                parent2.neg_price_threshold,
+                bounds.neg_price_threshold,
+                rng,
+            ),
+            export_dump_threshold: crossover_param(
+                parent1.export_dump_threshold,
+                parent2.export_dump_threshold,
+                bounds.export_dump_threshold,
+                rng,
+            ),
+            dump_reserve_demand: crossover_param(
+                parent1.dump_reserve_demand,
+                parent2.dump_reserve_demand,
+                bounds.dump_reserve_demand,
+                rng,
+            ),
+            dump_reserve_normal: crossover_param(
+                parent1.dump_reserve_normal,
+                parent2.dump_reserve_normal,
+                bounds.dump_reserve_normal,
+                rng,
+            ),
+            pre_charge_price_threshold: crossover_param(
+                parent1.pre_charge_price_threshold,
+                parent2.pre_charge_price_threshold,
+                bounds.pre_charge_price_threshold,
+                rng,
+            ),
+            pre_charge_soc_limit: crossover_param(
+                parent1.pre_charge_soc_limit,
+                parent2.pre_charge_soc_limit,
+                bounds.pre_charge_soc_limit,
+                rng,
+            ),
+            pre_charge_start_hour: crossover_param(
+                parent1.pre_charge_start_hour,
+                parent2.pre_charge_start_hour,
+                bounds.pre_charge_start_hour,
+                rng,
+            ),
+            use_adaptive_shaving: crossover_param(
+                parent1.use_adaptive_shaving,
+                parent2.use_adaptive_shaving,
+                bounds.use_adaptive_shaving,
+                rng,
+            ),
+            adaptive_safety_buffer: crossover_param(
+                parent1.adaptive_safety_buffer,
+                parent2.adaptive_safety_buffer,
+                bounds.adaptive_safety_buffer,
+                rng,
+            ),
+            forecast_solar_weight: crossover_param(
+                parent1.forecast_solar_weight,
+                parent2.forecast_solar_weight,
+                bounds.forecast_solar_weight,
+                rng,
+            ),
+            tier2_export_dump_threshold: crossover_param(
+                parent1.tier2_export_dump_threshold,
+                parent2.tier2_export_dump_threshold,
+                bounds.tier2_export_dump_threshold,
+                rng,
+            ),
+            tier2_dump_reserve: crossover_param(
+                parent1.tier2_dump_reserve,
+                parent2.tier2_dump_reserve,
+                bounds.tier2_dump_reserve,
+                rng,
+            ),
         }
     }
 
@@ -262,13 +419,16 @@ pub fn run_tuning(
         monthly_records.entry(m).or_default().push(r.clone());
     }
 
-    let active_months: Vec<u32> = monthly_records.iter()
+    let active_months: Vec<u32> = monthly_records
+        .iter()
         .filter(|(_, recs)| recs.len() >= 24)
         .map(|(&m, _)| m)
         .collect();
 
     if active_months.is_empty() {
-        return Err("No months found with sufficient telemetry data (>= 24 points) to train.".to_string());
+        return Err(
+            "No months found with sufficient telemetry data (>= 24 points) to train.".to_string(),
+        );
     }
 
     let total_months = active_months.len();
@@ -283,21 +443,33 @@ pub fn run_tuning(
     for (month_idx, &month) in active_months.iter().enumerate() {
         let month_recs = &monthly_records[&month];
         let month_name = match month {
-            1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-            5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-            9 => "Sep", 10 => "Oct", 11 => "Nov", 12 => "Dec",
+            1 => "Jan",
+            2 => "Feb",
+            3 => "Mar",
+            4 => "Apr",
+            5 => "May",
+            6 => "Jun",
+            7 => "Jul",
+            8 => "Aug",
+            9 => "Sep",
+            10 => "Oct",
+            11 => "Nov",
+            12 => "Dec",
             _ => "Unknown",
         };
 
-        let month_seed = seed_config_monthly.as_ref()
-            .and_then(|m: &HashMap<String, EvolvedHeuristicConfig>| m.get(&month.to_string()).cloned())
+        let month_seed = seed_config_monthly
+            .as_ref()
+            .and_then(|m: &HashMap<String, EvolvedHeuristicConfig>| {
+                m.get(&month.to_string()).cloned()
+            })
             .or_else(|| seed_config.clone());
 
         let mut population = Vec::with_capacity(population_size as usize);
         if let Some(ref seed) = month_seed {
             let seed_ind = Individual::from_evolved_config(seed);
             population.push(seed_ind.clone());
-            
+
             for _ in 0..std::cmp::min(5, population_size - 1) {
                 let mut clone = seed_ind.clone();
                 clone.mutate(&mut rng, &bounds, 1.0);
@@ -319,34 +491,36 @@ pub fn run_tuning(
                 .map(|n| n.get())
                 .unwrap_or(4);
             let num_threads = if num_cores > 1 { num_cores - 1 } else { 1 };
-                
+
             let chunk_size = (population.len() + num_threads - 1) / num_threads;
             let mut results = vec![(0.0, 0.0, 0.0); population.len()];
-            
+
             std::thread::scope(|s| {
                 let mut threads = Vec::new();
                 let population_slice = &population;
-                
+
                 for (thread_id, chunk) in population_slice.chunks(chunk_size).enumerate() {
                     let records_ref = month_recs;
                     let template_ref = sim_config_template;
-                    
+
                     let handle = s.spawn(move || {
                         lower_current_thread_priority();
                         let mut chunk_res = Vec::new();
                         for ind in chunk {
-                             let mut sim_config = template_ref.clone();
-                             sim_config.evolved_heuristic = ind.to_evolved_config();
-                             let res = crate::simulation::evolved_heuristic::run(records_ref, &sim_config);
-                             let cost = res.energy_cost + res.demand_charges + res.cycles * cycle_penalty;
-                             let bill = res.energy_cost + res.demand_charges;
-                             chunk_res.push((cost, bill, res.cycles));
+                            let mut sim_config = template_ref.clone();
+                            sim_config.evolved_heuristic = ind.to_evolved_config();
+                            let res =
+                                crate::simulation::evolved_heuristic::run(records_ref, &sim_config);
+                            let cost =
+                                res.energy_cost + res.demand_charges + res.cycles * cycle_penalty;
+                            let bill = res.energy_cost + res.demand_charges;
+                            chunk_res.push((cost, bill, res.cycles));
                         }
                         (thread_id, chunk_res)
                     });
                     threads.push(handle);
                 }
-                
+
                 for handle in threads {
                     if let Ok((thread_id, chunk_res)) = handle.join() {
                         let start_idx = thread_id * chunk_size;
@@ -379,16 +553,19 @@ pub fn run_tuning(
 
             let log_line = format!(
                 "[{}] Gen {}/{} | Month Cost: {:.2} | Total Bill: {:.2} | Total Cycles: {:.1} | {:.1}%",
-                month_name, gen_num, generations, best_cost,
+                month_name,
+                gen_num,
+                generations,
+                best_cost,
                 accumulated_best_bill + best_bill,
                 accumulated_best_cycles + best_cycles,
                 percent
             );
-            
+
             if let Some(ref cb) = progress_cb {
                 let mut current_map = tuned_monthly_params.clone();
                 current_map.insert(month.to_string(), best_ind.to_evolved_config());
-                
+
                 let should_continue = cb(TuningProgressEvent {
                     percent,
                     gen_num: progress_gens as u32,
@@ -406,32 +583,34 @@ pub fn run_tuning(
                 }
             }
 
-            let mut pop_with_res: Vec<(Individual, f64)> = population.iter()
+            let mut pop_with_res: Vec<(Individual, f64)> = population
+                .iter()
                 .zip(results.iter())
                 .map(|(ind, &(cost, _, _))| (ind.clone(), cost))
                 .collect();
-                
+
             pop_with_res.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
 
             let mut new_population = Vec::with_capacity(population_size as usize);
             new_population.push(pop_with_res[0].0.clone());
             new_population.push(pop_with_res[1].0.clone());
 
-            let tournament_select = |pop: &[(Individual, f64)], rng: &mut SimpleRng| -> Individual {
-                let mut best_candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
-                for _ in 0..2 {
-                    let candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
-                    if candidate.1 < best_candidate.1 {
-                        best_candidate = candidate;
+            let tournament_select =
+                |pop: &[(Individual, f64)], rng: &mut SimpleRng| -> Individual {
+                    let mut best_candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
+                    for _ in 0..2 {
+                        let candidate = &pop[rng.range(0.0, pop.len() as f64) as usize];
+                        if candidate.1 < best_candidate.1 {
+                            best_candidate = candidate;
+                        }
                     }
-                }
-                best_candidate.0.clone()
-            };
+                    best_candidate.0.clone()
+                };
 
             while new_population.len() < population_size as usize {
                 let parent1 = tournament_select(&pop_with_res, &mut rng);
                 let parent2 = tournament_select(&pop_with_res, &mut rng);
-                
+
                 let mut child = Individual::crossover(&parent1, &parent2, &mut rng, &bounds);
                 child.mutate(&mut rng, &bounds, 0.15);
                 new_population.push(child);
@@ -469,18 +648,18 @@ pub fn run_tuning(
 mod tests {
     use super::*;
     use crate::simulation::SimRecord;
-    use chrono::{TimeZone, FixedOffset};
+    use chrono::{FixedOffset, TimeZone};
 
     #[test]
     fn test_rng_and_individual_mutation() {
         let mut rng = SimpleRng::new(42);
         let bounds = Bounds::new(10.0);
         let mut ind = Individual::random(&mut rng, &bounds);
-        
+
         let initial_neg = ind.neg_price_threshold;
         ind.mutate(&mut rng, &bounds, 1.0);
         assert_ne!(ind.neg_price_threshold, initial_neg);
-        
+
         // Crossover
         let parent2 = Individual::random(&mut rng, &bounds);
         let child = Individual::crossover(&ind, &parent2, &mut rng, &bounds);

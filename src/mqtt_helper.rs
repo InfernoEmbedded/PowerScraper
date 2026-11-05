@@ -186,7 +186,10 @@ pub fn build_discovery_payload(
             val_payload["state_class"] = json!("measurement");
 
         // 2. Frequency (Hz) - check before voltage to handle "Frequency of supply voltages"
-        } else if m_lower.contains("frequency") || m_lower.contains("freq") || is_word_or_spaced("hz") {
+        } else if m_lower.contains("frequency")
+            || m_lower.contains("freq")
+            || is_word_or_spaced("hz")
+        {
             val_payload["unit_of_measurement"] = json!("Hz");
             val_payload["device_class"] = json!("frequency");
             val_payload["state_class"] = json!("measurement");
@@ -206,14 +209,22 @@ pub fn build_discovery_payload(
 
         // 5. Reactive Energy (kvarh / varh) - check before reactive power & voltage
         } else if m_lower.contains("kvarh") || m_lower.contains("varh") {
-            let unit = if m_lower.contains("kvarh") { "kvarh" } else { "varh" };
+            let unit = if m_lower.contains("kvarh") {
+                "kvarh"
+            } else {
+                "varh"
+            };
             val_payload["unit_of_measurement"] = json!(unit);
             val_payload["device_class"] = json!("reactive_energy");
             val_payload["state_class"] = json!("total_increasing");
 
         // 6. Apparent Energy (kVAh / VAh) - check before apparent power & voltage
         } else if m_lower.contains("kvah") || m_lower.contains("vah") {
-            let unit = if m_lower.contains("kvah") { "kVAh" } else { "VAh" };
+            let unit = if m_lower.contains("kvah") {
+                "kVAh"
+            } else {
+                "VAh"
+            };
             val_payload["unit_of_measurement"] = json!(unit);
             val_payload["device_class"] = json!("apparent_energy");
             val_payload["state_class"] = json!("total_increasing");
@@ -226,7 +237,11 @@ pub fn build_discovery_payload(
             || m_lower.contains("kvar")
             || is_word_or_spaced("var")
         {
-            let unit = if m_lower.contains("kvar") { "kvar" } else { "var" };
+            let unit = if m_lower.contains("kvar") {
+                "kvar"
+            } else {
+                "var"
+            };
             val_payload["unit_of_measurement"] = json!(unit);
             val_payload["device_class"] = json!("reactive_power");
             val_payload["state_class"] = json!("measurement");
@@ -265,7 +280,11 @@ pub fn build_discovery_payload(
             || m_lower.contains("amp hour")
             || m_lower.contains("ampere hour")
         {
-            let unit = if is_word_or_spaced("mah") { "mAh" } else { "Ah" };
+            let unit = if is_word_or_spaced("mah") {
+                "mAh"
+            } else {
+                "Ah"
+            };
             val_payload["unit_of_measurement"] = json!(unit);
             val_payload["state_class"] = json!("total_increasing");
 
@@ -477,8 +496,14 @@ impl MqttEnqueueWrapper {
         tokio::spawn(async move {
             loop {
                 let msg = wrapper.dequeue_async().await;
-                if let Err(e) = client.publish(&msg.topic, msg.qos, msg.retain, msg.payload).await {
-                    eprintln!("MqttEnqueueWrapper worker publish error on {}: {}", msg.topic, e);
+                if let Err(e) = client
+                    .publish(&msg.topic, msg.qos, msg.retain, msg.payload)
+                    .await
+                {
+                    eprintln!(
+                        "MqttEnqueueWrapper worker publish error on {}: {}",
+                        msg.topic, e
+                    );
                 }
             }
         })
@@ -552,23 +577,31 @@ mod tests {
 
         // MainsMeter Volt Amps (Must be VA, NOT V)
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 volt amps", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 volt amps", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "VA");
         assert_eq!(payload["device_class"], "apparent_power");
 
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Total system volt amps", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Total system volt amps", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "VA");
         assert_eq!(payload["device_class"], "apparent_power");
 
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Total system VA demand", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Total system VA demand", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "VA");
         assert_eq!(payload["device_class"], "apparent_power");
 
         // MainsMeter Reactive Power (Must be var, NOT V)
-        let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 volt amps reactive", false).unwrap();
+        let (_, _, payload) = build_discovery_payload(
+            &mqtt_config,
+            "MainsMeter",
+            "Phase 1 volt amps reactive",
+            false,
+        )
+        .unwrap();
         assert_eq!(payload["unit_of_measurement"], "var");
         assert_eq!(payload["device_class"], "reactive_power");
 
@@ -578,23 +611,31 @@ mod tests {
         assert_eq!(payload["device_class"], "reactive_power");
 
         // Frequency of supply voltages (Must be Hz, NOT V)
-        let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Frequency of supply voltages", false).unwrap();
+        let (_, _, payload) = build_discovery_payload(
+            &mqtt_config,
+            "MainsMeter",
+            "Frequency of supply voltages",
+            false,
+        )
+        .unwrap();
         assert_eq!(payload["unit_of_measurement"], "Hz");
         assert_eq!(payload["device_class"], "frequency");
 
         // THD (Must be %, NOT V or A)
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 L-N volts THD", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 L-N volts THD", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "%");
 
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 current THD", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 current THD", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "%");
 
         // Reactive Energy (kvarh)
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Total import kVArh", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Total import kVArh", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "kvarh");
         assert_eq!(payload["device_class"], "reactive_energy");
         assert_eq!(payload["state_class"], "total_increasing");
@@ -614,12 +655,18 @@ mod tests {
 
         // Demand currents & power
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 current demand", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 current demand", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "A");
         assert_eq!(payload["device_class"], "current");
 
-        let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Total system power demand", false).unwrap();
+        let (_, _, payload) = build_discovery_payload(
+            &mqtt_config,
+            "MainsMeter",
+            "Total system power demand",
+            false,
+        )
+        .unwrap();
         assert_eq!(payload["unit_of_measurement"], "W");
         assert_eq!(payload["device_class"], "power");
 
@@ -632,26 +679,34 @@ mod tests {
 
         // MainsMeter Total Active Power (Must be W, not kWh)
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Total active power", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Total active power", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "W");
         assert_eq!(payload["device_class"], "power");
         assert_eq!(payload["state_class"], "measurement");
 
         // MainsMeter Volts (Must be V)
-        let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 line to neutral volts", false).unwrap();
+        let (_, _, payload) = build_discovery_payload(
+            &mqtt_config,
+            "MainsMeter",
+            "Phase 1 line to neutral volts",
+            false,
+        )
+        .unwrap();
         assert_eq!(payload["unit_of_measurement"], "V");
         assert_eq!(payload["device_class"], "voltage");
 
         // MainsMeter Power Factor (Must be power_factor, no kWh/W unit)
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 power factor", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 power factor", false)
+                .unwrap();
         assert_eq!(payload["device_class"], "power_factor");
         assert!(payload.get("unit_of_measurement").is_none());
 
         // MainsMeter Phase Angle (Must be °)
         let (_, _, payload) =
-            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 phase angle", false).unwrap();
+            build_discovery_payload(&mqtt_config, "MainsMeter", "Phase 1 phase angle", false)
+                .unwrap();
         assert_eq!(payload["unit_of_measurement"], "°");
 
         // Aggregate metric (Total Solar Production)
@@ -739,17 +794,23 @@ mod tests {
             home_assistant_discovery: Some(true),
             home_assistant_prefix: None,
         };
-        assert!(build_discovery_payload(&enabled_config, "power_manager", "invalid_metric", false).is_none());
+        assert!(
+            build_discovery_payload(&enabled_config, "power_manager", "invalid_metric", false)
+                .is_none()
+        );
 
         // Test additional metric type deductions (kvarh, kvar, fallback)
-        let (_, _, p_kvarh) = build_discovery_payload(&enabled_config, "inverter", "Total kvarh", false).unwrap();
+        let (_, _, p_kvarh) =
+            build_discovery_payload(&enabled_config, "inverter", "Total kvarh", false).unwrap();
         assert_eq!(p_kvarh["unit_of_measurement"], "kvarh");
 
-        let (_, _, p_kvar) = build_discovery_payload(&enabled_config, "inverter", "System kvar", false).unwrap();
+        let (_, _, p_kvar) =
+            build_discovery_payload(&enabled_config, "inverter", "System kvar", false).unwrap();
         assert_eq!(p_kvar["unit_of_measurement"], "kvar");
         assert_eq!(p_kvar["device_class"], "reactive_power");
 
-        let (_, _, p_fallback) = build_discovery_payload(&enabled_config, "inverter", "UnknownMetric", false).unwrap();
+        let (_, _, p_fallback) =
+            build_discovery_payload(&enabled_config, "inverter", "UnknownMetric", false).unwrap();
         assert!(p_fallback.get("unit_of_measurement").is_none());
 
         // Test create_mqtt_client function
@@ -807,9 +868,7 @@ mod tests {
         assert_eq!(wrapper.len(), 1);
 
         let wrapper_clone = wrapper.clone();
-        let handle = tokio::spawn(async move {
-            wrapper_clone.dequeue_async().await
-        });
+        let handle = tokio::spawn(async move { wrapper_clone.dequeue_async().await });
 
         let msg = handle.await.unwrap();
         assert_eq!(msg.topic, "sensors/test");

@@ -53,7 +53,8 @@ chmod +x "$BUILD_DIR/usr/share/powerscraper/scripts/battery_simulation.py"
 cat << 'EOF' > "$BUILD_DIR/lib/systemd/system/powerscraper.service"
 [Unit]
 Description=PowerScraper daemon
-After=network.target
+After=network.target time-sync.target
+Wants=time-sync.target
 
 [Service]
 Type=exec

@@ -98,7 +98,8 @@ pub async fn run_dtsu666_driver(
         if elapsed_since_success >= watchdog_timeout {
             println!(
                 "DTSU666 [{}] Stale meter detected ({:.1}s without valid telemetry update). Resetting serial connection...",
-                device_name, elapsed_since_success.as_secs_f64()
+                device_name,
+                elapsed_since_success.as_secs_f64()
             );
             ctx_opt = None;
             last_successful_read = tokio::time::Instant::now();
@@ -110,10 +111,16 @@ pub async fn run_dtsu666_driver(
         }
 
         if ctx_opt.is_none() {
-            println!("DTSU666 [{}] Connecting to serial port {}...", device_name, port_path);
+            println!(
+                "DTSU666 [{}] Connecting to serial port {}...",
+                device_name, port_path
+            );
             match connect_serial_meter(&port_path, &config).await {
                 Ok(ctx) => {
-                    println!("DTSU666 [{}] Serial port {} opened successfully.", device_name, port_path);
+                    println!(
+                        "DTSU666 [{}] Serial port {} opened successfully.",
+                        device_name, port_path
+                    );
                     ctx_opt = Some(ctx);
                 }
                 Err(e) => {
@@ -145,6 +152,11 @@ pub async fn run_dtsu666_driver(
 
         match read_res {
             Ok(Ok((reg1, reg2))) => {
+                let invert_mult = if config.invert.unwrap_or(false) {
+                    -1.0
+                } else {
+                    1.0
+                };
                 let mut vals = HashMap::new();
                 vals.insert("name".to_string(), device_name.clone());
 
@@ -164,19 +176,21 @@ pub async fn run_dtsu666_driver(
                     );
                     vals.insert(
                         "Phase 1 power".to_string(),
-                        format!("{:.3}", float32(&reg1, base, 0x2012)),
+                        format!("{:.3}", float32(&reg1, base, 0x2012) * invert_mult),
                     );
                     vals.insert(
                         "Phase 2 power".to_string(),
-                        format!("{:.3}", float32(&reg1, base, 0x2014)),
+                        format!("{:.3}", float32(&reg1, base, 0x2014) * invert_mult),
                     );
                     vals.insert(
                         "Phase 3 power".to_string(),
-                        format!("{:.3}", float32(&reg1, base, 0x2016)),
+                        format!("{:.3}", float32(&reg1, base, 0x2016) * invert_mult),
                     );
+                    let total_pow = float32(&reg1, base, 0x2018) * invert_mult;
+                    vals.insert("Total power".to_string(), format!("{:.3}", total_pow));
                     vals.insert(
-                        "Total power".to_string(),
-                        format!("{:.3}", float32(&reg1, base, 0x2018)),
+                        "Total system power".to_string(),
+                        format!("{:.3}", total_pow),
                     );
                     vals.insert(
                         "Phase 1 reactive power".to_string(),
@@ -267,7 +281,10 @@ pub async fn run_dtsu666_driver(
                     };
                     match tx_telemetry.try_send(batch) {
                         Ok(_) => {
-                            last_success_ts.store(chrono::Utc::now().timestamp() as u64, std::sync::atomic::Ordering::Relaxed);
+                            last_success_ts.store(
+                                chrono::Utc::now().timestamp() as u64,
+                                std::sync::atomic::Ordering::Relaxed,
+                            );
                             last_successful_read = tokio::time::Instant::now();
                         }
                         Err(e) => {
@@ -289,7 +306,8 @@ pub async fn run_dtsu666_driver(
             Err(_) => {
                 println!(
                     "DTSU666 [{}] read TIMEOUT ({}s limit reached), resetting connection",
-                    device_name, timeout_dur.as_secs_f64()
+                    device_name,
+                    timeout_dur.as_secs_f64()
                 );
                 ctx_opt = None;
             }

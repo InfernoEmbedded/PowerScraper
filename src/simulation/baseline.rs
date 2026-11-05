@@ -1,4 +1,4 @@
-use super::{SimRecord, SimConfig, SimTracker, is_time_in_window, calculate_demand_charges_total};
+use super::{SimConfig, SimRecord, SimTracker, calculate_demand_charges_total, is_time_in_window};
 use crate::power_manager::SimulationResultModel;
 use std::collections::HashMap;
 
@@ -23,7 +23,8 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
             step_cycles = (discharge / 1000.0) * r.duration_hours / config.battery_capacity_kwh;
             net_grid_w = net_w - discharge;
         } else {
-            let max_avail_charge = ((config.battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
+            let max_avail_charge =
+                ((config.battery_capacity_kwh - bat_soc) / 0.95) / r.duration_hours * 1000.0;
             let charge = (-net_w).min(config.max_power_w).min(max_avail_charge);
 
             bat_soc += (charge / 1000.0) * r.duration_hours * 0.95;
@@ -43,7 +44,9 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
         );
 
         if net_grid_w > 0.0 {
-            if config.demand_window.map_or(false, |(start, end)| is_time_in_window(now_time, start, end)) {
+            if config.demand_window.map_or(false, |(start, end)| {
+                is_time_in_window(now_time, start, end)
+            }) {
                 let peak = base_peaks.entry(month_key).or_insert(0.0);
                 if net_grid_w > *peak {
                     *peak = net_grid_w;
@@ -68,7 +71,7 @@ pub fn run(records: &[SimRecord], config: &SimConfig) -> SimulationResultModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, FixedOffset};
+    use chrono::{FixedOffset, TimeZone};
 
     #[test]
     fn test_baseline_solar_charging() {

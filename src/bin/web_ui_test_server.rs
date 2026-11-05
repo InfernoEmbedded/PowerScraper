@@ -18,7 +18,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         for i in 0..1440 {
             let ts = now_ts - (1440 - i) * 60;
             let minute_of_day = (i % 1440) as f64;
-            
+
             // Solar power: bell curve peak at midday
             let solar_power = if minute_of_day > 360.0 && minute_of_day < 1080.0 {
                 let x = (minute_of_day - 720.0) / 180.0;
@@ -77,7 +77,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Set some mock data in the global system status for telemetry UI testing
     {
-        let mut status = PowerScraper::web_server::get_system_status().lock().unwrap();
+        let mut status = PowerScraper::web_server::get_system_status()
+            .lock()
+            .unwrap();
         status.active_mode = "Auto".to_string();
         status.grid_target = 100.0;
         status.meter_power = -250.5;
@@ -92,35 +94,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .unwrap()
             .as_secs();
         status.meter_last_updated = Some(now - 5);
-        
+
         let mut invs = std::collections::HashMap::new();
-        invs.insert("solax-modbus".to_string(), PowerScraper::web_server::InverterStatus {
-            battery_capacity: 85,
-            battery_power: -1200,
-            pv_power: 3200,
-            run_mode: 2,
-            last_updated: Some(now - 15),
-            calculated_battery_capacity: Some(13.82),
-            requested_power: Some(-1000),
-            command_power: Some(-1000),
-            ..Default::default()
-        });
-        invs.insert("solax-x3".to_string(), PowerScraper::web_server::InverterStatus {
-            battery_capacity: 90,
-            battery_power: 1000,
-            pv_power: 1500,
-            run_mode: 2,
-            last_updated: Some(now - 45),
-            calculated_battery_capacity: Some(13.82),
-            requested_power: Some(500),
-            command_power: Some(500),
-            ..Default::default()
-        });
+        invs.insert(
+            "solax-modbus".to_string(),
+            PowerScraper::web_server::InverterStatus {
+                battery_capacity: 85,
+                battery_power: -1200,
+                pv_power: 3200,
+                run_mode: 2,
+                last_updated: Some(now - 15),
+                calculated_battery_capacity: Some(13.82),
+                requested_power: Some(-1000),
+                command_power: Some(-1000),
+                ..Default::default()
+            },
+        );
+        invs.insert(
+            "solax-x3".to_string(),
+            PowerScraper::web_server::InverterStatus {
+                battery_capacity: 90,
+                battery_power: 1000,
+                pv_power: 1500,
+                run_mode: 2,
+                last_updated: Some(now - 45),
+                calculated_battery_capacity: Some(13.82),
+                requested_power: Some(500),
+                command_power: Some(500),
+                ..Default::default()
+            },
+        );
         status.inverters = invs;
     }
 
     let (reload_tx, mut reload_rx) = tokio::sync::mpsc::channel::<()>(10);
-    
+
     // Spawn task to drain reload signals and update system status
     let db_path_clone = db_path.clone();
     tokio::spawn(async move {
@@ -129,7 +137,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Load the updated config from DB and update status
             if let Ok(cfg) = Config::load_from_db(&db_path_clone) {
                 if let Some(ref bc) = cfg.battery_control {
-                    let mut status = PowerScraper::web_server::get_system_status().lock().unwrap();
+                    let mut status = PowerScraper::web_server::get_system_status()
+                        .lock()
+                        .unwrap();
                     if let Some(ref mode) = bc.initial_mode {
                         println!("Test server: Updating active_mode in status to: {}", mode);
                         status.active_mode = mode.clone();

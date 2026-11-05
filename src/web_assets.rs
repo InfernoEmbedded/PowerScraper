@@ -2932,10 +2932,15 @@ function renderDriverCard(type, data = {}) {
                 <div class="form-group">
                     <label>Stop Bits<span class="tooltip-icon" data-tooltip="Serial line stop bit count (1 or 2).">?</span></label>
                     <input type="number" class="driver-sdm-stop" value="${stop}">
-                </div>
                 <div class="form-group">
                     <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Serial silence timeout in seconds before restarting connection.">?</span></label>
                     <input type="number" class="driver-sdm-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="checkbox-group" style="margin-top: 10px;">
+                    <input type="checkbox" class="driver-sdm-invert" ${data.invert ? 'checked' : ''}>
+                    <label>Invert Power Readings (Flip +/- Sign)<span class="tooltip-icon" data-tooltip="Invert the sign of power measurements (+ import / - export). Useful if CT clamps are reversed or meter outputs inverted polarity.">?</span></label>
                 </div>
             </div>
         `;
@@ -2990,6 +2995,12 @@ function renderDriverCard(type, data = {}) {
                     <input type="number" class="driver-dtsu-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
                 </div>
             </div>
+            <div class="form-row">
+                <div class="checkbox-group" style="margin-top: 10px;">
+                    <input type="checkbox" class="driver-dtsu-invert" ${data.invert ? 'checked' : ''}>
+                    <label>Invert Power Readings (Flip +/- Sign)<span class="tooltip-icon" data-tooltip="Invert the sign of power measurements (+ import / - export). Useful if CT clamps are reversed or meter outputs inverted polarity.">?</span></label>
+                </div>
+            </div>
         `;
     } else if (type === 'MQTTPowerMeter') {
         const name = data.meter_name || 'MainsMeter';
@@ -3022,6 +3033,12 @@ function renderDriverCard(type, data = {}) {
                 <div class="form-group">
                     <label>Watchdog Timeout (s)<span class="tooltip-icon" data-tooltip="Topic update silence timeout before flagging meter failure.">?</span></label>
                     <input type="number" class="driver-mqtt-meter-watchdog" value="${data.watchdog_timeout || ''}" placeholder="Default 180">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="checkbox-group" style="margin-top: 10px;">
+                    <input type="checkbox" class="driver-mqtt-meter-invert" ${data.invert ? 'checked' : ''}>
+                    <label>Invert Power Readings (Flip +/- Sign)<span class="tooltip-icon" data-tooltip="Invert the sign of power measurements (+ import / - export). Useful if external MQTT feed outputs inverted polarity.">?</span></label>
                 </div>
             </div>
             <div class="form-row">
@@ -3293,7 +3310,8 @@ async function loadConfig(configData = null) {
                     baud: sdm.baud || 38400,
                     parity: sdm.parity || 'E',
                     stopbits: sdm.stopbits || 1,
-                    watchdog_timeout: sdm["watchdog-timeout"] || sdm.watchdog_timeout || null
+                    watchdog_timeout: sdm["watchdog-timeout"] || sdm.watchdog_timeout || null,
+                    invert: sdm.invert === true
                 });
             });
         }
@@ -3310,7 +3328,8 @@ async function loadConfig(configData = null) {
                     baud: dtsu.baud || 9600,
                     parity: dtsu.parity || 'N',
                     stopbits: dtsu.stopbits || 1,
-                    watchdog_timeout: dtsu["watchdog-timeout"] || dtsu.watchdog_timeout || null
+                    watchdog_timeout: dtsu["watchdog-timeout"] || dtsu.watchdog_timeout || null,
+                    invert: dtsu.invert === true
                 });
             });
         }
@@ -3332,7 +3351,8 @@ async function loadConfig(configData = null) {
                     topic_phase1: mDev.topic_phase1 || mDev["topic-phase1"] || '',
                     topic_phase2: mDev.topic_phase2 || mDev["topic-phase2"] || '',
                     topic_phase3: mDev.topic_phase3 || mDev["topic-phase3"] || '',
-                    watchdog_timeout: mDev["watchdog-timeout"] || mDev.watchdog_timeout || null
+                    watchdog_timeout: mDev["watchdog-timeout"] || mDev.watchdog_timeout || null,
+                    invert: mDev.invert === true
                 });
             });
         }
@@ -4338,6 +4358,7 @@ async function saveConfiguration() {
             const stop = parseInt(card.querySelector('.driver-sdm-stop').value) || 1;
             const watchdogInput = card.querySelector('.driver-sdm-watchdog');
             const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
+            const invert = card.querySelector('.driver-sdm-invert')?.checked || false;
             if (port) {
                 if (!sdmConfig) {
                     sdmConfig = {
@@ -4353,6 +4374,9 @@ async function saveConfiguration() {
                 if (watchdog !== null && !isNaN(watchdog)) {
                     sdmConfig["watchdog-timeout"] = watchdog;
                 }
+                if (invert) {
+                    sdmConfig.invert = true;
+                }
                 sdmConfig.ports.push(port);
             }
         } else if (type === 'DTSU666') {
@@ -4364,6 +4388,7 @@ async function saveConfiguration() {
             const stop = parseInt(card.querySelector('.driver-dtsu-stop').value) || 1;
             const watchdogInput = card.querySelector('.driver-dtsu-watchdog');
             const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
+            const invert = card.querySelector('.driver-dtsu-invert')?.checked || false;
             if (port) {
                 if (!dtsuConfig) {
                     dtsuConfig = {
@@ -4377,6 +4402,9 @@ async function saveConfiguration() {
                 }
                 if (watchdog !== null && !isNaN(watchdog)) {
                     dtsuConfig["watchdog-timeout"] = watchdog;
+                }
+                if (invert) {
+                    dtsuConfig.invert = true;
                 }
                 dtsuConfig.ports.push(port);
             }
@@ -4393,6 +4421,7 @@ async function saveConfiguration() {
             const topicP3 = card.querySelector('.driver-mqtt-meter-topic-p3').value.trim() || null;
             const watchdogInput = card.querySelector('.driver-mqtt-meter-watchdog');
             const watchdog = watchdogInput && watchdogInput.value ? parseInt(watchdogInput.value) : null;
+            const invert = card.querySelector('.driver-mqtt-meter-invert')?.checked || false;
             if (name && broker) {
                 if (!mqttMeterConfig) {
                     mqttMeterConfig = {
@@ -4413,6 +4442,9 @@ async function saveConfiguration() {
                 };
                 if (watchdog !== null && !isNaN(watchdog)) {
                     mqttMeterConfig[name]["watchdog-timeout"] = watchdog;
+                }
+                if (invert) {
+                    mqttMeterConfig[name].invert = true;
                 }
             }
         } else if (type === 'MQTTInverter') {

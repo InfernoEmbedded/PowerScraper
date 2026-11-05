@@ -160,19 +160,29 @@ pub async fn run_solax_g4_driver(
                 }
             }
             if let Some(ref mut ctx) = *lock {
-                while let Some((reg, val)) = crate::web_server::pop_pending_modbus_write(&inverter_name) {
+                while let Some((reg, val)) =
+                    crate::web_server::pop_pending_modbus_write(&inverter_name)
+                {
                     let pwd = config.installer_password.unwrap_or(2014);
                     let _ = ctx.write_single_register(0x0000, pwd).await;
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     if let Err(e) = ctx.write_single_register(reg, val).await {
-                        eprintln!("[SolaxG4 Log] Driver [{}] manual write ({:#06x}, {}) failed: {}", inverter_name, reg, val, e);
+                        eprintln!(
+                            "[SolaxG4 Log] Driver [{}] manual write ({:#06x}, {}) failed: {}",
+                            inverter_name, reg, val, e
+                        );
                     } else {
-                        println!("[SolaxG4 Log] Driver [{}] manual write ({:#06x}, {}) succeeded", inverter_name, reg, val);
+                        println!(
+                            "[SolaxG4 Log] Driver [{}] manual write ({:#06x}, {}) succeeded",
+                            inverter_name, reg, val
+                        );
                     }
                 }
 
                 let needs_update = match (last_written_power, last_write_time) {
-                    (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
+                    (Some(lp), Some(lt)) => {
+                        lp != req_power || lt.elapsed() >= Duration::from_secs(10)
+                    }
                     _ => true,
                 };
 
@@ -187,7 +197,11 @@ pub async fn run_solax_g4_driver(
                         // 4. Write requested power as int32 LSB at 0x007E, MSB at 0x007F (Positive = charge, Negative = discharge)
                         let low_word = (req_power & 0xFFFF) as u16;
                         let high_word = ((req_power >> 16) & 0xFFFF) as u16;
-                        if ctx.write_multiple_registers(0x007E, &[low_word, high_word]).await.is_ok() {
+                        if ctx
+                            .write_multiple_registers(0x007E, &[low_word, high_word])
+                            .await
+                            .is_ok()
+                        {
                             last_written_power = Some(req_power);
                             last_write_time = Some(std::time::Instant::now());
                         }
@@ -256,10 +270,12 @@ pub async fn run_solax_g4_driver(
                         inv.run_mode = run_mode;
                         inv.raw_metrics = vals.clone();
                         inv.driver_type = Some("Solax-G4-Modbus".to_string());
-                        inv.last_updated = Some(std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs());
+                        inv.last_updated = Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                        );
                     }
 
                     // Add power budget average calculation

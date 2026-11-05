@@ -63,9 +63,7 @@ pub async fn forward_to_influx(
         let line = format!("solax,inverter={} {}", device_name, fields.join(","));
         let write_url = format!(
             "{}/api/v2/write?org=-&bucket={}/{}",
-            config.influx_url,
-            config.influx_database,
-            config.influx_retention_policy
+            config.influx_url, config.influx_database, config.influx_retention_policy
         );
         let token = format!("{}:{}", config.influx_user, config.influx_pass);
 
@@ -102,9 +100,9 @@ pub async fn forward_to_influx(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use tokio::io::AsyncWriteExt;
     use tokio::net::TcpListener;
-    use std::time::Duration;
 
     #[tokio::test]
     async fn test_forward_to_influx_success() {
@@ -138,4 +136,3 @@ mod tests {
         server_task.await.unwrap();
     }
 }
-

@@ -166,19 +166,29 @@ pub async fn run_solax_modbus_driver(
                 }
             }
             if let Some(ref mut ctx) = *lock {
-                while let Some((reg, val)) = crate::web_server::pop_pending_modbus_write(&inverter_name) {
+                while let Some((reg, val)) =
+                    crate::web_server::pop_pending_modbus_write(&inverter_name)
+                {
                     let pwd = config.installer_password.unwrap_or(2014);
                     let _ = ctx.write_single_register(0x00, pwd).await;
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     if let Err(e) = ctx.write_single_register(reg, val).await {
-                        eprintln!("[SolaxModbus Log] Driver [{}] manual write ({:#06x}, {}) failed: {}", inverter_name, reg, val, e);
+                        eprintln!(
+                            "[SolaxModbus Log] Driver [{}] manual write ({:#06x}, {}) failed: {}",
+                            inverter_name, reg, val, e
+                        );
                     } else {
-                        println!("[SolaxModbus Log] Driver [{}] manual write ({:#06x}, {}) succeeded", inverter_name, reg, val);
+                        println!(
+                            "[SolaxModbus Log] Driver [{}] manual write ({:#06x}, {}) succeeded",
+                            inverter_name, reg, val
+                        );
                     }
                 }
 
                 let needs_update = match (last_written_power, last_write_time) {
-                    (Some(lp), Some(lt)) => lp != req_power || lt.elapsed() >= Duration::from_secs(10),
+                    (Some(lp), Some(lt)) => {
+                        lp != req_power || lt.elapsed() >= Duration::from_secs(10)
+                    }
                     _ => true,
                 };
 
@@ -191,7 +201,10 @@ pub async fn run_solax_modbus_driver(
                     // and trigger execution via register 0x0090 = 1
                     let power_u16 = (req_power as i16) as u16;
                     if let Err(e) = ctx.write_single_register(0x51, power_u16).await {
-                        eprintln!("[SolaxModbus Log] Driver [{}] write_single_register(0x51, {}) failed: {}", inverter_name, req_power, e);
+                        eprintln!(
+                            "[SolaxModbus Log] Driver [{}] write_single_register(0x51, {}) failed: {}",
+                            inverter_name, req_power, e
+                        );
                         write_failed = true;
                     } else if req_power != 0 {
                         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -267,12 +280,20 @@ pub async fn run_solax_modbus_driver(
                         .and_then(|v| v.parse::<u32>().ok())
                         .unwrap_or(0);
 
-                    let inv_fault = vals.get("Inverter Fault").and_then(|v| v.parse::<u32>().ok());
-                    let chg_fault = vals.get("Charger Fault").and_then(|v| v.parse::<u32>().ok());
-                    let mgr_fault = vals.get("Manager Fault").and_then(|v| v.parse::<u32>().ok());
+                    let inv_fault = vals
+                        .get("Inverter Fault")
+                        .and_then(|v| v.parse::<u32>().ok());
+                    let chg_fault = vals
+                        .get("Charger Fault")
+                        .and_then(|v| v.parse::<u32>().ok());
+                    let mgr_fault = vals
+                        .get("Manager Fault")
+                        .and_then(|v| v.parse::<u32>().ok());
                     let bms_warn = vals.get("BMS Warning").and_then(|v| v.parse::<u32>().ok());
 
-                    let (is_err, err_text) = decipher_solax_v250_faults(run_mode, inv_fault, chg_fault, mgr_fault, bms_warn);
+                    let (is_err, err_text) = decipher_solax_v250_faults(
+                        run_mode, inv_fault, chg_fault, mgr_fault, bms_warn,
+                    );
 
                     if let Ok(mut status) = crate::web_server::get_system_status().lock() {
                         let inv = status.inverters.entry(inverter_name.clone()).or_default();
@@ -288,10 +309,12 @@ pub async fn run_solax_modbus_driver(
                         inv.error_text = err_text;
                         inv.raw_metrics = vals.clone();
                         inv.driver_type = Some("Solax-Modbus".to_string());
-                        inv.last_updated = Some(std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs());
+                        inv.last_updated = Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs(),
+                        );
                     }
 
                     // Add power budget average calculation
@@ -366,21 +389,57 @@ fn parse_solax_registers(
 
     if let Some(r1) = h1 {
         if r1.len() >= 17 {
-            vals.insert("PV Start Voltage".to_string(), format!("{:.1}", r1[0] as f64 * 0.1));
+            vals.insert(
+                "PV Start Voltage".to_string(),
+                format!("{:.1}", r1[0] as f64 * 0.1),
+            );
             vals.insert("Start Wait Time".to_string(), format!("{}", r1[1]));
-            vals.insert("PV High Stop Voltage".to_string(), format!("{:.1}", r1[2] as f64 * 0.1));
-            vals.insert("PV Low Stop Voltage".to_string(), format!("{:.1}", r1[3] as f64 * 0.1));
-            vals.insert("Min Grid Voltage Protect".to_string(), format!("{:.1}", r1[4] as f64 * 0.1));
-            vals.insert("Max Grid Voltage Protect".to_string(), format!("{:.1}", r1[5] as f64 * 0.1));
-            vals.insert("Min Grid Freq Protect".to_string(), format!("{:.2}", r1[6] as f64 * 0.01));
-            vals.insert("Max Grid Freq Protect".to_string(), format!("{:.2}", r1[7] as f64 * 0.01));
+            vals.insert(
+                "PV High Stop Voltage".to_string(),
+                format!("{:.1}", r1[2] as f64 * 0.1),
+            );
+            vals.insert(
+                "PV Low Stop Voltage".to_string(),
+                format!("{:.1}", r1[3] as f64 * 0.1),
+            );
+            vals.insert(
+                "Min Grid Voltage Protect".to_string(),
+                format!("{:.1}", r1[4] as f64 * 0.1),
+            );
+            vals.insert(
+                "Max Grid Voltage Protect".to_string(),
+                format!("{:.1}", r1[5] as f64 * 0.1),
+            );
+            vals.insert(
+                "Min Grid Freq Protect".to_string(),
+                format!("{:.2}", r1[6] as f64 * 0.01),
+            );
+            vals.insert(
+                "Max Grid Freq Protect".to_string(),
+                format!("{:.2}", r1[7] as f64 * 0.01),
+            );
             vals.insert("Safety Type".to_string(), format!("{}", r1[8]));
             vals.insert("PV Connection Mode".to_string(), format!("{}", r1[9]));
-            vals.insert("10Min Overvoltage Protect".to_string(), format!("{:.1}", r1[10] as f64 * 0.1));
-            vals.insert("Min Slow Grid Voltage Protect".to_string(), format!("{:.1}", r1[11] as f64 * 0.1));
-            vals.insert("Max Slow Grid Voltage Protect".to_string(), format!("{:.1}", r1[12] as f64 * 0.1));
-            vals.insert("Min Slow Grid Freq Protect".to_string(), format!("{:.2}", r1[13] as f64 * 0.01));
-            vals.insert("Max Slow Grid Freq Protect".to_string(), format!("{:.2}", r1[14] as f64 * 0.01));
+            vals.insert(
+                "10Min Overvoltage Protect".to_string(),
+                format!("{:.1}", r1[10] as f64 * 0.1),
+            );
+            vals.insert(
+                "Min Slow Grid Voltage Protect".to_string(),
+                format!("{:.1}", r1[11] as f64 * 0.1),
+            );
+            vals.insert(
+                "Max Slow Grid Voltage Protect".to_string(),
+                format!("{:.1}", r1[12] as f64 * 0.1),
+            );
+            vals.insert(
+                "Min Slow Grid Freq Protect".to_string(),
+                format!("{:.2}", r1[13] as f64 * 0.01),
+            );
+            vals.insert(
+                "Max Slow Grid Freq Protect".to_string(),
+                format!("{:.2}", r1[14] as f64 * 0.01),
+            );
             vals.insert("DCI Limit".to_string(), format!("{}", r1[15]));
             vals.insert("Active Power Limit".to_string(), format!("{}", r1[16]));
         }
@@ -392,35 +451,83 @@ fn parse_solax_registers(
             vals.insert("Work Mode".to_string(), format!("{}", r2[0]));
             vals.insert("Battery Min Capacity".to_string(), format!("{}", r2[1]));
             vals.insert("Battery Type".to_string(), format!("{}", r2[2]));
-            vals.insert("Charge Cutoff Voltage".to_string(), format!("{:.2}", r2[3] as f64 * 0.01));
-            vals.insert("Discharge Cutoff Voltage".to_string(), format!("{:.2}", r2[4] as f64 * 0.01));
-            vals.insert("Max Charge Current".to_string(), format!("{:.2}", r2[5] as f64 * 0.01));
-            vals.insert("Max Discharge Current".to_string(), format!("{:.2}", r2[6] as f64 * 0.01));
+            vals.insert(
+                "Charge Cutoff Voltage".to_string(),
+                format!("{:.2}", r2[3] as f64 * 0.01),
+            );
+            vals.insert(
+                "Discharge Cutoff Voltage".to_string(),
+                format!("{:.2}", r2[4] as f64 * 0.01),
+            );
+            vals.insert(
+                "Max Charge Current".to_string(),
+                format!("{:.2}", r2[5] as f64 * 0.01),
+            );
+            vals.insert(
+                "Max Discharge Current".to_string(),
+                format!("{:.2}", r2[6] as f64 * 0.01),
+            );
 
-            vals.insert("Charge Window 1 Start".to_string(), format!("{:02}:{:02}", r2[7] & 0xFF, (r2[7] >> 8) & 0xFF));
-            vals.insert("Charge Window 1 End".to_string(), format!("{:02}:{:02}", r2[9] & 0xFF, (r2[9] >> 8) & 0xFF));
-            vals.insert("Discharge Window 1 Start".to_string(), format!("{:02}:{:02}", r2[11] & 0xFF, (r2[11] >> 8) & 0xFF));
-            vals.insert("Discharge Window 1 End".to_string(), format!("{:02}:{:02}", r2[13] & 0xFF, (r2[13] >> 8) & 0xFF));
-            vals.insert("Charge Window 2 Start".to_string(), format!("{:02}:{:02}", r2[15] & 0xFF, (r2[15] >> 8) & 0xFF));
-            vals.insert("Charge Window 2 End".to_string(), format!("{:02}:{:02}", r2[17] & 0xFF, (r2[17] >> 8) & 0xFF));
-            vals.insert("Discharge Window 2 Start".to_string(), format!("{:02}:{:02}", r2[19] & 0xFF, (r2[19] >> 8) & 0xFF));
-            vals.insert("Discharge Window 2 End".to_string(), format!("{:02}:{:02}", r2[21] & 0xFF, (r2[21] >> 8) & 0xFF));
+            vals.insert(
+                "Charge Window 1 Start".to_string(),
+                format!("{:02}:{:02}", r2[7] & 0xFF, (r2[7] >> 8) & 0xFF),
+            );
+            vals.insert(
+                "Charge Window 1 End".to_string(),
+                format!("{:02}:{:02}", r2[9] & 0xFF, (r2[9] >> 8) & 0xFF),
+            );
+            vals.insert(
+                "Discharge Window 1 Start".to_string(),
+                format!("{:02}:{:02}", r2[11] & 0xFF, (r2[11] >> 8) & 0xFF),
+            );
+            vals.insert(
+                "Discharge Window 1 End".to_string(),
+                format!("{:02}:{:02}", r2[13] & 0xFF, (r2[13] >> 8) & 0xFF),
+            );
+            vals.insert(
+                "Charge Window 2 Start".to_string(),
+                format!("{:02}:{:02}", r2[15] & 0xFF, (r2[15] >> 8) & 0xFF),
+            );
+            vals.insert(
+                "Charge Window 2 End".to_string(),
+                format!("{:02}:{:02}", r2[17] & 0xFF, (r2[17] >> 8) & 0xFF),
+            );
+            vals.insert(
+                "Discharge Window 2 Start".to_string(),
+                format!("{:02}:{:02}", r2[19] & 0xFF, (r2[19] >> 8) & 0xFF),
+            );
+            vals.insert(
+                "Discharge Window 2 End".to_string(),
+                format!("{:02}:{:02}", r2[21] & 0xFF, (r2[21] >> 8) & 0xFF),
+            );
         }
     }
 
     if let Some(r3) = h3 {
         if r3.len() >= 9 {
             vals.insert("Allow Grid Charge".to_string(), format!("{}", r3[0]));
-            vals.insert("Export Control Factory Limit".to_string(), format!("{}", r3[1]));
-            vals.insert("Export Control User Limit".to_string(), format!("{}", r3[2]));
+            vals.insert(
+                "Export Control Factory Limit".to_string(),
+                format!("{}", r3[1]),
+            );
+            vals.insert(
+                "Export Control User Limit".to_string(),
+                format!("{}", r3[2]),
+            );
             vals.insert("Export Control Limit".to_string(), format!("{}", r3[2]));
             vals.insert("EPS Mute".to_string(), format!("{}", r3[3]));
             vals.insert("EPS Frequency".to_string(), format!("{}", r3[4]));
-            vals.insert("EPS Discharge Voltage".to_string(), format!("{:.1}", r3[5] as f64 * 0.1));
+            vals.insert(
+                "EPS Discharge Voltage".to_string(),
+                format!("{:.1}", r3[5] as f64 * 0.1),
+            );
             vals.insert("Language".to_string(), format!("{}", r3[7]));
             vals.insert("IP Method".to_string(), format!("{}", r3[8]));
             if r3.len() >= 35 {
-                vals.insert("Charge Absorption Voltage".to_string(), format!("{:.2}", r3[34] as f64 * 0.01));
+                vals.insert(
+                    "Charge Absorption Voltage".to_string(),
+                    format!("{:.2}", r3[34] as f64 * 0.01),
+                );
             }
         }
     }
@@ -500,7 +607,10 @@ fn parse_solax_registers(
         "Charger Boost Temperature".to_string(),
         signed16_a(0x19).to_string(),
     );
-    vals.insert("Battery Capacity".to_string(), unsigned16_a(0x1C).to_string());
+    vals.insert(
+        "Battery Capacity".to_string(),
+        unsigned16_a(0x1C).to_string(),
+    );
     vals.insert(
         "Battery Energy Discharged".to_string(),
         format!("{:.1}", unsigned32_a(0x1D) as f64 / 10.0),
@@ -582,14 +692,38 @@ pub fn decipher_solax_v250_faults(
     if let Some(f) = inv_fault {
         if f > 0 {
             let labels = [
-                "Hardware Trip", "Mains Lost", "Grid Voltage Fault", "Grid Frequency Fault",
-                "PV Voltage Fault", "Bus Voltage Fault", "Battery Voltage Fault", "AC 10Mins Voltage Fault",
-                "DCI OCP Fault", "DCV OCP Fault", "SW OCP Fault", "RC OCP Fault",
-                "Isolation Fault", "Overtemperature Fault", "Bat Connection Dir Fault", "Sample Consistence Fault",
-                "EPS Overload", "EPS OCP Fault", "Input Config Fault", "Firmware Ver Fault",
-                "EPS Bat Power Low", "Phase Angle Fault", "PLL Overtime", "BMS Lost / Parallel Fault",
-                "Inter-Com Fault", "Fan Fault", "HCT AC Device Fault", "EEPROM Fault",
-                "Residual Current Device Fault", "EPS Relay Fault", "Grid Relay Fault", "Battery Relay Fault",
+                "Hardware Trip",
+                "Mains Lost",
+                "Grid Voltage Fault",
+                "Grid Frequency Fault",
+                "PV Voltage Fault",
+                "Bus Voltage Fault",
+                "Battery Voltage Fault",
+                "AC 10Mins Voltage Fault",
+                "DCI OCP Fault",
+                "DCV OCP Fault",
+                "SW OCP Fault",
+                "RC OCP Fault",
+                "Isolation Fault",
+                "Overtemperature Fault",
+                "Bat Connection Dir Fault",
+                "Sample Consistence Fault",
+                "EPS Overload",
+                "EPS OCP Fault",
+                "Input Config Fault",
+                "Firmware Ver Fault",
+                "EPS Bat Power Low",
+                "Phase Angle Fault",
+                "PLL Overtime",
+                "BMS Lost / Parallel Fault",
+                "Inter-Com Fault",
+                "Fan Fault",
+                "HCT AC Device Fault",
+                "EEPROM Fault",
+                "Residual Current Device Fault",
+                "EPS Relay Fault",
+                "Grid Relay Fault",
+                "Battery Relay Fault",
             ];
             for i in 0..32 {
                 if (f & (1u32 << i)) != 0 {
@@ -606,10 +740,22 @@ pub fn decipher_solax_v250_faults(
     if let Some(f) = chg_fault {
         if f > 0 {
             let labels = [
-                "Boost Overcurrent", "Battery Overcurrent", "Battery Overvoltage", "Boost Overvoltage",
-                "Charger Bus Overvoltage", "Charger Fan Fault", "Charger EPS Overload", "Charger High Temp Error",
-                "Charger Low Temp Error", "Battery Awaken Failed", "Current Sensor Boost Fault", "Current Sensor Bat Fault",
-                "Charger EEPROM WR Fault", "Charger Unrecoverable Fan Fault", "SPI Error", "Charger CAN Error",
+                "Boost Overcurrent",
+                "Battery Overcurrent",
+                "Battery Overvoltage",
+                "Boost Overvoltage",
+                "Charger Bus Overvoltage",
+                "Charger Fan Fault",
+                "Charger EPS Overload",
+                "Charger High Temp Error",
+                "Charger Low Temp Error",
+                "Battery Awaken Failed",
+                "Current Sensor Boost Fault",
+                "Current Sensor Bat Fault",
+                "Charger EEPROM WR Fault",
+                "Charger Unrecoverable Fan Fault",
+                "SPI Error",
+                "Charger CAN Error",
             ];
             for i in 0..16 {
                 if (f & (1u32 << i)) != 0 {
@@ -626,8 +772,11 @@ pub fn decipher_solax_v250_faults(
     if let Some(f) = mgr_fault {
         if f > 0 {
             let labels = [
-                "Internet IC Error (DM9000)", "RTC Real-Time Clock Error", "EEPROM IC Error",
-                "Inter-communication Error (CAN)", "CT / Meter Connection Missing",
+                "Internet IC Error (DM9000)",
+                "RTC Real-Time Clock Error",
+                "EEPROM IC Error",
+                "Inter-communication Error (CAN)",
+                "CT / Meter Connection Missing",
             ];
             for i in 0..5 {
                 if (f & (1u32 << i)) != 0 {
@@ -640,8 +789,14 @@ pub fn decipher_solax_v250_faults(
     if let Some(f) = bms_warning {
         if f > 0 {
             let labels = [
-                "BMS Disconnected", "BMS Alarm", "BMS Overvoltage", "BMS Undervoltage",
-                "BMS Charge Overcurrent", "BMS Discharge Overcurrent", "BMS High Temp Warning", "BMS Low Temp Warning",
+                "BMS Disconnected",
+                "BMS Alarm",
+                "BMS Overvoltage",
+                "BMS Undervoltage",
+                "BMS Charge Overcurrent",
+                "BMS Discharge Overcurrent",
+                "BMS High Temp Warning",
+                "BMS Low Temp Warning",
                 "BMS Cell Imbalance",
             ];
             for i in 0..9 {

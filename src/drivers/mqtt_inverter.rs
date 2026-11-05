@@ -20,7 +20,7 @@ pub async fn run_mqtt_inverter_driver(
     // Connect to the main local broker for publishing standard metrics
     let main_client_id = format!("powerscraper-mqtt-inverter-pub-{}", inverter_name);
     let (pub_client, mut pub_eventloop) = create_mqtt_client(&main_client_id, &mqtt_config);
-    
+
     // Spawn task to poll main broker's eventloop
     let cancel_clone = cancel_token.clone();
     let inverter_name_clone = inverter_name.clone();
@@ -39,10 +39,19 @@ pub async fn run_mqtt_inverter_driver(
     });
 
     // Determine target broker for subscribing (the custom one or fallback to main/local)
-    let broker = config.broker.clone().unwrap_or_else(|| mqtt_config.broker.clone());
+    let broker = config
+        .broker
+        .clone()
+        .unwrap_or_else(|| mqtt_config.broker.clone());
     let port = config.port.or(mqtt_config.port).unwrap_or(1883);
-    let username = config.username.clone().or_else(|| mqtt_config.username.clone());
-    let password = config.password.clone().or_else(|| mqtt_config.password.clone());
+    let username = config
+        .username
+        .clone()
+        .or_else(|| mqtt_config.username.clone());
+    let password = config
+        .password
+        .clone()
+        .or_else(|| mqtt_config.password.clone());
 
     let broker_config = MqttBrokerConfig {
         enabled: mqtt_config.enabled,
@@ -60,21 +69,51 @@ pub async fn run_mqtt_inverter_driver(
 
     // Build the mapping of topics to standard metric names
     let mut topics = Vec::new();
-    if let Some(ref t) = config.topic_pv1_power { topics.push((t.clone(), "PV1 Power")); }
-    if let Some(ref t) = config.topic_pv2_power { topics.push((t.clone(), "PV2 Power")); }
-    if let Some(ref t) = config.topic_pv1_voltage { topics.push((t.clone(), "PV1 Voltage")); }
-    if let Some(ref t) = config.topic_pv2_voltage { topics.push((t.clone(), "PV2 Voltage")); }
-    if let Some(ref t) = config.topic_pv1_current { topics.push((t.clone(), "PV1 Current")); }
-    if let Some(ref t) = config.topic_pv2_current { topics.push((t.clone(), "PV2 Current")); }
-    if let Some(ref t) = config.topic_grid_voltage { topics.push((t.clone(), "Grid Voltage")); }
-    if let Some(ref t) = config.topic_grid_current { topics.push((t.clone(), "Grid Current")); }
-    if let Some(ref t) = config.topic_grid_power { topics.push((t.clone(), "Grid Power")); }
-    if let Some(ref t) = config.topic_frequency { topics.push((t.clone(), "Frequency")); }
-    if let Some(ref t) = config.topic_temperature { topics.push((t.clone(), "Inverter Temperature")); }
-    if let Some(ref t) = config.topic_energy_today { topics.push((t.clone(), "Energy Today")); }
-    if let Some(ref t) = config.topic_energy_total { topics.push((t.clone(), "Energy Total")); }
-    if let Some(ref t) = config.topic_battery_capacity { topics.push((t.clone(), "Battery Capacity")); }
-    if let Some(ref t) = config.topic_battery_power { topics.push((t.clone(), "Battery Power")); }
+    if let Some(ref t) = config.topic_pv1_power {
+        topics.push((t.clone(), "PV1 Power"));
+    }
+    if let Some(ref t) = config.topic_pv2_power {
+        topics.push((t.clone(), "PV2 Power"));
+    }
+    if let Some(ref t) = config.topic_pv1_voltage {
+        topics.push((t.clone(), "PV1 Voltage"));
+    }
+    if let Some(ref t) = config.topic_pv2_voltage {
+        topics.push((t.clone(), "PV2 Voltage"));
+    }
+    if let Some(ref t) = config.topic_pv1_current {
+        topics.push((t.clone(), "PV1 Current"));
+    }
+    if let Some(ref t) = config.topic_pv2_current {
+        topics.push((t.clone(), "PV2 Current"));
+    }
+    if let Some(ref t) = config.topic_grid_voltage {
+        topics.push((t.clone(), "Grid Voltage"));
+    }
+    if let Some(ref t) = config.topic_grid_current {
+        topics.push((t.clone(), "Grid Current"));
+    }
+    if let Some(ref t) = config.topic_grid_power {
+        topics.push((t.clone(), "Grid Power"));
+    }
+    if let Some(ref t) = config.topic_frequency {
+        topics.push((t.clone(), "Frequency"));
+    }
+    if let Some(ref t) = config.topic_temperature {
+        topics.push((t.clone(), "Inverter Temperature"));
+    }
+    if let Some(ref t) = config.topic_energy_today {
+        topics.push((t.clone(), "Energy Today"));
+    }
+    if let Some(ref t) = config.topic_energy_total {
+        topics.push((t.clone(), "Energy Total"));
+    }
+    if let Some(ref t) = config.topic_battery_capacity {
+        topics.push((t.clone(), "Battery Capacity"));
+    }
+    if let Some(ref t) = config.topic_battery_power {
+        topics.push((t.clone(), "Battery Power"));
+    }
 
     // Subscribe to all configured topics
     let mut subscribed = false;
@@ -138,7 +177,7 @@ pub async fn run_mqtt_inverter_driver(
                             }
                             Event::Incoming(Packet::Publish(publish)) => {
                                 let payload = String::from_utf8_lossy(&publish.payload).trim().to_string();
-                                
+
                                 // Find matching topic
                                 let mut matched_metric = None;
                                 for (t, metric) in &topics {
