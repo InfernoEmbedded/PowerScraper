@@ -309,6 +309,7 @@ async fn test_mqtt_meter_reconnect() {
         password: None,
         poll_period: None,
         watchdog_timeout: None,
+        invert: None,
     };
 
     let (tx_telemetry, mut rx_telemetry) = tokio::sync::mpsc::channel(100);

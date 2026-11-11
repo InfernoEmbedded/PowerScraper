@@ -309,6 +309,12 @@ pub enum TariffConfig {
         high_price_discharge: bool,
         #[serde(default)]
         high_price_threshold: f64,
+        #[serde(default)]
+        high_price_dynamic: bool,
+        #[serde(default)]
+        high_price_reserve_soc: Option<u8>,
+        #[serde(default)]
+        high_price_floor: Option<f64>,
         api_url: Option<String>,
     },
 }

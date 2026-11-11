@@ -298,6 +298,8 @@ async fn test_integration_loop() {
     {
         let mut r = regs.lock().unwrap();
         r[28] = 50; // Battery Capacity = 50
+        r[0x24] = 500; // BMS Max Charge Current = 50.0 A
+        r[0x14] = 4000; // Battery Voltage = 400.0 V
         r[70] = 1000; // Measured Power = 1000
     }
     let writes = Arc::new(Mutex::new(vec![]));

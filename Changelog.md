@@ -2,6 +2,19 @@
 
 All notable user-facing changes in PowerScraper since the transition from the legacy Python implementation (commit `2c2227e5fbb7957aed1c77ad66eb0986f63ecfbf`) are documented below.
 
+## [1.0.163] - 2026-11-11
+
+### Added
+* **Dynamic Amber Wholesale Peak Export Optimization & Battery Reserve Control**:
+  - Implemented dynamic forecast threshold evaluation using the Amber API rolling feed-in forecast intervals (`/v1/sites/{site_id}/prices/current?resolution=5&next=48`).
+  - Added capacity-matched merit-order (water-filling) cutoff calculation: evaluates available dump energy above reserve SoC ($E_{\text{dump}} = (\text{SoC} - \text{Reserve}) \times \text{Capacity}$) against maximum discharge power to determine duration ($T_{\text{dump}}$) and dynamically select the optimal price cutoff across upcoming forecast peaks.
+  - Added safety floor price threshold (`high-price-floor`) and reserve SoC protection (`high-price-reserve_soc`, default 50%) to ensure batteries retain overnight home reserve.
+  - Added `period.force_discharge` support in Auto mode down to `period.min_charge`.
+  - Exposed dynamic threshold toggle, reserve SoC, and price floor controls in the Amber tab of the Web UI, and surfaced the computed dynamic export cutoff rate in dashboard status and API.
+  - Fixed mock Modbus test harness in `tests/integration_test.rs` to report realistic BMS charge limits.
+
+---
+
 ## [1.0.159] - 2026-10-12
 
 ### Added

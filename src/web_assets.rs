@@ -125,6 +125,7 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                 <div class="glass-card">
                     <div class="card-title">Export Price</div>
                     <div class="stat-val" id="stat-export-price" style="color: var(--primary); text-shadow: 0 0 10px var(--primary-glow);">-- c/kWh</div>
+                    <div id="stat-export-sub" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 4px;"></div>
                 </div>
                 <div class="glass-card">
                     <div class="card-title">Stored Battery Cost</div>
@@ -503,9 +504,23 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                         <label for="amber-high-price-discharge">Enable High-Price Forced Discharging (force feed-in when export rate is premium)<span class="tooltip-icon" data-tooltip="Forces maximum battery discharge to grid when export spot price exceeds threshold.">?</span></label>
                     </div>
                     <div id="amber-high-price-group" style="margin-top: 10px; margin-left: 25px;">
-                        <div class="form-group" style="max-width: 300px;">
-                            <label for="amber-high-price-threshold">High-Price Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Export spot price threshold in c/kWh above which forced grid discharging triggers.">?</span></label>
-                            <input type="number" step="0.01" id="amber-high-price-threshold" placeholder="e.g. 60.0">
+                        <div class="checkbox-group" style="margin-bottom: 12px;">
+                            <input type="checkbox" id="amber-high-price-dynamic" onchange="toggleAmberDynamicThreshold(this.checked)">
+                            <label for="amber-high-price-dynamic">Dynamic Forecast Threshold (automatically find best peak export prices)<span class="tooltip-icon" data-tooltip="Uses Amber rolling forecast intervals to dynamically determine the optimal export price cutoff to discharge excess battery capacity.">?</span></label>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" style="flex: 1; min-width: 200px;">
+                                <label id="amber-high-price-threshold-label" for="amber-high-price-threshold">High-Price Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Export spot price threshold in c/kWh above which forced grid discharging triggers. Used as fallback if dynamic forecast is unavailable.">?</span></label>
+                                <input type="number" step="0.01" id="amber-high-price-threshold" placeholder="e.g. 60.0">
+                            </div>
+                            <div class="form-group" style="flex: 1; min-width: 200px;">
+                                <label for="amber-high-price-reserve-soc">Target Reserve SOC (%)<span class="tooltip-icon" data-tooltip="Stop exporting once battery drops to this SOC percentage, preserving capacity for overnight household load.">?</span></label>
+                                <input type="number" id="amber-high-price-reserve-soc" placeholder="e.g. 50" min="0" max="100">
+                            </div>
+                            <div class="form-group" id="amber-high-price-floor-container" style="flex: 1; min-width: 200px;">
+                                <label for="amber-high-price-floor">Minimum Floor Price (cents/kWh)<span class="tooltip-icon" data-tooltip="Minimum export price required to dump battery, even if prices today are lower than usual.">?</span></label>
+                                <input type="number" step="0.01" id="amber-high-price-floor" placeholder="e.g. 15.0">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -2618,6 +2633,16 @@ async function fetchStatus() {
                 exportPriceEl.style.color = 'var(--primary)';
                 exportPriceEl.style.textShadow = '0 0 10px var(--primary-glow)';
             }
+            const exportSub = document.getElementById('stat-export-sub');
+            if (exportSub) {
+                if (status.dynamic_export_threshold !== undefined && status.dynamic_export_threshold !== null) {
+                    exportSub.innerText = `Cutoff: ${status.dynamic_export_threshold.toFixed(1)} c/kWh`;
+                    exportSub.style.display = 'block';
+                } else {
+                    exportSub.innerText = '';
+                    exportSub.style.display = 'none';
+                }
+            }
         }
 
         const batteryCostEl = document.getElementById('stat-battery-cost');
@@ -3483,7 +3508,12 @@ async function loadConfig(configData = null) {
                 const hpd = tariff["high-price-discharge"] === true;
                 document.getElementById('amber-high-price-discharge').checked = hpd;
                 toggleFormSection('amber-high-price-group', hpd);
-                document.getElementById('amber-high-price-threshold').value = tariff["high-price-threshold"] || '';
+                document.getElementById('amber-high-price-threshold').value = tariff["high-price-threshold"] !== undefined ? tariff["high-price-threshold"] : '';
+                const hpDyn = tariff["high-price-dynamic"] === true;
+                document.getElementById('amber-high-price-dynamic').checked = hpDyn;
+                toggleAmberDynamicThreshold(hpDyn);
+                document.getElementById('amber-high-price-reserve-soc').value = tariff["high-price-reserve-soc"] !== undefined ? tariff["high-price-reserve-soc"] : 50;
+                document.getElementById('amber-high-price-floor').value = tariff["high-price-floor"] !== undefined ? tariff["high-price-floor"] : 15.0;
             }
         } else {
             document.getElementById('tariff-type').value = 'none';
@@ -3794,6 +3824,17 @@ function toggleTariffType(type) {
         document.getElementById('tariff-section-tou').style.display = 'block';
     } else if (type === 'amber') {
         document.getElementById('tariff-section-amber').style.display = 'block';
+    }
+}
+
+function toggleAmberDynamicThreshold(isDynamic) {
+    const lbl = document.getElementById('amber-high-price-threshold-label');
+    if (lbl) {
+        if (isDynamic) {
+            lbl.innerHTML = 'Fallback Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Fallback fixed threshold if dynamic forecast is unavailable.">?</span>';
+        } else {
+            lbl.innerHTML = 'High-Price Threshold (cents/kWh)<span class="tooltip-icon" data-tooltip="Export spot price threshold in c/kWh above which forced grid discharging triggers.">?</span>';
+        }
     }
 }
 
@@ -4607,7 +4648,10 @@ async function saveConfiguration() {
                 "low-price-charge": document.getElementById('amber-low-price-charge').checked,
                 "low-price-threshold": parseFloat(document.getElementById('amber-low-price-threshold').value) || 0.0,
                 "high-price-discharge": document.getElementById('amber-high-price-discharge').checked,
-                "high-price-threshold": parseFloat(document.getElementById('amber-high-price-threshold').value) || 0.0
+                "high-price-threshold": parseFloat(document.getElementById('amber-high-price-threshold').value) || 0.0,
+                "high-price-dynamic": document.getElementById('amber-high-price-dynamic').checked,
+                "high-price-reserve-soc": parseInt(document.getElementById('amber-high-price-reserve-soc').value) || 50,
+                "high-price-floor": parseFloat(document.getElementById('amber-high-price-floor').value) || 15.0
             };
         } else {
             cfg["Solax-BatteryControl"].tariff = null;
