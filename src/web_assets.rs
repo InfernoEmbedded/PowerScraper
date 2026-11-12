@@ -521,6 +521,10 @@ pub const INDEX_HTML: &str = r###"<!DOCTYPE html>
                                 <label for="amber-high-price-floor">Minimum Floor Price (cents/kWh)<span class="tooltip-icon" data-tooltip="Minimum export price required to dump battery, even if prices today are lower than usual.">?</span></label>
                                 <input type="number" step="0.01" id="amber-high-price-floor" placeholder="e.g. 15.0">
                             </div>
+                            <div class="form-group" id="amber-solar-generation-start-container" style="flex: 1; min-width: 200px;">
+                                <label for="amber-solar-generation-start">Solar Generation Start<span class="tooltip-icon" data-tooltip="Start time of daytime solar generation (HH:MM:SS). The dynamic threshold only looks ahead until the next solar generation period when batteries refill. Defaults to 06:00:00.">?</span></label>
+                                <input type="text" id="amber-solar-generation-start" placeholder="06:00:00">
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -3514,6 +3518,7 @@ async function loadConfig(configData = null) {
                 toggleAmberDynamicThreshold(hpDyn);
                 document.getElementById('amber-high-price-reserve-soc').value = tariff["high-price-reserve-soc"] !== undefined ? tariff["high-price-reserve-soc"] : 50;
                 document.getElementById('amber-high-price-floor').value = tariff["high-price-floor"] !== undefined ? tariff["high-price-floor"] : 15.0;
+                document.getElementById('amber-solar-generation-start').value = tariff["solar-generation-start"] || '';
             }
         } else {
             document.getElementById('tariff-type').value = 'none';
@@ -4651,7 +4656,8 @@ async function saveConfiguration() {
                 "high-price-threshold": parseFloat(document.getElementById('amber-high-price-threshold').value) || 0.0,
                 "high-price-dynamic": document.getElementById('amber-high-price-dynamic').checked,
                 "high-price-reserve-soc": parseInt(document.getElementById('amber-high-price-reserve-soc').value) || 50,
-                "high-price-floor": parseFloat(document.getElementById('amber-high-price-floor').value) || 15.0
+                "high-price-floor": parseFloat(document.getElementById('amber-high-price-floor').value) || 15.0,
+                "solar-generation-start": document.getElementById('amber-solar-generation-start').value.trim() || null
             };
         } else {
             cfg["Solax-BatteryControl"].tariff = null;

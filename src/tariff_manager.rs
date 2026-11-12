@@ -111,6 +111,7 @@ impl TariffManager {
         reserve_soc: f64,
         max_discharge_w: f64,
         floor_price: f64,
+        solar_cutoff_ts: Option<i64>,
     ) -> Option<f64> {
         if battery_kwh <= 0.0 || max_discharge_w <= 0.0 {
             return None;
@@ -123,11 +124,28 @@ impl TariffManager {
         let discharge_kw = max_discharge_w / 1000.0;
         let needed_mins = (energy_to_dump_kwh / discharge_kw) * 60.0;
 
-        if forecast.is_empty() {
+        let filtered: Vec<AmberForecastInterval> = if let Some(cutoff) = solar_cutoff_ts {
+            forecast
+                .iter()
+                .filter(|interval| {
+                    if let Some(ref st) = interval.start_time {
+                        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(st) {
+                            return dt.timestamp() < cutoff;
+                        }
+                    }
+                    true
+                })
+                .cloned()
+                .collect()
+        } else {
+            forecast.to_vec()
+        };
+
+        if filtered.is_empty() {
             return None;
         }
 
-        let mut sorted = forecast.to_vec();
+        let mut sorted = filtered;
         sorted.sort_by(|a, b| {
             b.export_rate
                 .partial_cmp(&a.export_rate)
@@ -154,6 +172,7 @@ impl TariffManager {
         reserve_soc: f64,
         max_discharge_w: f64,
         floor_price: f64,
+        solar_cutoff_ts: Option<i64>,
     ) -> Option<f64> {
         let forecast = self.forecast_intervals.read().unwrap().clone();
         let threshold = Self::calculate_dynamic_threshold(
@@ -163,6 +182,7 @@ impl TariffManager {
             reserve_soc,
             max_discharge_w,
             floor_price,
+            solar_cutoff_ts,
         );
         let mut dt = self.dynamic_export_threshold.write().unwrap();
         *dt = threshold;
@@ -413,6 +433,7 @@ mod tests {
             high_price_dynamic: false,
             high_price_reserve_soc: None,
             high_price_floor: None,
+            solar_generation_start: None,
             api_url: Some("http://127.0.0.1:9999".to_string()),
         };
         let tm = TariffManager::new(Some(config));
@@ -515,26 +536,66 @@ mod tests {
             50.0,   // 50% reserve
             4000.0, // 4 kW
             15.0,   // 15 c floor
+            None,
         );
         assert_eq!(threshold, Some(35.0));
 
         // When battery SOC is 70% (needs only 20% * 10 = 2 kWh, 30 mins at 4kW):
         // Top 30 mins is just 45.0 c/kWh -> Cutoff price should be 45.0!
-        let threshold_higher =
-            TariffManager::calculate_dynamic_threshold(&forecast, 10.0, 70.0, 50.0, 4000.0, 15.0);
+        let threshold_higher = TariffManager::calculate_dynamic_threshold(
+            &forecast, 10.0, 70.0, 50.0, 4000.0, 15.0, None,
+        );
         assert_eq!(threshold_higher, Some(45.0));
 
         // When battery SOC <= reserve SOC (50%), no dump needed -> None
-        let threshold_none =
-            TariffManager::calculate_dynamic_threshold(&forecast, 10.0, 50.0, 50.0, 4000.0, 15.0);
+        let threshold_none = TariffManager::calculate_dynamic_threshold(
+            &forecast, 10.0, 50.0, 50.0, 4000.0, 15.0, None,
+        );
         assert_eq!(threshold_none, None);
 
         // Clamping to floor price: if needed mins reaches into low prices (e.g. 10.0 c), floor clamps it to 15.0 c
         let threshold_floored = TariffManager::calculate_dynamic_threshold(
             &forecast, 10.0, 100.0, 10.0, // 9 kWh = 135 mins at 4kW
-            4000.0, 15.0,
+            4000.0, 15.0, None,
         );
         assert_eq!(threshold_floored, Some(15.0));
+
+        // Test solar_cutoff_ts horizon filtering:
+        // Distant high price tomorrow afternoon (timestamp 2000) should be excluded
+        // if cutoff is at timestamp 1500 (next solar generation start).
+        let forecast_with_times = vec![
+            AmberForecastInterval {
+                start_time: Some("2026-11-12T10:00:00Z".to_string()), // ts = 1794477600
+                end_time: None,
+                duration_mins: 30.0,
+                export_rate: 25.0,
+                import_rate: 0.0,
+                spike_status: None,
+                descriptor: None,
+            },
+            AmberForecastInterval {
+                start_time: Some("2026-11-13T04:00:00Z".to_string()), // ts = 1794542400 (after sunrise tomorrow)
+                end_time: None,
+                duration_mins: 30.0,
+                export_rate: 80.0, // Distant spike after solar recharges battery
+                import_rate: 0.0,
+                spike_status: None,
+                descriptor: None,
+            },
+        ];
+        // Cutoff set to 2026-11-12T20:00:00Z (ts = 1794513600, before tomorrow 04:00:00Z)
+        let cutoff_ts = 1794513600;
+        let threshold_filtered = TariffManager::calculate_dynamic_threshold(
+            &forecast_with_times,
+            10.0,
+            70.0,
+            50.0,
+            4000.0,
+            15.0,
+            Some(cutoff_ts),
+        );
+        // The 80c spike is excluded because it's past the solar horizon, leaving 25c as cutoff
+        assert_eq!(threshold_filtered, Some(25.0));
     }
 
     #[test]

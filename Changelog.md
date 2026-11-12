@@ -2,6 +2,17 @@
 
 All notable user-facing changes in PowerScraper since the transition from the legacy Python implementation (commit `2c2227e5fbb7957aed1c77ad66eb0986f63ecfbf`) are documented below.
 
+## [1.0.164] - 2026-11-12
+
+### Added
+* **Dynamic Forecast Solar Horizon Restriction**:
+  - Restricted the dynamic wholesale export threshold evaluation window to only consider forecast intervals up to the start of the next solar generation period.
+  - Added `calculate_next_solar_generation_start()`: looks up future sunrise/solar generation timestamps from Open-Meteo weather predictions (when available) or the configured solar start time (`solar-generation-start`, defaulting to 06:00:00).
+  - Excluded distant next-day forecast intervals from competing against current stored battery energy, allowing batteries to dump surplus power during overnight price spikes before being recharged by the sun.
+  - Exposed `solar-generation-start` in Amber tariff settings in the Web UI.
+
+---
+
 ## [1.0.163] - 2026-11-11
 
 ### Added

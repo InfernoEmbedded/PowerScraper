@@ -622,6 +622,66 @@ impl PowerManager {
         expected_solar_kwh
     }
 
+    pub fn calculate_next_solar_generation_start(&self) -> i64 {
+        let tz_offset = get_timezone_offset(self.config.timezone.as_deref());
+        let now = chrono::Utc::now().with_timezone(&tz_offset);
+        let now_ts = now.timestamp();
+
+        // 1. If Open-Meteo solar forecast points exist in the database, use them
+        let three_days_ahead = now_ts + 3 * 86400;
+        if let Ok(records) =
+            crate::database::load_solar_forecast_range(&self.db_path, now_ts, three_days_ahead)
+        {
+            if !records.is_empty() {
+                let is_daytime = records.first().map_or(false, |(_, w)| *w > 50.0);
+                let mut sunset_seen = !is_daytime;
+                for (ts, val) in records {
+                    if !sunset_seen {
+                        if val <= 50.0 {
+                            sunset_seen = true;
+                        }
+                    } else if val > 100.0 {
+                        return ts;
+                    }
+                }
+            }
+        }
+
+        // 2. Otherwise use configured solar_generation_start or default to 06:00:00
+        let configured_start = if let Some(crate::config::TariffConfig::Amber {
+            solar_generation_start,
+            ..
+        }) = &self.config.tariff
+        {
+            solar_generation_start.as_deref()
+        } else {
+            None
+        };
+
+        let default_solar_time = chrono::NaiveTime::from_hms_opt(6, 0, 0).unwrap();
+        let solar_time = configured_start
+            .and_then(parse_time)
+            .unwrap_or(default_solar_time);
+
+        if now.time() < solar_time {
+            // Next solar generation period is today
+            now.date_naive()
+                .and_time(solar_time)
+                .and_local_timezone(tz_offset)
+                .single()
+                .map(|dt| dt.timestamp())
+                .unwrap_or(now_ts + 86400)
+        } else {
+            // Next solar generation period is tomorrow
+            (now.date_naive() + chrono::Duration::days(1))
+                .and_time(solar_time)
+                .and_local_timezone(tz_offset)
+                .single()
+                .map(|dt| dt.timestamp())
+                .unwrap_or(now_ts + 86400)
+        }
+    }
+
     pub fn new(config: SolaxBatteryControlConfig, base_topic: String) -> Self {
         let mut max_total_charge = 0.0;
         let mut max_total_discharge = 0.0;
@@ -962,6 +1022,7 @@ impl PowerManager {
         let effective_threshold = if high_price_dynamic {
             let res_soc = high_price_reserve_soc.unwrap_or(50) as f64;
             let floor = high_price_floor.unwrap_or(15.0);
+            let solar_cutoff_ts = self.calculate_next_solar_generation_start();
             self.tariff_manager
                 .update_dynamic_threshold(
                     total_capacity_kwh_est,
@@ -969,6 +1030,7 @@ impl PowerManager {
                     res_soc,
                     self.max_total_discharge_power,
                     floor,
+                    Some(solar_cutoff_ts),
                 )
                 .unwrap_or(high_price_threshold)
         } else {
@@ -5815,6 +5877,7 @@ mod tests {
             high_price_dynamic: false,
             high_price_reserve_soc: None,
             high_price_floor: None,
+            solar_generation_start: None,
             api_url: None,
         };
 
@@ -5899,6 +5962,7 @@ mod tests {
             high_price_dynamic: false,
             high_price_reserve_soc: None,
             high_price_floor: None,
+            solar_generation_start: None,
             api_url: None,
         };
 
@@ -6368,6 +6432,7 @@ mod tests {
             high_price_dynamic: false,
             high_price_reserve_soc: None,
             high_price_floor: None,
+            solar_generation_start: None,
             api_url: None,
         };
 
@@ -6894,6 +6959,7 @@ mod tests {
             high_price_dynamic: true,
             high_price_reserve_soc: Some(50),
             high_price_floor: Some(15.0),
+            solar_generation_start: None,
             api_url: None,
         };
 
@@ -7009,5 +7075,18 @@ mod tests {
         pm.inverters.insert("solax1".to_string(), state50);
         let cmd50 = pm.evaluate_and_command("solax1");
         assert_eq!(cmd50, Some(0)); // Halts dump at 50%
+    }
+
+    #[test]
+    fn test_calculate_next_solar_generation_start() {
+        let mut config = SolaxBatteryControlConfig::default();
+        config.timezone = Some("AEST-10".to_string());
+        let pm = PowerManager::new(config, "sensors".to_string());
+
+        let next_start = pm.calculate_next_solar_generation_start();
+        let now_ts = chrono::Utc::now().timestamp();
+        // Next solar generation start should be in the future, within 25 hours
+        assert!(next_start > now_ts);
+        assert!(next_start <= now_ts + 25 * 3600);
     }
 }

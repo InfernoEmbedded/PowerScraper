@@ -315,6 +315,8 @@ pub enum TariffConfig {
         high_price_reserve_soc: Option<u8>,
         #[serde(default)]
         high_price_floor: Option<f64>,
+        #[serde(default)]
+        solar_generation_start: Option<String>,
         api_url: Option<String>,
     },
 }
